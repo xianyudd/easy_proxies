@@ -139,25 +139,28 @@ curl -x http://<USERNAME>:<PASSWORD>@127.0.0.1:24000 http://cp.cloudflare.com/ge
 常用命令：
 
 ```bash
-./epctl.sh start
-./epctl.sh stop
-./epctl.sh restart
-./epctl.sh status
-./epctl.sh logs 100
-./epctl.sh logs-follow
-./epctl.sh test jp
-./epctl.sh adb-set jp
-./epctl.sh adb-status
-./epctl.sh adb-clear
+./epctl.sh service:start
+./epctl.sh service:stop
+./epctl.sh service:restart
+./epctl.sh service:status
+./epctl.sh logs:tail 100
+./epctl.sh logs:follow
+./epctl.sh proxy:test jp
+./epctl.sh proxy:regions
+./epctl.sh adb:set jp
+./epctl.sh adb:status
+./epctl.sh adb:clear
 ```
 
 说明：
 
-- `status` 会显示 WebUI、监听端口、节点统计和地区分布
-- `test <region>` 会测试 Android 无认证地区端口，并带重试
-- `adb-set <region>` 会设置 `adb reverse` 和 Android 全局代理
+- `service:status` 会显示 WebUI、监听端口、节点统计和地区分布
+- `proxy:test <region>` 会测试 Android 无认证地区端口，并带重试
+- `proxy:regions` 会显示地区和端口映射
+- `adb:set <region>` 会设置 `adb reverse` 和 Android 全局代理
 - 默认 ADB 设备是 `192.168.1.118:5555`，可用 `ADB_SERIAL=...` 覆盖
 - 脚本不会打印订阅地址或代理密码
+- 旧命令仍兼容，例如 `status`、`test jp`、`adb-set jp`
 
 ## 10. 常见问题排查
 

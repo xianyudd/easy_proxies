@@ -15,22 +15,40 @@ usage() {
 Easy Proxies local control
 
 Usage:
-  ./epctl.sh start                 Start local binary in background
-  ./epctl.sh stop                  Stop local binary started by this script
-  ./epctl.sh restart               Restart local binary
-  ./epctl.sh status                Show service, ports, nodes, and adb status
-  ./epctl.sh logs [N]              Show last N log lines, default 120
-  ./epctl.sh logs-follow           Follow runtime log
-  ./epctl.sh test [region]         Test Android no-auth port, default jp
-  ./epctl.sh adb-set [region]      Set adb reverse + Android Wi-Fi/global proxy, default jp
-  ./epctl.sh adb-clear             Clear Android proxy for selected device
-  ./epctl.sh adb-status            Show adb proxy/reverse status
+  ./epctl.sh <command> [args]
+
+Service:
+  service:start              Start local binary in background
+  service:stop               Stop local binary started by this script
+  service:restart            Restart local binary
+  service:status             Show WebUI, ports, nodes, and regions
+
+Logs:
+  logs:tail [N]              Show last N log lines, default 120
+  logs:follow                Follow runtime log
+
+Proxy:
+  proxy:test [region]        Test Android no-auth region port, default jp
+  proxy:regions              Show region to port mapping
+
+ADB:
+  adb:set [region]           Set adb reverse and Android global proxy, default jp
+  adb:status                 Show adb reverse and proxy settings
+  adb:clear                  Clear Android global proxy settings
+
+Short aliases:
+  start, stop, restart, status, logs, logs-follow, test
+  adb-set, adb-status, adb-clear
+
+Regions:
+  us jp hk sg tw kr in ae ch au other
 
 Environment:
   CONFIG_FILE=config.yaml
   BIN=./easy_proxies_local
   LOG_FILE=/tmp/easy_proxies.run.log
   ADB_SERIAL=192.168.1.118:5555
+  RETRIES=3
 EOF
 }
 
@@ -69,6 +87,23 @@ region_port() {
     other) echo 13011 ;;
     *) echo "[ERROR] Unknown region: $region" >&2; exit 2 ;;
   esac
+}
+
+show_regions() {
+  cat <<'EOF'
+Region ports:
+  us     13001
+  jp     13002
+  hk     13003
+  sg     13004
+  tw     13005
+  kr     13006
+  in     13007
+  ae     13008
+  au     13010
+  other  13011
+  ch     13019
+EOF
 }
 
 is_running() {
@@ -139,6 +174,8 @@ status_service() {
     found_pid="$(find_service_pid)"
     if [ -n "$found_pid" ]; then
       echo "Process: running pid=$found_pid"
+    elif [ "$web" = "200" ]; then
+      echo "Process: running, detected by WebUI"
     else
       echo "Process: not found"
     fi
@@ -201,16 +238,17 @@ adb_status() {
 }
 
 case "${1:-}" in
-  start) start_service ;;
-  stop) stop_service ;;
-  restart) stop_service; start_service ;;
-  status) status_service ;;
-  logs) show_logs "${2:-120}" ;;
-  logs-follow) tail -f "$LOG_FILE" ;;
-  test) test_region "${2:-jp}" ;;
-  adb-set) adb_set "${2:-jp}" ;;
-  adb-clear) adb_clear ;;
-  adb-status) adb_status ;;
+  service:start|start) start_service ;;
+  service:stop|stop) stop_service ;;
+  service:restart|restart) stop_service; start_service ;;
+  service:status|status) status_service ;;
+  logs:tail|logs) show_logs "${2:-120}" ;;
+  logs:follow|logs-follow) tail -f "$LOG_FILE" ;;
+  proxy:test|test) test_region "${2:-jp}" ;;
+  proxy:regions|regions) show_regions ;;
+  adb:set|adb-set) adb_set "${2:-jp}" ;;
+  adb:clear|adb-clear) adb_clear ;;
+  adb:status|adb-status) adb_status ;;
   help|-h|--help|"") usage ;;
   *) echo "[ERROR] Unknown command: $1"; usage; exit 2 ;;
 esac
