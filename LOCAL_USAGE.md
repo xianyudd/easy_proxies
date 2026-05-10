@@ -128,7 +128,38 @@ curl -x http://<USERNAME>:<PASSWORD>@127.0.0.1:24000 http://cp.cloudflare.com/ge
 - 输出出口 IP 和国家（若查询接口未限流）
 - 不打印你的代理密钥或订阅地址
 
-## 9. 常见问题排查
+## 9. 综合控制脚本
+
+仓库根目录提供：
+
+```bash
+./epctl.sh
+```
+
+常用命令：
+
+```bash
+./epctl.sh start
+./epctl.sh stop
+./epctl.sh restart
+./epctl.sh status
+./epctl.sh logs 100
+./epctl.sh logs-follow
+./epctl.sh test jp
+./epctl.sh adb-set jp
+./epctl.sh adb-status
+./epctl.sh adb-clear
+```
+
+说明：
+
+- `status` 会显示 WebUI、监听端口、节点统计和地区分布
+- `test <region>` 会测试 Android 无认证地区端口，并带重试
+- `adb-set <region>` 会设置 `adb reverse` 和 Android 全局代理
+- 默认 ADB 设备是 `192.168.1.118:5555`，可用 `ADB_SERIAL=...` 覆盖
+- 脚本不会打印订阅地址或代理密码
+
+## 10. 常见问题排查
 
 ### WebUI 打不开
 
@@ -185,7 +216,7 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 - 没有配置 `multi_port.base_port`
 - 节点数量变化后端口分配发生变化
 
-## 10. 建议的长期使用方式
+## 11. 建议的长期使用方式
 
 如果你的目标是“长期稳定像代理平台一样本地使用”，建议：
 
