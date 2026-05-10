@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,12 +71,12 @@ type SubscriptionStatus struct {
 
 // Server exposes HTTP endpoints for monitoring.
 type Server struct {
-	cfg          Config
-	cfgMu        sync.RWMutex   // 保护动态配置字段
-	cfgSrc       *config.Config // 可持久化的配置对象
-	mgr          *Manager
-	srv          *http.Server
-	logger       *log.Logger
+	cfg    Config
+	cfgMu  sync.RWMutex   // 保护动态配置字段
+	cfgSrc *config.Config // 可持久化的配置对象
+	mgr    *Manager
+	srv    *http.Server
+	logger *log.Logger
 
 	// Session management
 	sessionMu  sync.RWMutex
@@ -127,6 +128,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/nodes/", s.withAuth(s.handleNodeAction))
 	mux.HandleFunc("/api/debug", s.withAuth(s.handleDebug))
 	mux.HandleFunc("/api/export", s.withAuth(s.handleExport))
+	mux.HandleFunc("/api/extractor", s.withAuth(s.handleExtractor))
 	mux.HandleFunc("/api/subscription/status", s.withAuth(s.handleSubscriptionStatus))
 	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
 	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
@@ -805,6 +807,490 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(strings.Join(lines, "\n")))
 }
 
+type extractorProxyEntry struct {
+	Host       string `json:"host"`
+	Port       uint16 `json:"port"`
+	Username   string `json:"username,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Region     string `json:"region,omitempty"`
+	Mode       string `json:"mode,omitempty"`
+	Remark     string `json:"remark,omitempty"`
+	RefreshURL string `json:"refresh_url,omitempty"`
+	NodeName   string `json:"node_name,omitempty"`
+	NodeTag    string `json:"node_tag,omitempty"`
+}
+
+func androidExtractorRegions() []string {
+	return []string{geoip.RegionUS, geoip.RegionJP, geoip.RegionHK, geoip.RegionSG, geoip.RegionTW, geoip.RegionKR, geoip.RegionIN, geoip.RegionAE, geoip.RegionCH, geoip.RegionAU, geoip.RegionOther}
+}
+
+func androidExtractorPort(cfg config.AndroidProxyConfig, region string) uint16 {
+	if cfg.RegionPorts != nil {
+		if port := cfg.RegionPorts[region]; port != 0 {
+			return port
+		}
+	}
+	basePort := cfg.BasePort
+	if basePort == 0 {
+		basePort = 13001
+	}
+	for idx, reg := range androidExtractorRegions() {
+		if reg == region {
+			return basePort + uint16(idx)
+		}
+	}
+	return 0
+}
+
+func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
+	if region == "" {
+		region = "all"
+	}
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "" {
+		mode = "pool"
+	}
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if format == "" {
+		format = "http_url"
+	}
+	reveal := r.URL.Query().Get("reveal") == "1" || strings.EqualFold(r.URL.Query().Get("reveal"), "true")
+
+	count := 1
+	if rawCount := strings.TrimSpace(r.URL.Query().Get("count")); rawCount != "" {
+		if parsed, err := strconv.Atoi(rawCount); err == nil && parsed > 0 {
+			count = parsed
+		}
+	}
+	if count > 500 {
+		count = 500
+	}
+
+	allowedRegions := map[string]bool{
+		"all": true, "us": true, "jp": true, "hk": true, "sg": true, "tw": true, "kr": true, "in": true, "ae": true, "ch": true, "au": true, "other": true,
+	}
+	if !allowedRegions[region] {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid region"})
+		return
+	}
+
+	modeAliases := map[string]string{
+		"pool":                  "pool",
+		"pool_endpoint":         "pool",
+		"geoip":                 "geoip",
+		"geoip_region":          "geoip",
+		"geoip_region_endpoint": "geoip",
+		"android":               "android",
+		"android_proxy":         "android",
+		"android_global":        "android",
+		"android_global_proxy":  "android",
+		"multi":                 "multi-port",
+		"multi-port":            "multi-port",
+		"multi_port":            "multi-port",
+		"multi-port_node_list":  "multi-port",
+	}
+	if normalizedMode, ok := modeAliases[mode]; ok {
+		mode = normalizedMode
+	}
+	if mode != "pool" && mode != "geoip" && mode != "multi-port" && mode != "android" {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid mode"})
+		return
+	}
+
+	formatAliases := map[string]string{
+		"host_port":   "host_port",
+		"host:port":   "host_port",
+		"adb_command": "adb_command",
+		"adb shell settings put global http_proxy host:port": "adb_command",
+		"http_no_auth":                         "http_no_auth",
+		"http://host:port":                     "http_no_auth",
+		"socks5_url":                           "socks5_url",
+		"socks5://username:password@host:port": "socks5_url",
+		"socks5_no_auth":                       "socks5_no_auth",
+		"socks5://host:port":                   "socks5_no_auth",
+		"csv":                                  "csv",
+		"host,port,username,password":          "csv",
+		"pipe":                                 "pipe",
+		"host|port|username|password":          "pipe",
+		"curl_command":                         "curl_command",
+		"curl -x http://username:password@host:port":       "curl_command",
+		"python_requests_json":                             "python_requests_json",
+		"clash_yaml":                                       "clash_yaml",
+		"host_port_user_pass":                              "host_port_user_pass",
+		"host:port:username:password":                      "host_port_user_pass",
+		"user_pass_at_host_port":                           "user_pass_at_host_port",
+		"username:password@host:port":                      "user_pass_at_host_port",
+		"http_url":                                         "http_url",
+		"http://username:password@host:port":               "http_url",
+		"host_port_user_pass_refresh_remark":               "host_port_user_pass_refresh_remark",
+		"host:port:username:password[refresh_url]{remark}": "host_port_user_pass_refresh_remark",
+		"user_pass_at_host_port_refresh_remark":            "user_pass_at_host_port_refresh_remark",
+		"username:password@host:port[refresh_url]{remark}": "user_pass_at_host_port_refresh_remark",
+		"json": "json",
+	}
+	if normalizedFormat, ok := formatAliases[format]; ok {
+		format = normalizedFormat
+	}
+	if format != "host_port" &&
+		format != "adb_command" &&
+		format != "http_no_auth" &&
+		format != "socks5_url" &&
+		format != "socks5_no_auth" &&
+		format != "csv" &&
+		format != "pipe" &&
+		format != "curl_command" &&
+		format != "python_requests_json" &&
+		format != "clash_yaml" &&
+		format != "host_port_user_pass" &&
+		format != "user_pass_at_host_port" &&
+		format != "http_url" &&
+		format != "host_port_user_pass_refresh_remark" &&
+		format != "user_pass_at_host_port_refresh_remark" &&
+		format != "json" {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid format"})
+		return
+	}
+
+	entries, warnings, effectiveFormat, err := s.buildExtractorEntries(region, mode, format, count, reveal)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"region":                region,
+		"mode":                  mode,
+		"requested_format":      format,
+		"effective_format":      effectiveFormat,
+		"masked":                !reveal,
+		"requested_count":       count,
+		"output_count":          len(entries),
+		"warnings":              warnings,
+		"entries":               entries,
+		"supports_reveal":       true,
+		"copy_requires_confirm": reveal,
+	})
+}
+
+func (s *Server) buildExtractorEntries(region, mode, format string, count int, reveal bool) ([]any, []string, string, error) {
+	s.cfgMu.RLock()
+	var cfgCopy *config.Config
+	if s.cfgSrc != nil {
+		copyVal := *s.cfgSrc
+		cfgCopy = &copyVal
+	}
+	s.cfgMu.RUnlock()
+	if cfgCopy == nil {
+		return nil, nil, format, errors.New("配置未初始化")
+	}
+
+	candidates := make([]extractorProxyEntry, 0)
+	warnings := make([]string, 0)
+
+	switch mode {
+	case "pool":
+		if (cfgCopy.Mode != "pool" && cfgCopy.Mode != "hybrid") || cfgCopy.Listener.Port == 0 {
+			return nil, nil, format, errors.New("pool endpoint 未启用")
+		}
+		candidates = append(candidates, extractorProxyEntry{
+			Host:     s.resolveLocalHost(cfgCopy.Listener.Address),
+			Port:     cfgCopy.Listener.Port,
+			Username: cfgCopy.Listener.Username,
+			Password: cfgCopy.Listener.Password,
+			Mode:     "pool",
+			Region:   "all",
+			Remark:   "pool-endpoint",
+		})
+	case "geoip":
+		if !cfgCopy.GeoIP.Enabled || cfgCopy.GeoIP.Port == 0 {
+			return nil, nil, format, errors.New("geoip region endpoint 未启用")
+		}
+		host := s.resolveLocalHost(cfgCopy.GeoIP.Listen)
+		if region == "all" {
+			candidates = append(candidates, extractorProxyEntry{
+				Host:     host,
+				Port:     cfgCopy.GeoIP.Port,
+				Username: cfgCopy.Listener.Username,
+				Password: cfgCopy.Listener.Password,
+				Path:     "/",
+				Mode:     "geoip",
+				Region:   "all",
+				Remark:   "geoip-all",
+			})
+		} else {
+			candidates = append(candidates, extractorProxyEntry{
+				Host:     host,
+				Port:     cfgCopy.GeoIP.Port,
+				Username: cfgCopy.Listener.Username,
+				Password: cfgCopy.Listener.Password,
+				Path:     fmt.Sprintf("/%s/", region),
+				Mode:     "geoip",
+				Region:   region,
+				Remark:   fmt.Sprintf("geoip-%s", region),
+			})
+		}
+	case "multi-port":
+		if cfgCopy.Mode != "multi-port" && cfgCopy.Mode != "hybrid" {
+			return nil, nil, format, errors.New("multi-port node list 未启用")
+		}
+		snapshots := s.mgr.SnapshotFiltered(true)
+		for _, snap := range snapshots {
+			if snap.ListenAddress == "" || snap.Port == 0 {
+				continue
+			}
+			if region != "all" && !extractorSnapshotMatchesRegion(snap, region) {
+				continue
+			}
+			candidates = append(candidates, extractorProxyEntry{
+				Host:     s.resolveLocalHost(snap.ListenAddress),
+				Port:     snap.Port,
+				Username: s.cfg.ProxyUsername,
+				Password: s.cfg.ProxyPassword,
+				Mode:     "multi-port",
+				Region:   extractorBestRegion(snap),
+				Remark:   snap.Name,
+				NodeName: snap.Name,
+				NodeTag:  snap.Tag,
+			})
+		}
+		if len(candidates) > 1 {
+			mathrand.Shuffle(len(candidates), func(i, j int) {
+				candidates[i], candidates[j] = candidates[j], candidates[i]
+			})
+		}
+	case "android":
+		if !cfgCopy.AndroidProxy.Enabled {
+			return nil, nil, format, errors.New("android global proxy 未启用")
+		}
+		host := s.resolveLocalHost(cfgCopy.AndroidProxy.Listen)
+		if host == "127.0.0.1" {
+			warnings = append(warnings, "当前输出默认按 adb reverse 场景使用 127.0.0.1；若手机直连电脑，请改成电脑局域网 IP")
+		}
+		appendEntry := func(reg string) {
+			port := androidExtractorPort(cfgCopy.AndroidProxy, reg)
+			if port == 0 {
+				return
+			}
+			candidates = append(candidates, extractorProxyEntry{
+				Host:   host,
+				Port:   port,
+				Mode:   "android",
+				Region: reg,
+				Remark: fmt.Sprintf("android-%s", reg),
+			})
+		}
+		if region == "all" {
+			for _, reg := range androidExtractorRegions() {
+				appendEntry(reg)
+			}
+		} else {
+			appendEntry(region)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, warnings, format, errors.New("没有可用的代理条目")
+	}
+
+	if len(candidates) > count {
+		candidates = candidates[:count]
+	}
+
+	effectiveFormat := format
+	if mode == "geoip" && format != "http_url" && format != "json" {
+		effectiveFormat = "http_url"
+		warnings = append(warnings, "GeoIP 地域入口带路径，只能导出完整 URL 格式，已自动切换")
+	}
+	if mode == "android" && format != "host_port" && format != "adb_command" && format != "json" {
+		effectiveFormat = "host_port"
+		warnings = append(warnings, "Android 全局代理只接受 host:port，已自动切换为 host:port 格式")
+	}
+
+	result := make([]any, 0, len(candidates))
+	for _, candidate := range candidates {
+		result = append(result, formatExtractorEntry(candidate, effectiveFormat, reveal))
+	}
+	return result, warnings, effectiveFormat, nil
+}
+
+func (s *Server) resolveLocalHost(addr string) string {
+	host := strings.TrimSpace(addr)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		if extIP, _, _, _ := s.getSettings(); strings.TrimSpace(extIP) != "" {
+			return strings.TrimSpace(extIP)
+		}
+		return "127.0.0.1"
+	}
+	return host
+}
+
+func extractorBestRegion(snap Snapshot) string {
+	if strings.TrimSpace(snap.Region) != "" {
+		return strings.ToLower(strings.TrimSpace(snap.Region))
+	}
+	return "other"
+}
+
+func extractorSnapshotMatchesRegion(snap Snapshot, region string) bool {
+	if region == "all" {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(snap.Region), region) {
+		return true
+	}
+	haystack := strings.ToLower(strings.Join([]string{
+		snap.Region,
+		snap.Country,
+		snap.Name,
+		snap.Tag,
+	}, " "))
+	aliases := map[string][]string{
+		"us":    {" us ", "usa", "united states", "美国"},
+		"jp":    {" jp ", "japan", "日本"},
+		"hk":    {" hk ", "hong kong", "香港"},
+		"sg":    {" sg ", "singapore", "新加坡"},
+		"tw":    {" tw ", "taiwan", "台湾"},
+		"kr":    {" kr ", "korea", "韩国"},
+		"in":    {" in ", "india", "印度"},
+		"ae":    {" ae ", "uae", "united arab emirates", "dubai", "迪拜", "阿联酋"},
+		"ch":    {" ch ", "switzerland", "zurich", "瑞士", "苏黎世"},
+		"au":    {" au ", "australia", "sydney", "melbourne", "澳大利亚", "悉尼", "墨尔本"},
+		"other": {},
+	}
+	if region == "other" {
+		for _, known := range []string{"us", "jp", "hk", "sg", "tw", "kr", "in", "ae", "ch", "au"} {
+			if extractorSnapshotMatchesRegion(snap, known) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, alias := range aliases[region] {
+		if strings.Contains(haystack, alias) {
+			return true
+		}
+	}
+	return false
+}
+
+func formatExtractorEntry(entry extractorProxyEntry, format string, reveal bool) any {
+	user := entry.Username
+	pass := entry.Password
+	if !reveal && pass != "" {
+		pass = "***"
+	}
+	hostPort := fmt.Sprintf("%s:%d", entry.Host, entry.Port)
+	authPart := ""
+	if user != "" || pass != "" {
+		authPart = fmt.Sprintf("%s:%s", user, pass)
+	}
+	fullURL := fmt.Sprintf("http://%s", hostPort)
+	if authPart != "" {
+		fullURL = fmt.Sprintf("http://%s@%s", authPart, hostPort)
+	}
+	if entry.Path != "" {
+		fullURL += entry.Path
+	}
+	suffix := ""
+	if entry.RefreshURL != "" {
+		suffix += "[" + entry.RefreshURL + "]"
+	}
+	if entry.Remark != "" {
+		suffix += "{" + entry.Remark + "}"
+	}
+
+	switch format {
+	case "host_port":
+		return hostPort
+	case "adb_command":
+		return fmt.Sprintf("adb shell settings put global http_proxy %s", hostPort)
+	case "http_no_auth":
+		return fmt.Sprintf("http://%s", hostPort)
+	case "socks5_url":
+		if authPart == "" {
+			return fmt.Sprintf("socks5://%s", hostPort)
+		}
+		return fmt.Sprintf("socks5://%s@%s", authPart, hostPort)
+	case "socks5_no_auth":
+		return fmt.Sprintf("socks5://%s", hostPort)
+	case "csv":
+		return fmt.Sprintf("%s,%d,%s,%s", entry.Host, entry.Port, user, pass)
+	case "pipe":
+		return fmt.Sprintf("%s|%d|%s|%s", entry.Host, entry.Port, user, pass)
+	case "curl_command":
+		return fmt.Sprintf("curl -x %s http://cp.cloudflare.com/generate_204", fullURL)
+	case "python_requests_json":
+		return map[string]any{
+			"http":  fullURL,
+			"https": fullURL,
+		}
+	case "clash_yaml":
+		name := entry.Remark
+		if name == "" {
+			name = fmt.Sprintf("%s-%d", entry.Region, entry.Port)
+		}
+		return map[string]any{
+			"name":     name,
+			"type":     "http",
+			"server":   entry.Host,
+			"port":     entry.Port,
+			"username": user,
+			"password": pass,
+		}
+	case "host_port_user_pass":
+		if authPart == "" {
+			return hostPort
+		}
+		return fmt.Sprintf("%s:%s:%s", hostPort, user, pass)
+	case "user_pass_at_host_port":
+		if authPart == "" {
+			return hostPort
+		}
+		return fmt.Sprintf("%s@%s", authPart, hostPort)
+	case "http_url":
+		return fullURL
+	case "host_port_user_pass_refresh_remark":
+		base := hostPort
+		if authPart != "" {
+			base = fmt.Sprintf("%s:%s:%s", hostPort, user, pass)
+		}
+		return base + suffix
+	case "user_pass_at_host_port_refresh_remark":
+		base := hostPort
+		if authPart != "" {
+			base = fmt.Sprintf("%s@%s", authPart, hostPort)
+		}
+		return base + suffix
+	case "json":
+		return map[string]any{
+			"host":        entry.Host,
+			"port":        entry.Port,
+			"username":    user,
+			"password":    pass,
+			"path":        entry.Path,
+			"region":      entry.Region,
+			"mode":        entry.Mode,
+			"remark":      entry.Remark,
+			"refresh_url": entry.RefreshURL,
+			"node_name":   entry.NodeName,
+			"node_tag":    entry.NodeTag,
+			"url":         fullURL,
+		}
+	}
+	return fullURL
+}
+
 // handleSettings handles GET/PUT for dynamic settings (external_ip, probe_target, skip_cert_verify, log).
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -850,6 +1336,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"base_port": cfg.MultiPort.BasePort,
 				"username":  cfg.MultiPort.Username,
 				"password":  cfg.MultiPort.Password,
+			}
+			resp["android_proxy"] = map[string]any{
+				"enabled":      cfg.AndroidProxy.Enabled,
+				"listen":       cfg.AndroidProxy.Listen,
+				"base_port":    cfg.AndroidProxy.BasePort,
+				"region_ports": cfg.AndroidProxy.RegionPorts,
 			}
 			resp["pool"] = map[string]any{
 				"mode":               cfg.Pool.Mode,
@@ -938,7 +1430,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
 		}
-
 
 		// Update extended settings
 		s.cfgMu.Lock()

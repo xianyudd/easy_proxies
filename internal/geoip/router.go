@@ -71,16 +71,19 @@ func (r *Router) SetGlobalPool(dialer PoolDialer) {
 // Start starts the GeoIP router HTTP server
 func (r *Router) Start(ctx context.Context) error {
 	addr := fmt.Sprintf("%s:%d", r.cfg.Listen, r.cfg.Port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 
 	r.server = &http.Server{
-		Addr:    addr,
 		Handler: r,
 	}
 
 	go func() {
 		r.logger.Printf("🌐 GeoIP Router started on %s", addr)
-		r.logger.Println("   Routes: /jp, /kr, /us, /hk, /tw, /sg, /other (default: all nodes)")
-		if err := r.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		r.logger.Println("   Routes: /jp, /kr, /us, /hk, /tw, /sg, /in, /ae, /ch, /au, /other (default: all nodes)")
+		if err := r.server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			r.logger.Printf("GeoIP router error: %v", err)
 		}
 	}()

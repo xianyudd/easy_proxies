@@ -162,17 +162,38 @@ func Build(cfg *config.Config) (option.Options, error) {
 		// Collect results
 		for res := range results {
 			meta := metadata[res.tag]
-			meta.Region = res.region.Code
-			meta.Country = res.region.Country
+			resolvedRegion := res.region.Code
+			resolvedCountry := res.region.Country
+			if fallbackRegion := classifyRegionFromText(meta.Name + "\n" + meta.URI); fallbackRegion != "" && (resolvedRegion == "" || resolvedRegion == geoip.RegionOther) {
+				resolvedRegion = fallbackRegion
+				resolvedCountry = geoip.RegionName(fallbackRegion) + " (name matched)"
+			}
+			if resolvedRegion == "" {
+				resolvedRegion = geoip.RegionOther
+			}
+			meta.Region = resolvedRegion
+			meta.Country = resolvedCountry
 			metadata[res.tag] = meta
-			regionMembers[res.region.Code] = append(regionMembers[res.region.Code], res.tag)
+			regionMembers[resolvedRegion] = append(regionMembers[resolvedRegion], res.tag)
 		}
 
 		log.Printf("🌍 GeoIP resolution completed in %.1fs", time.Since(geoStart).Seconds())
 	} else {
-		// No GeoIP - assign all to "other" region
+		// No GeoIP - use name/URI matching first, then fallback to "other"
 		for _, tag := range memberTags {
-			regionMembers[geoip.RegionOther] = append(regionMembers[geoip.RegionOther], tag)
+			meta := metadata[tag]
+			resolvedRegion := classifyRegionFromText(meta.Name + "\n" + meta.URI)
+			if resolvedRegion == "" {
+				resolvedRegion = geoip.RegionOther
+			}
+			meta.Region = resolvedRegion
+			if resolvedRegion == geoip.RegionOther {
+				meta.Country = "Unknown"
+			} else {
+				meta.Country = geoip.RegionName(resolvedRegion) + " (name matched)"
+			}
+			metadata[tag] = meta
+			regionMembers[resolvedRegion] = append(regionMembers[resolvedRegion], tag)
 		}
 	}
 
@@ -1390,4 +1411,50 @@ func printProxyLinks(cfg *config.Config, metadata map[string]poolout.MemberMeta)
 
 	log.Println("═══════════════════════════════════════════════════════════════")
 	log.Println("")
+}
+
+func classifyRegionFromText(text string) string {
+	candidate := strings.ToLower(strings.TrimSpace(text))
+	if candidate == "" {
+		return ""
+	}
+	tokens := make(map[string]struct{})
+	for _, part := range strings.FieldsFunc(candidate, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	}) {
+		if part != "" {
+			tokens[part] = struct{}{}
+		}
+	}
+
+	matchers := []struct {
+		region      string
+		keywords    []string
+		tokenCodes  []string
+	}{
+		{region: geoip.RegionJP, keywords: []string{"日本", "japan", "tokyo", "东京", "osaka", "大阪"}, tokenCodes: []string{"jp"}},
+		{region: geoip.RegionKR, keywords: []string{"韩国", "korea", "seoul", "首尔"}, tokenCodes: []string{"kr"}},
+		{region: geoip.RegionUS, keywords: []string{"美国", "usa", "united states", "san jose", "ashburn", "los angeles", "圣何塞", "阿什本", "洛杉矶"}, tokenCodes: []string{"us"}},
+		{region: geoip.RegionHK, keywords: []string{"香港", "hong kong"}, tokenCodes: []string{"hk"}},
+		{region: geoip.RegionTW, keywords: []string{"台湾", "taiwan"}, tokenCodes: []string{"tw"}},
+		{region: geoip.RegionSG, keywords: []string{"新加坡", "singapore"}, tokenCodes: []string{"sg"}},
+		{region: geoip.RegionIN, keywords: []string{"印度", "india", "mumbai", "孟买", "delhi", "德里"}, tokenCodes: []string{"in"}},
+		{region: geoip.RegionAE, keywords: []string{"阿联酋", "uae", "united arab emirates", "dubai", "迪拜"}, tokenCodes: []string{"ae"}},
+		{region: geoip.RegionCH, keywords: []string{"瑞士", "switzerland", "zurich", "苏黎世"}, tokenCodes: []string{"ch"}},
+		{region: geoip.RegionAU, keywords: []string{"澳大利亚", "australia", "sydney", "悉尼", "melbourne", "墨尔本"}, tokenCodes: []string{"au"}},
+	}
+
+	for _, matcher := range matchers {
+		for _, keyword := range matcher.keywords {
+			if strings.Contains(candidate, keyword) {
+				return matcher.region
+			}
+		}
+		for _, tokenCode := range matcher.tokenCodes {
+			if _, ok := tokens[tokenCode]; ok {
+				return matcher.region
+			}
+		}
+	}
+	return ""
 }

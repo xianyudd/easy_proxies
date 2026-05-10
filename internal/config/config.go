@@ -24,6 +24,7 @@ type Config struct {
 	Mode                string                    `yaml:"mode"`
 	Listener            ListenerConfig            `yaml:"listener"`
 	MultiPort           MultiPortConfig           `yaml:"multi_port"`
+	AndroidProxy        AndroidProxyConfig        `yaml:"android_proxy"`
 	Pool                PoolConfig                `yaml:"pool"`
 	Management          ManagementConfig          `yaml:"management"`
 	SubscriptionRefresh SubscriptionRefreshConfig `yaml:"subscription_refresh"`
@@ -80,6 +81,14 @@ type MultiPortConfig struct {
 	BasePort uint16 `yaml:"base_port"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+}
+
+// AndroidProxyConfig defines unauthenticated, country-specific HTTP proxy ports for Android global proxy.
+type AndroidProxyConfig struct {
+	Enabled     bool              `yaml:"enabled"`
+	Listen      string            `yaml:"listen"`
+	BasePort    uint16            `yaml:"base_port"`
+	RegionPorts map[string]uint16 `yaml:"region_ports"`
 }
 
 // ManagementConfig controls the monitoring HTTP endpoint.
@@ -229,6 +238,12 @@ func (c *Config) normalize() error {
 	}
 	if c.MultiPort.BasePort == 0 {
 		c.MultiPort.BasePort = 24000
+	}
+	if c.AndroidProxy.BasePort == 0 {
+		c.AndroidProxy.BasePort = 13001
+	}
+	if c.AndroidProxy.BasePort == 0 {
+		c.AndroidProxy.BasePort = 13001
 	}
 	if c.Management.Listen == "" {
 		c.Management.Listen = "127.0.0.1:9091"

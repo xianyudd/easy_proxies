@@ -53,12 +53,13 @@ func WithLogger(l Logger) Option {
 type Manager struct {
 	mu sync.RWMutex
 
-	currentBox    *box.Box
-	monitorMgr    *monitor.Manager
-	monitorServer *monitor.Server
-	geoRouter     *geoip.Router
-	cfg           *config.Config
-	monitorCfg    monitor.Config
+	currentBox     *box.Box
+	monitorMgr     *monitor.Manager
+	monitorServer  *monitor.Server
+	geoRouter      *geoip.Router
+	androidRouters []*geoip.Router
+	cfg            *config.Config
+	monitorCfg     monitor.Config
 
 	drainTimeout      time.Duration
 	minAvailableNodes int
@@ -164,6 +165,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	if cfg.GeoIP.Enabled {
 		m.startGeoIPRouter(ctx, cfg)
 	}
+	if cfg.AndroidProxy.Enabled {
+		m.startAndroidProxyRouters(ctx, cfg)
+	}
 
 	return nil
 }
@@ -201,12 +205,24 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 		}
 	}
 
-	// Stop GeoIP router before starting new box to release its port
+	// Stop GeoIP / Android routers before starting new box to release ports
 	m.mu.Lock()
 	if m.geoRouter != nil {
 		m.geoRouter.Stop()
 		m.geoRouter = nil
 	}
+	for _, router := range m.androidRouters {
+		if router != nil {
+			_ = router.Stop()
+		}
+	}
+	m.androidRouters = nil
+	for _, router := range m.androidRouters {
+		if router != nil {
+			_ = router.Stop()
+		}
+	}
+	m.androidRouters = nil
 	m.mu.Unlock()
 
 	// Give OS time to release ports
@@ -274,6 +290,18 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 			m.geoRouter.Stop()
 			m.geoRouter = nil
 		}
+		m.mu.Unlock()
+	}
+	if newCfg.AndroidProxy.Enabled {
+		m.startAndroidProxyRouters(ctx, newCfg)
+	} else {
+		m.mu.Lock()
+		for _, router := range m.androidRouters {
+			if router != nil {
+				_ = router.Stop()
+			}
+		}
+		m.androidRouters = nil
 		m.mu.Unlock()
 	}
 
@@ -471,7 +499,7 @@ func (m *Manager) createBox(ctx context.Context, cfg *config.Config) (*box.Box, 
 				if poolOpts, ok := ob.Options.(*pool.Options); ok {
 					poolOpts.Members = removeFromSlice(poolOpts.Members, badTag)
 					delete(poolOpts.Metadata, badTag)
-					
+
 					// If the pool is now empty, remove it to avoid another validation error
 					if len(poolOpts.Members) == 0 {
 						log.Printf("⚠️  Removing empty pool '%s'", ob.Tag)
@@ -875,7 +903,6 @@ func extractPortFromBindError(err error) uint16 {
 	return 0
 }
 
-
 // reassignConflictingPort finds the node using the conflicting port and assigns a new port.
 func reassignConflictingPort(cfg *config.Config, conflictPort uint16) bool {
 	// Build set of used ports
@@ -1025,4 +1052,62 @@ func (m *Manager) prepareNodeLocked(node config.NodeConfig, currentName string) 
 	}
 
 	return node, nil
+}
+
+func androidRegionOrder() []string {
+	return []string{geoip.RegionUS, geoip.RegionJP, geoip.RegionHK, geoip.RegionSG, geoip.RegionTW, geoip.RegionKR, geoip.RegionIN, geoip.RegionAE, geoip.RegionCH, geoip.RegionAU, geoip.RegionOther}
+}
+
+func androidRegionPort(cfg config.AndroidProxyConfig, region string, idx int) uint16 {
+	if cfg.RegionPorts != nil {
+		if port := cfg.RegionPorts[region]; port != 0 {
+			return port
+		}
+	}
+	basePort := cfg.BasePort
+	if basePort == 0 {
+		basePort = 13001
+	}
+	return basePort + uint16(idx)
+}
+
+// startAndroidProxyRouters starts unauthenticated per-region HTTP proxies for Android global proxy use.
+func (m *Manager) startAndroidProxyRouters(ctx context.Context, cfg *config.Config) {
+	m.mu.Lock()
+	for _, router := range m.androidRouters {
+		if router != nil {
+			_ = router.Stop()
+		}
+	}
+	m.androidRouters = nil
+	m.mu.Unlock()
+
+	listen := cfg.AndroidProxy.Listen
+	if listen == "" {
+		listen = cfg.Listener.Address
+	}
+
+	routers := make([]*geoip.Router, 0)
+	for idx, region := range androidRegionOrder() {
+		poolTag := fmt.Sprintf("pool-%s", region)
+		port := androidRegionPort(cfg.AndroidProxy, region, idx)
+		dialer, ok := pool.GetDialer(poolTag)
+		if !ok {
+			m.logger.Warnf("android proxy pool %s for region %s is unavailable, skipping port %d", poolTag, region, port)
+			continue
+		}
+		routerCfg := geoip.RouterConfig{Listen: listen, Port: port}
+		router := geoip.NewRouter(routerCfg, nil)
+		router.SetGlobalPool(dialer)
+		if err := router.Start(ctx); err != nil {
+			m.logger.Warnf("failed to start android proxy for region %s on %d: %v", region, port, err)
+			continue
+		}
+		m.logger.Infof("android proxy region %s started on http://%s:%d", region, listen, port)
+		routers = append(routers, router)
+	}
+
+	m.mu.Lock()
+	m.androidRouters = routers
+	m.mu.Unlock()
 }

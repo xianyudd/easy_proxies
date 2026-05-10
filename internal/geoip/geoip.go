@@ -2,9 +2,9 @@ package geoip
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
-	"context"
 	"fmt"
 	"io"
 	"log"
@@ -28,6 +28,10 @@ const (
 	RegionHK    = "hk"
 	RegionTW    = "tw"
 	RegionSG    = "sg"
+	RegionIN    = "in"
+	RegionAE    = "ae"
+	RegionCH    = "ch"
+	RegionAU    = "au"
 	RegionOther = "other"
 )
 
@@ -621,6 +625,14 @@ func isoCodeToRegion(isoCode string) string {
 		return RegionTW
 	case "SG":
 		return RegionSG
+	case "IN":
+		return RegionIN
+	case "AE":
+		return RegionAE
+	case "CH":
+		return RegionCH
+	case "AU":
+		return RegionAU
 	default:
 		return RegionOther
 	}
@@ -628,7 +640,7 @@ func isoCodeToRegion(isoCode string) string {
 
 // AllRegions returns all supported region codes
 func AllRegions() []string {
-	return []string{RegionJP, RegionKR, RegionUS, RegionHK, RegionTW, RegionSG, RegionOther}
+	return []string{RegionJP, RegionKR, RegionUS, RegionHK, RegionTW, RegionSG, RegionIN, RegionAE, RegionCH, RegionAU, RegionOther}
 }
 
 // RegionName returns the display name for a region code
@@ -646,6 +658,14 @@ func RegionName(code string) string {
 		return "Taiwan"
 	case RegionSG:
 		return "Singapore"
+	case RegionIN:
+		return "India"
+	case RegionAE:
+		return "UAE"
+	case RegionCH:
+		return "Switzerland"
+	case RegionAU:
+		return "Australia"
 	case RegionOther:
 		return "Other"
 	default:
@@ -668,6 +688,14 @@ func RegionEmoji(code string) string {
 		return "🇹🇼"
 	case RegionSG:
 		return "🇸🇬"
+	case RegionIN:
+		return "🇮🇳"
+	case RegionAE:
+		return "🇦🇪"
+	case RegionCH:
+		return "🇨🇭"
+	case RegionAU:
+		return "🇦🇺"
 	case RegionOther:
 		return "🌍"
 	default:

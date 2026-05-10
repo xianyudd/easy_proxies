@@ -204,6 +204,174 @@
     .btn-danger { background: var(--error); border-color: var(--error); color: #fff; }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
 
+    .extractor-shell { max-width: 1180px; margin: 0 auto; }
+    .extractor-hero {
+      display:grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
+      gap:16px;
+      margin-bottom:18px;
+    }
+    .extractor-hero-card {
+      background: linear-gradient(135deg, rgba(59,130,246,0.12), rgba(15,23,42,0.02));
+      border: 1px solid rgba(96,165,250,0.22);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: var(--shadow-md);
+    }
+    .extractor-hero-card h2 { font-size: 26px; margin-bottom: 10px; }
+    .extractor-hero-card p { color: var(--text-muted); font-size: 13px; line-height: 1.8; }
+    .extractor-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+    .extractor-mini-stats {
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap:12px;
+    }
+    .extractor-stat-card {
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      padding: 16px;
+      min-height: 120px;
+    }
+    .extractor-stat-label { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+    .extractor-stat-value { font-size: 18px; font-weight: 700; }
+    .extractor-stat-note { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin-top: 8px; }
+    .extractor-layout {
+      display:grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.9fr);
+      gap:16px;
+      margin-bottom:16px;
+    }
+    .extractor-preset-grid {
+      display:grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap:14px;
+    }
+    .extractor-preset-card {
+      border:1px solid var(--border);
+      border-radius:16px;
+      padding:16px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+      box-shadow: var(--shadow-sm);
+      min-height: 214px;
+      display:flex;
+      flex-direction:column;
+      justify-content:space-between;
+    }
+    .extractor-preset-card.featured {
+      background: linear-gradient(135deg, rgba(236,72,153,0.15), rgba(99,102,241,0.06));
+      border-color: rgba(236,72,153,0.28);
+      min-height: 246px;
+    }
+    .extractor-card-head {
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+      margin-bottom:12px;
+    }
+    .extractor-card-title { font-size: 16px; font-weight: 700; }
+    .extractor-card-subtitle { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin-top: 6px; }
+    .extractor-badge {
+      font-size: 10px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: rgba(59,130,246,0.12);
+      color: var(--primary);
+      border: 1px solid rgba(59,130,246,0.18);
+      white-space: nowrap;
+    }
+    .extractor-card-meta {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin: 0 0 14px;
+    }
+    .extractor-chip {
+      font-size: 10px;
+      color: var(--text-muted);
+      background: rgba(148,163,184,0.12);
+      border:1px solid var(--border-light);
+      padding:4px 8px;
+      border-radius:999px;
+    }
+    .extractor-action-row {
+      display:flex;
+      gap:8px;
+      margin-top:auto;
+    }
+    .extractor-action-row .btn { flex:1; justify-content:center; padding:9px 10px; }
+    .extractor-random-grid {
+      display:grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap:10px;
+      margin-top: 14px;
+    }
+    .extractor-random-grid .btn { justify-content:center; padding: 12px 10px; }
+    .extractor-side-stack { display:grid; gap:16px; }
+    .extractor-summary-row {
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:12px;
+      flex-wrap:wrap;
+      margin-bottom:12px;
+    }
+    .extractor-status-badge {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 12px;
+      border-radius:999px;
+      font-size:12px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+    }
+    .extractor-status-badge strong { color: var(--text-main); }
+    .extractor-result-grid {
+      display:grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap:12px;
+      margin-bottom:12px;
+    }
+    .extractor-result-card {
+      border:1px solid var(--border);
+      border-radius:16px;
+      padding:14px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      box-shadow: var(--shadow-sm);
+    }
+    .extractor-result-string {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.8;
+      word-break: break-all;
+      color: var(--text-main);
+      background: rgba(15,23,42,0.35);
+      border: 1px solid var(--border-light);
+      border-radius: 12px;
+      padding: 12px;
+      margin-top: 10px;
+    }
+    .extractor-empty-note {
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 24px;
+      text-align:center;
+      border:1px dashed var(--border);
+      border-radius: 14px;
+    }
+    @media (max-width: 1080px) {
+      .extractor-hero, .extractor-layout { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 768px) {
+      .extractor-mini-stats,
+      .extractor-random-grid { grid-template-columns: 1fr; }
+      .extractor-shell { max-width: 100%; }
+      .extractor-hero-card h2 { font-size: 22px; }
+      .extractor-action-row { flex-direction:column; }
+    }
+
     /* Dashboard Grid */
     .overview-grid {
       display: grid;
@@ -407,6 +575,10 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
         节点配置
       </div>
+      <div class="nav-item" onclick="switchTab('extractor')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>
+        代理提取
+      </div>
       <div class="nav-item" onclick="switchTab('debug')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
         诊断分析
@@ -523,7 +695,11 @@
           <button class="region-btn" data-region="hk" onclick="filterByRegion('hk')">🇭🇰 HK</button>
           <button class="region-btn" data-region="tw" onclick="filterByRegion('tw')">🇹🇼 TW</button>
           <button class="region-btn" data-region="sg" onclick="filterByRegion('sg')">🇸🇬 SG</button>
-          <button class="region-btn" data-region="other" onclick="filterByRegion('other')">Other</button>
+          <button class="region-btn" data-region="in" onclick="filterByRegion('in')">🇮🇳 IN</button>
+          <button class="region-btn" data-region="ae" onclick="filterByRegion('ae')">🇦🇪 AE</button>
+          <button class="region-btn" data-region="ch" onclick="filterByRegion('ch')">🇨🇭 CH</button>
+          <button class="region-btn" data-region="au" onclick="filterByRegion('au')">🇦🇺 AU</button>
+          <button class="region-btn" data-region="other" onclick="filterByRegion('other')">其他</button>
         </div>
 
         <div class="panel">
@@ -793,6 +969,318 @@
         </div>
       </div>
 
+      <!-- Extractor Tab -->
+      <div id="extractorTab" class="tab-content">
+        <div class="extractor-shell">
+          <div class="extractor-hero">
+            <div class="extractor-hero-card">
+              <div class="extractor-badge" style="display:inline-flex; margin-bottom:12px;">LOCAL ONLY · PROXY EXTRACTOR</div>
+              <h2>代理提取 / Proxy Extractor</h2>
+              <p>
+                现在这页更接近商业代理平台的提取台：左侧主打快捷提取，右侧保留高级参数；支持快捷提取、直接复制、随机 10 条、显示真实密码和卡片结果区。
+                GeoIP 地域入口仅支持完整 URL 格式；指纹浏览器优先推荐 multi-port 独立节点。
+              </p>
+              <div class="extractor-actions">
+                <button class="btn btn-primary" onclick="generateExtractor()">生成代理</button>
+                <button class="btn" onclick="copyExtractorOutput()">复制全部</button>
+                <button class="btn" onclick="downloadExtractorOutput()">下载 TXT</button>
+              </div>
+            </div>
+            <div class="extractor-mini-stats">
+              <div class="extractor-stat-card">
+                <div class="extractor-stat-label">推荐模式</div>
+                <div class="extractor-stat-value">Multi-Port</div>
+                <div class="extractor-stat-note">更适合指纹浏览器、单账号隔离、固定端口和单节点稳定使用。</div>
+              </div>
+              <div class="extractor-stat-card">
+                <div class="extractor-stat-label">最快上手</div>
+                <div class="extractor-stat-value">Pool Endpoint</div>
+                <div class="extractor-stat-note">一个入口长期使用，最像“代理平台主入口”。</div>
+              </div>
+              <div class="extractor-stat-card">
+                <div class="extractor-stat-label">地区定向</div>
+                <div class="extractor-stat-value">GeoIP Region</div>
+                <div class="extractor-stat-note">适合 US / JP / HK / SG 这种按地区路由的提取方式。</div>
+              </div>
+              <div class="extractor-stat-card">
+                <div class="extractor-stat-label">Android 全局代理</div>
+                <div class="extractor-stat-value">Smart Port</div>
+                <div class="extractor-stat-note">自动按国家映射本地无认证端口，适合 adb reverse + Android 全局代理。</div>
+              </div>
+              <div class="extractor-stat-card">
+                <div class="extractor-stat-label">当前输出</div>
+                <div id="extractorLiveState" class="extractor-stat-value">真实密码</div>
+                <div class="extractor-stat-note">复制、下载、卡片结果和快捷提取都会按当前设置输出。</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="extractor-layout">
+            <div class="panel">
+              <div class="panel-header"><div class="panel-title">快捷提取</div></div>
+              <div style="padding:16px;">
+                <div class="extractor-preset-grid">
+                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(59,130,246,0.10), rgba(59,130,246,0.04));">
+                    <div>
+                      <div class="extractor-card-head">
+                        <div>
+                          <div class="extractor-card-title">默认池入口</div>
+                          <div class="extractor-card-subtitle">统一出口，适合长期常驻、本机全局代理、curl 和 Python requests。</div>
+                        </div>
+                        <span class="extractor-badge">POOL</span>
+                      </div>
+                      <div class="extractor-card-meta">
+                        <span class="extractor-chip">完整 URL</span>
+                        <span class="extractor-chip">1 条</span>
+                        <span class="extractor-chip">长期稳定</span>
+                      </div>
+                    </div>
+                    <div class="extractor-action-row">
+                      <button class="btn" onclick="runQuickExtract('pool','all','http_url',1,true)">立即提取</button>
+                      <button class="btn btn-primary" onclick="quickCopy('pool','all','http_url',1)">直接复制</button>
+                    </div>
+                  </div>
+
+                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(16,185,129,0.10), rgba(16,185,129,0.04));">
+                    <div>
+                      <div class="extractor-card-head">
+                        <div>
+                          <div class="extractor-card-title">US 地域入口</div>
+                          <div class="extractor-card-subtitle">美国地区池，适合地区定向访问与流量分流。</div>
+                        </div>
+                        <span class="extractor-badge" style="background:rgba(16,185,129,0.14); color:var(--success); border-color:rgba(16,185,129,0.22);">US</span>
+                      </div>
+                      <div class="extractor-card-meta">
+                        <span class="extractor-chip">GeoIP URL</span>
+                        <span class="extractor-chip">1 条</span>
+                        <span class="extractor-chip">地区路由</span>
+                      </div>
+                    </div>
+                    <div class="extractor-action-row">
+                      <button class="btn" onclick="runQuickExtract('geoip','us','http_url',1,true)">立即提取</button>
+                      <button class="btn btn-primary" onclick="quickCopy('geoip','us','http_url',1)">直接复制</button>
+                    </div>
+                  </div>
+
+                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(245,158,11,0.10), rgba(245,158,11,0.04));">
+                    <div>
+                      <div class="extractor-card-head">
+                        <div>
+                          <div class="extractor-card-title">JP 地域入口</div>
+                          <div class="extractor-card-subtitle">日本地区池，适合日本业务、定向访问与区域化网络请求。</div>
+                        </div>
+                        <span class="extractor-badge" style="background:rgba(245,158,11,0.14); color:var(--warning); border-color:rgba(245,158,11,0.22);">JP</span>
+                      </div>
+                      <div class="extractor-card-meta">
+                        <span class="extractor-chip">GeoIP URL</span>
+                        <span class="extractor-chip">1 条</span>
+                        <span class="extractor-chip">区域业务</span>
+                      </div>
+                    </div>
+                    <div class="extractor-action-row">
+                      <button class="btn" onclick="runQuickExtract('geoip','jp','http_url',1,true)">立即提取</button>
+                      <button class="btn btn-primary" onclick="quickCopy('geoip','jp','http_url',1)">直接复制</button>
+                    </div>
+                  </div>
+
+                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(168,85,247,0.10), rgba(168,85,247,0.04));">
+                    <div>
+                      <div class="extractor-card-head">
+                        <div>
+                          <div class="extractor-card-title">HK / SG 地域入口</div>
+                          <div class="extractor-card-subtitle">香港、新加坡常用地区快捷提取，适合电商、业务分区和东南亚访问。</div>
+                        </div>
+                        <span class="extractor-badge" style="background:rgba(168,85,247,0.14); color:#a855f7; border-color:rgba(168,85,247,0.22);">HK · SG</span>
+                      </div>
+                      <div class="extractor-card-meta">
+                        <span class="extractor-chip">GeoIP URL</span>
+                        <span class="extractor-chip">单击提取</span>
+                        <span class="extractor-chip">地区池</span>
+                      </div>
+                    </div>
+                    <div class="extractor-action-row">
+                      <button class="btn" onclick="quickCopy('geoip','hk','http_url',1)">复制 HK</button>
+                      <button class="btn btn-primary" onclick="quickCopy('geoip','sg','http_url',1)">复制 SG</button>
+                    </div>
+                  </div>
+
+                  <div class="extractor-preset-card featured" style="grid-column: span 2;">
+                    <div>
+                      <div class="extractor-card-head">
+                        <div>
+                          <div class="extractor-card-title">指纹浏览器推荐入口</div>
+                          <div class="extractor-card-subtitle">优先提取 multi-port 独立节点，更像商业代理平台的“单条代理提取”。适合浏览器矩阵、账号隔离和固定端口导入。</div>
+                        </div>
+                        <span class="extractor-badge" style="background:rgba(236,72,153,0.16); color:#ec4899; border-color:rgba(236,72,153,0.28);">FINGERPRINT</span>
+                      </div>
+                      <div class="extractor-card-meta">
+                        <span class="extractor-chip">multi-port</span>
+                        <span class="extractor-chip">支持随机 1 / 5 / 10 条</span>
+                        <span class="extractor-chip">适合指纹浏览器</span>
+                      </div>
+                      <div class="extractor-random-grid">
+                        <button class="btn btn-primary" onclick="runQuickExtract('multi-port','all','host_port_user_pass',1,true)">随机 1 条</button>
+                        <button class="btn btn-primary" onclick="runQuickExtract('multi-port','all','host_port_user_pass',5,true)">随机 5 条</button>
+                        <button class="btn btn-primary" onclick="runQuickExtract('multi-port','all','host_port_user_pass',10,true)">随机 10 条</button>
+                      </div>
+                    </div>
+                    <div class="extractor-action-row" style="margin-top:16px;">
+                      <button class="btn" onclick="runQuickExtract('multi-port','jp','host_port_user_pass',3,true)">JP 多端口 / 3 条</button>
+                      <button class="btn" onclick="runQuickExtract('multi-port','us','host_port_user_pass',3,true)">US 多端口 / 3 条</button>
+                      <button class="btn btn-primary" onclick="quickCopy('multi-port','all','host_port_user_pass',1)">直接复制随机 1 条</button>
+                    </div>
+                  </div>
+
+                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(34,197,94,0.10), rgba(34,197,94,0.04));">
+                    <div>
+                      <div class="extractor-card-head">
+                        <div>
+                          <div class="extractor-card-title">Android 全局代理</div>
+                          <div class="extractor-card-subtitle">给 adb reverse / Android 全局代理用。自动按国家选择本地无认证端口，避免手动记端口。</div>
+                        </div>
+                        <span class="extractor-badge" style="background:rgba(34,197,94,0.14); color:var(--success); border-color:rgba(34,197,94,0.22);">ANDROID</span>
+                      </div>
+                      <div class="extractor-card-meta">
+                        <span class="extractor-chip">host:port</span>
+                        <span class="extractor-chip">智能端口</span>
+                        <span class="extractor-chip">无认证</span>
+                      </div>
+                    </div>
+                    <div class="extractor-action-row">
+                      <button class="btn" onclick="runQuickExtract('android','us','host_port',1,true)">美国端口</button>
+                      <button class="btn" onclick="runQuickExtract('android','jp','host_port',1,true)">日本端口</button>
+                      <button class="btn btn-primary" onclick="runQuickExtract('android','ch','host_port',1,true)">瑞士端口</button>
+                    </div>
+                  </div>
+
+                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(6,182,212,0.10), rgba(6,182,212,0.04));">
+                    <div>
+                      <div class="extractor-card-head">
+                        <div>
+                          <div class="extractor-card-title">ADB 命令快捷提取</div>
+                          <div class="extractor-card-subtitle">直接生成可执行命令。默认适配 adb reverse 场景；如果手机走局域网直连，请改成电脑局域网 IP。</div>
+                        </div>
+                        <span class="extractor-badge" style="background:rgba(6,182,212,0.14); color:#06b6d4; border-color:rgba(6,182,212,0.22);">ADB</span>
+                      </div>
+                      <div class="extractor-card-meta">
+                        <span class="extractor-chip">adb command</span>
+                        <span class="extractor-chip">单条复制</span>
+                        <span class="extractor-chip">全局代理</span>
+                      </div>
+                    </div>
+                    <div class="extractor-action-row">
+                      <button class="btn" onclick="quickCopy('android','us','adb_command',1)">复制 US 命令</button>
+                      <button class="btn" onclick="quickCopy('android','jp','adb_command',1)">复制 JP 命令</button>
+                      <button class="btn btn-primary" onclick="quickCopy('android','ch','adb_command',1)">复制 CH 命令</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="extractor-side-stack">
+              <div class="panel">
+                <div class="panel-header"><div class="panel-title">高级参数</div></div>
+                <div style="padding:16px; display:grid; gap:14px;">
+                  <div class="form-group">
+                    <label>区域选择</label>
+                    <select id="extractorRegion" class="setting-input">
+                      <option value="all">全部(all)</option>
+                      <option value="us">美国(us)</option>
+                      <option value="jp">日本(jp)</option>
+                      <option value="hk">香港(hk)</option>
+                      <option value="sg">新加坡(sg)</option>
+                      <option value="tw">台湾(tw)</option>
+                      <option value="kr">韩国(kr)</option>
+                      <option value="in">印度(in)</option>
+                      <option value="ae">阿联酋(ae)</option>
+                      <option value="ch">瑞士(ch)</option>
+                      <option value="au">澳大利亚(au)</option>
+                      <option value="other">其他(other)</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>模式选择</label>
+                    <select id="extractorMode" class="setting-input" onchange="handleExtractorModeChange()">
+                      <option value="pool">pool endpoint</option>
+                      <option value="geoip">geoip region endpoint</option>
+                      <option value="multi-port">multi-port node list</option>
+                      <option value="android">android global proxy</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>格式选择</label>
+                    <select id="extractorFormat" class="setting-input">
+                      <option value="host_port">host:port</option>
+                      <option value="adb_command">adb shell settings put global http_proxy host:port</option>
+                      <option value="http_no_auth">http://host:port</option>
+                      <option value="socks5_url">socks5://username:password@host:port</option>
+                      <option value="socks5_no_auth">socks5://host:port</option>
+                      <option value="host_port_user_pass">host:port:username:password</option>
+                      <option value="user_pass_at_host_port">username:password@host:port</option>
+                      <option value="http_url">http://username:password@host:port</option>
+                      <option value="csv">host,port,username,password</option>
+                      <option value="pipe">host|port|username|password</option>
+                      <option value="curl_command">curl -x http://username:password@host:port</option>
+                      <option value="python_requests_json">Python requests JSON</option>
+                      <option value="clash_yaml">Clash YAML object</option>
+                      <option value="host_port_user_pass_refresh_remark">host:port:username:password[refresh_url]{remark}</option>
+                      <option value="user_pass_at_host_port_refresh_remark">username:password@host:port[refresh_url]{remark}</option>
+                      <option value="json">JSON</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>输出数量</label>
+                    <input id="extractorCount" type="number" min="1" max="500" value="1" class="setting-input" />
+                  </div>
+                  <div class="checkbox-row" style="margin-bottom:0;">
+                    <input type="checkbox" id="extractorReveal" checked onchange="handleExtractorModeChange()" />
+                    <label for="extractorReveal">显示真实凭据</label>
+                  </div>
+                  <div id="extractorModeHint" style="font-size:11px; color:var(--text-muted); line-height:1.8;">
+                    默认池适合长期稳定使用；GeoIP 入口适合地区路由；指纹浏览器优先选择 multi-port 节点。
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-header"><div class="panel-title">使用建议</div></div>
+                <div style="padding:16px; display:grid; gap:10px; font-size:12px; color:var(--text-muted); line-height:1.8;">
+                  <div><strong style="color:var(--text-main);">curl / requests：</strong> 优先默认池或 GeoIP 地区 URL。</div>
+                  <div><strong style="color:var(--text-main);">浏览器扩展：</strong> 推荐完整 URL 或账号格式。</div>
+                  <div><strong style="color:var(--text-main);">指纹浏览器：</strong> 优先随机多端口或指定地区多端口。</div>
+                  <div><strong style="color:var(--text-main);">Android 全局代理：</strong> 选择 android global proxy，优先用 host:port 或 ADB 命令格式。</div>
+                  <div><strong style="color:var(--text-main);">批量导出：</strong> 先生成，再用“复制全部”或“下载 TXT”。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header"><div class="panel-title">提取结果</div></div>
+            <div style="padding:16px;">
+              <div class="extractor-summary-row">
+                <div>
+                  <div id="extractorMeta" style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">尚未生成</div>
+                  <div style="font-size:12px; color:var(--text-muted);">卡片结果区更适合单条复制；下方文本框更适合批量复制、导入脚本和下载 TXT。</div>
+                </div>
+                <div class="extractor-status-badge"><span>当前输出</span><strong id="extractorResultState">真实密码</strong></div>
+              </div>
+              <div id="extractorWarnings" style="display:none; margin-bottom:10px; background: rgba(245, 158, 11, 0.1); border: 1px solid var(--warning); color: var(--warning); padding: 10px 12px; border-radius: 10px; font-size:12px;"></div>
+              <div style="display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+                <span class="extractor-chip">快捷提取</span>
+                <span class="extractor-chip">直接复制</span>
+                <span class="extractor-chip">随机 10 条</span>
+                <span class="extractor-chip">显示真实密码</span>
+                <span class="extractor-chip">卡片结果区</span>
+              </div>
+              <div id="extractorCards" class="extractor-result-grid"></div>
+              <textarea id="extractorOutput" readonly class="setting-input" style="height:300px; resize:vertical; font-family: var(--font-mono); line-height:1.7;"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </main>
 
@@ -874,6 +1362,8 @@
     let configNodes = [];
     let _savedSubSnapshot = '';
     let _savedCoreSnapshot = '';
+    let extractorLastText = '';
+    let extractorLastMasked = true;
 
     function showFullscreenLoading(text, subtext) {
       document.getElementById('fullscreenLoadingText').textContent = text || '处理中...';
@@ -905,7 +1395,7 @@
       trafficChartInst && trafficChartInst.resize();
     });
 
-    const EMOJIS = { jp: '🇯🇵', kr: '🇰🇷', us: '🇺🇸', hk: '🇭🇰', tw: '🇹🇼', sg: '🇸🇬', other: '🌍' };
+    const EMOJIS = { jp: '🇯🇵', kr: '🇰🇷', us: '🇺🇸', hk: '🇭🇰', tw: '🇹🇼', sg: '🇸🇬', in: '🇮🇳', ae: '🇦🇪', ch: '🇨🇭', au: '🇦🇺', other: '🌍' };
 
     function showToast(msg, type='success') {
       const c = document.getElementById('toastContainer');
@@ -953,6 +1443,7 @@
         stopLogPolling();
       }
       if (name === 'settings') loadSettingsPage();
+      if (name === 'extractor') handleExtractorModeChange();
     }
 
     function toggleAutoRefresh() {
@@ -1270,6 +1761,207 @@
         const a = document.createElement('a'); a.href = url; a.download = 'nodes.txt';
         document.body.appendChild(a); a.click(); document.body.removeChild(a); window.URL.revokeObjectURL(url);
       } catch(e) { showToast('导出失败', 'error');}
+    }
+
+    function handleExtractorModeChange() {
+      const mode = document.getElementById('extractorMode')?.value;
+      const format = document.getElementById('extractorFormat');
+      const hint = document.getElementById('extractorModeHint');
+      const region = document.getElementById('extractorRegion');
+      const live = document.getElementById('extractorLiveState');
+      if (!mode || !format || !hint || !region) return;
+      if (mode === 'pool') {
+        hint.textContent = 'pool endpoint 会输出默认代理池入口，适合 curl、Python requests、系统代理长期使用。';
+        region.value = 'all';
+      } else if (mode === 'geoip') {
+        hint.textContent = 'geoip region endpoint 会输出带 /us/ /jp/ 的地区 URL；非完整 URL 格式会自动切换。';
+      } else if (mode === 'android') {
+        hint.textContent = 'android global proxy 会按国家智能计算无认证本地端口；推荐 host:port 或 ADB 命令格式，适合 adb reverse 场景。';
+      } else {
+        hint.textContent = 'multi-port node list 会输出独立节点端口，最适合指纹浏览器、浏览器扩展和稳定单节点场景。';
+      }
+      if (mode === 'geoip' && format.value !== 'http_url' && format.value !== 'json') {
+        format.value = 'http_url';
+      }
+      if (mode === 'android' && !['host_port', 'adb_command', 'http_no_auth', 'json'].includes(format.value)) {
+        format.value = 'host_port';
+      }
+      if (live) {
+        live.textContent = mode === 'android'
+          ? '无认证端口'
+          : (document.getElementById('extractorReveal').checked ? '真实密码' : '脱敏显示');
+        const resultState = document.getElementById('extractorResultState');
+        if (resultState) resultState.textContent = mode === 'android'
+          ? '无认证端口'
+          : (document.getElementById('extractorReveal').checked ? '真实密码' : '脱敏显示');
+      }
+    }
+
+    async function generateExtractor() {
+      const region = document.getElementById('extractorRegion').value;
+      const mode = document.getElementById('extractorMode').value;
+      const format = document.getElementById('extractorFormat').value;
+      const count = document.getElementById('extractorCount').value || '1';
+      const reveal = document.getElementById('extractorReveal').checked;
+      return runExtractorRequest({ region, mode, format, count, reveal, syncForm: false });
+    }
+
+    async function runQuickExtract(mode, region, format, count, reveal) {
+      document.getElementById('extractorMode').value = mode;
+      document.getElementById('extractorRegion').value = region;
+      document.getElementById('extractorFormat').value = format;
+      document.getElementById('extractorCount').value = String(count);
+      document.getElementById('extractorReveal').checked = !!reveal;
+      handleExtractorModeChange();
+      return runExtractorRequest({ region, mode, format, count, reveal, syncForm: true });
+    }
+
+    function clearExtractorOutput(message) {
+      extractorLastText = '';
+      const output = document.getElementById('extractorOutput');
+      const meta = document.getElementById('extractorMeta');
+      const cards = document.getElementById('extractorCards');
+      const warnings = document.getElementById('extractorWarnings');
+      if (output) output.value = '';
+      if (meta) meta.textContent = message || '尚未生成';
+      if (cards) cards.innerHTML = '<div class="extractor-empty-note">请重新生成代理。</div>';
+      if (warnings) { warnings.style.display = 'none'; warnings.textContent = ''; }
+    }
+
+    async function runExtractorRequest({ region, mode, format, count, reveal }) {
+      try {
+        const q = new URLSearchParams({ region, mode, format, count, reveal: reveal ? '1' : '0' });
+        const res = await fetch('/api/extractor?' + q.toString());
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          clearExtractorOutput('提取失败，请重新生成');
+          showToast(data.error || '提取失败', 'error');
+          return;
+        }
+        extractorLastMasked = !!data.masked;
+        const output = Array.isArray(data.entries)
+          ? (data.effective_format === 'json'
+              ? JSON.stringify(data.entries, null, 2)
+              : data.entries.join('\n'))
+          : '';
+        extractorLastText = output;
+        document.getElementById('extractorOutput').value = output;
+        renderExtractorCards(data.entries || [], data);
+        document.getElementById('extractorMeta').textContent =
+          `模式: ${data.mode} | 区域: ${data.region} | 格式: ${data.effective_format} | 输出: ${data.output_count}/${data.requested_count} | ${data.masked ? '已脱敏' : '真实凭据'}`;
+        const resultState = document.getElementById('extractorResultState');
+        if (resultState) resultState.textContent = data.masked ? '脱敏显示' : '真实密码';
+        const warnings = data.warnings || [];
+        const warningsEl = document.getElementById('extractorWarnings');
+        if (warnings.length) {
+          warningsEl.style.display = 'block';
+          warningsEl.textContent = warnings.join('；');
+        } else {
+          warningsEl.style.display = 'none';
+          warningsEl.textContent = '';
+        }
+        showToast('代理提取成功');
+        return data;
+      } catch(e) {
+        clearExtractorOutput('提取失败，请重新生成');
+        showToast('提取失败: ' + e.message, 'error');
+        return null;
+      }
+    }
+
+    function renderExtractorCards(entries, data) {
+      const el = document.getElementById('extractorCards');
+      if (!el) return;
+      if (!entries || !entries.length) {
+        el.innerHTML = '<div class="extractor-empty-note">还没有生成代理，先使用上方快捷提取或高级参数生成结果。</div>';
+        return;
+      }
+      const isJSON = data.effective_format === 'json';
+      const previewEntries = entries.slice(0, 20);
+      el.innerHTML = previewEntries.map((item, index) => {
+        const rawEntry = isJSON ? item : null;
+        const entry = isJSON ? (item.url || `${item.host}:${item.port}`) : String(item);
+        const cardMode = escapeHtml(String(rawEntry?.mode || data.mode || 'extractor'));
+        const cardRegion = escapeHtml(String(rawEntry?.region || data.region || 'all'));
+        const cardRemark = rawEntry?.remark ? `<span class="extractor-chip">${escapeHtml(String(rawEntry.remark))}</span>` : '';
+        const cardNode = rawEntry?.node_name ? `<span class="extractor-chip">${escapeHtml(String(rawEntry.node_name))}</span>` : '';
+        const copyLabel = data.masked ? '复制脱敏' : '复制本条';
+        return `
+          <div class="extractor-result-card">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
+              <div>
+                <div style="font-size:13px; font-weight:700; margin-bottom:6px;">代理 ${index + 1}</div>
+                <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                  <span class="extractor-badge">${cardMode}</span>
+                  <span class="extractor-chip">${cardRegion}</span>
+                  <span class="extractor-chip">${escapeHtml(String(data.effective_format || 'unknown'))}</span>
+                  ${cardRemark}
+                  ${cardNode}
+                </div>
+              </div>
+              <button class="btn btn-sm btn-primary" onclick="copySingleExtractorEntry('${encodeURIComponent(String(entry))}')">${copyLabel}</button>
+            </div>
+            <div class="extractor-result-string">${escapeHtml(String(entry))}</div>
+          </div>
+        `;
+      }).join('');
+      if (entries.length > 20) {
+        el.innerHTML += `<div class="extractor-empty-note">当前共生成 ${entries.length} 条代理，卡片区仅展示前 20 条，完整结果请在下方文本框查看或下载 TXT。</div>`;
+      }
+    }
+
+    async function copySingleExtractorEntry(entry) {
+      try {
+        await navigator.clipboard.writeText(decodeURIComponent(entry));
+        showToast('单条代理已复制');
+      } catch (e) {
+        showToast('复制失败', 'error');
+      }
+    }
+
+    async function quickCopy(mode, region, format, count) {
+      const data = await runQuickExtract(mode, region, format, count, true);
+      if (!data || !Array.isArray(data.entries) || !data.entries.length) return;
+      const text = data.effective_format === 'json'
+        ? JSON.stringify(data.entries, null, 2)
+        : data.entries.join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('快捷代理已复制');
+      } catch (e) {
+        showToast('复制失败', 'error');
+      }
+    }
+
+    async function copyExtractorOutput() {
+      const text = document.getElementById('extractorOutput').value;
+      if (!text) {
+        showToast('请先生成代理', 'error');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('已复制到剪贴板');
+      } catch(e) {
+        showToast('复制失败', 'error');
+      }
+    }
+
+    function downloadExtractorOutput() {
+      const text = document.getElementById('extractorOutput').value;
+      if (!text) {
+        showToast('请先生成代理', 'error');
+        return;
+      }
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'proxy_extractor.txt';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
     }
 
     // Subscriptions

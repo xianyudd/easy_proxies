@@ -1,0 +1,17 @@
+services:
+  easy_proxies:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: easy_proxies:desktop
+    container_name: easy_proxies_desktop
+    restart: unless-stopped
+    ports:
+      - "2323:2323"
+      - "1221:1221"
+      - "9091:9091"
+      - "24000-24100:24000-24100"
+    volumes:
+      - ./config.yaml:/etc/easy_proxies/config.yaml
+      - ./nodes.txt:/etc/easy_proxies/nodes.txt
+      - ./logs:/app/logs
