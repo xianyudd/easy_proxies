@@ -23,4 +23,10 @@ func TestAndroidRegionPortUsesOverride(t *testing.T) {
 	if got := androidRegionPort(cfg, geoip.RegionAU, 9); got != 13010 {
 		t.Fatalf("expected fallback port 13010, got %d", got)
 	}
+	if got := androidRegionPort(cfg, geoip.RegionOther, 10); got != 13011 {
+		t.Fatalf("expected existing other fallback port 13011, got %d", got)
+	}
+	if got := androidRegionPort(cfg, geoip.RegionDE, 11); got != 13012 {
+		t.Fatalf("expected germany fallback port 13012, got %d", got)
+	}
 }

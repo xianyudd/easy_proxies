@@ -117,7 +117,14 @@ When GeoIP is enabled, Easy Proxies automatically classifies your proxy nodes by
 | `hk` | Hong Kong 🇭🇰 |
 | `tw` | Taiwan 🇹🇼 |
 | `sg` | Singapore 🇸🇬 |
-| `other` | All other regions |
+| `in` | India 🇮🇳 |
+| `ae` | United Arab Emirates 🇦🇪 |
+| `ch` | Switzerland 🇨🇭 |
+| `au` | Australia 🇦🇺 |
+| `de` | Germany 🇩🇪 |
+| `gb` | United Kingdom 🇬🇧 |
+| `ca` | Canada 🇨🇦 |
+| `other` | Unclassified regions |
 
 ### Configuration
 

@@ -80,6 +80,9 @@ http://<USERNAME>:<PASSWORD>@127.0.0.1:<GEOIP_PORT>/<REGION>/
 - JP：`/jp/`
 - HK：`/hk/`
 - SG：`/sg/`
+- DE：`/de/`
+- GB：`/gb/`
+- CA：`/ca/`
 
 验证示例：
 

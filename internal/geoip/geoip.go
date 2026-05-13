@@ -32,6 +32,9 @@ const (
 	RegionAE    = "ae"
 	RegionCH    = "ch"
 	RegionAU    = "au"
+	RegionDE    = "de"
+	RegionGB    = "gb"
+	RegionCA    = "ca"
 	RegionOther = "other"
 )
 
@@ -633,6 +636,12 @@ func isoCodeToRegion(isoCode string) string {
 		return RegionCH
 	case "AU":
 		return RegionAU
+	case "DE":
+		return RegionDE
+	case "GB", "UK":
+		return RegionGB
+	case "CA":
+		return RegionCA
 	default:
 		return RegionOther
 	}
@@ -640,7 +649,7 @@ func isoCodeToRegion(isoCode string) string {
 
 // AllRegions returns all supported region codes
 func AllRegions() []string {
-	return []string{RegionJP, RegionKR, RegionUS, RegionHK, RegionTW, RegionSG, RegionIN, RegionAE, RegionCH, RegionAU, RegionOther}
+	return []string{RegionJP, RegionKR, RegionUS, RegionHK, RegionTW, RegionSG, RegionIN, RegionAE, RegionCH, RegionAU, RegionDE, RegionGB, RegionCA, RegionOther}
 }
 
 // RegionName returns the display name for a region code
@@ -666,6 +675,12 @@ func RegionName(code string) string {
 		return "Switzerland"
 	case RegionAU:
 		return "Australia"
+	case RegionDE:
+		return "Germany"
+	case RegionGB:
+		return "United Kingdom"
+	case RegionCA:
+		return "Canada"
 	case RegionOther:
 		return "Other"
 	default:
@@ -696,6 +711,12 @@ func RegionEmoji(code string) string {
 		return "🇨🇭"
 	case RegionAU:
 		return "🇦🇺"
+	case RegionDE:
+		return "🇩🇪"
+	case RegionGB:
+		return "🇬🇧"
+	case RegionCA:
+		return "🇨🇦"
 	case RegionOther:
 		return "🌍"
 	default:

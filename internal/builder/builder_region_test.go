@@ -27,6 +27,9 @@ func TestClassifyRegionFromTextMatchesTokenizedRegionCodes(t *testing.T) {
 		{name: "india token", text: "premium IN relay", want: geoip.RegionIN},
 		{name: "uae token", text: "edge AE route", want: geoip.RegionAE},
 		{name: "australia keyword", text: "Sydney premium", want: geoip.RegionAU},
+		{name: "germany chinese keyword", text: "德国DE-HY2", want: geoip.RegionDE},
+		{name: "uk token", text: "premium UK London", want: geoip.RegionGB},
+		{name: "canada keyword", text: "加拿大-优化", want: geoip.RegionCA},
 	}
 
 	for _, tc := range cases {

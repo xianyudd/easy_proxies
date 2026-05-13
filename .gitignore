@@ -43,3 +43,6 @@ coverage.html
 
 # AI tool artifacts
 .ace-tool/
+
+# Browser verification artifacts
+.playwright-mcp/

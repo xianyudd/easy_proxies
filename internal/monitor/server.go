@@ -19,8 +19,10 @@ import (
 	"sync"
 	"time"
 
+	"easy_proxies/internal/cloudflarecheck"
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
+	"easy_proxies/internal/reputation"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -88,6 +90,8 @@ type Server struct {
 
 	subRefresher SubscriptionRefresher
 	nodeMgr      NodeManager
+	repChecker   *reputation.Checker
+	cfChecker    *cloudflarecheck.Checker
 }
 
 // NewServer constructs a server; it can be nil when disabled.
@@ -112,6 +116,8 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 		sessions:   make(map[string]*Session),
 		sessionTTL: 24 * time.Hour,
 		probeSem:   semaphore.NewWeighted(maxConcurrentProbes),
+		repChecker: reputation.NewChecker(),
+		cfChecker:  cloudflarecheck.NewChecker(),
 	}
 
 	// Start session cleanup goroutine
@@ -129,6 +135,11 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/debug", s.withAuth(s.handleDebug))
 	mux.HandleFunc("/api/export", s.withAuth(s.handleExport))
 	mux.HandleFunc("/api/extractor", s.withAuth(s.handleExtractor))
+	mux.HandleFunc("/api/reputation/ip", s.withAuth(s.handleReputationIP))
+	mux.HandleFunc("/api/reputation/check", s.withAuth(s.handleReputationCheck))
+	mux.HandleFunc("/api/reputation/cache", s.withAuth(s.handleReputationCache))
+	mux.HandleFunc("/api/cloudflare/check", s.withAuth(s.handleCloudflareCheck))
+	mux.HandleFunc("/api/cloudflare/cache", s.withAuth(s.handleCloudflareCache))
 	mux.HandleFunc("/api/subscription/status", s.withAuth(s.handleSubscriptionStatus))
 	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
 	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
@@ -807,6 +818,283 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(strings.Join(lines, "\n")))
 }
 
+func (s *Server) handleCloudflareCache(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		items := s.cfChecker.CacheList()
+		writeJSON(w, map[string]any{"data": items, "count": len(items)})
+	case http.MethodPost, http.MethodDelete:
+		s.cfChecker.ClearCache()
+		writeJSON(w, map[string]any{"message": "cache cleared"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
+	if region == "" {
+		region = "all"
+	}
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "" {
+		mode = "multi-port"
+	}
+	count := 10
+	if raw := strings.TrimSpace(r.URL.Query().Get("count")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "invalid count"})
+			return
+		}
+		count = parsed
+	}
+	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
+	maxCount := 50
+	if includeUnavailable {
+		maxCount = 500
+	}
+	if count > maxCount {
+		count = maxCount
+	}
+	if !isAllowedMonitorRegion(region) {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid region"})
+		return
+	}
+	if mode != "multi-port" && mode != "multi_port" && mode != "multi" {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in cloudflare check"})
+		return
+	}
+	targets, err := s.buildCloudflareTargets(region, count, includeUnavailable)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return
+	}
+	results := s.cfChecker.CheckTargets(r.Context(), targets)
+	writeJSON(w, map[string]any{
+		"region":              region,
+		"mode":                "multi-port",
+		"requested_count":     count,
+		"checked_count":       len(results),
+		"include_unavailable": includeUnavailable,
+		"summary":             summarizeCloudflare(results),
+		"data":                results,
+		"note":                "local Cloudflare compatibility score, not Cloudflare Enterprise Bot Score",
+	})
+}
+
+func (s *Server) buildCloudflareTargets(region string, count int, includeUnavailable bool) ([]cloudflarecheck.ProxyTarget, error) {
+	s.cfgMu.RLock()
+	username := s.cfg.ProxyUsername
+	password := s.cfg.ProxyPassword
+	s.cfgMu.RUnlock()
+
+	snaps := s.mgr.SnapshotFiltered(!includeUnavailable)
+	targets := make([]cloudflarecheck.ProxyTarget, 0, count)
+	for _, snap := range snaps {
+		if snap.ListenAddress == "" || snap.Port == 0 {
+			continue
+		}
+		if region != "all" && !extractorSnapshotMatchesRegion(snap, region) {
+			continue
+		}
+		host := s.resolveLocalHost(snap.ListenAddress)
+		auth := ""
+		if username != "" || password != "" {
+			auth = url.UserPassword(username, password).String() + "@"
+		}
+		targets = append(targets, cloudflarecheck.ProxyTarget{
+			NodeName: snap.Name,
+			NodeTag:  snap.Tag,
+			Region:   extractorBestRegion(snap),
+			Host:     host,
+			Port:     snap.Port,
+			ProxyURL: fmt.Sprintf("http://%s%s:%d", auth, host, snap.Port),
+		})
+		if len(targets) >= count {
+			break
+		}
+	}
+	if len(targets) == 0 {
+		return nil, errors.New("没有可用于 CF 评分的 multi-port 节点")
+	}
+	return targets, nil
+}
+
+func summarizeCloudflare(results []cloudflarecheck.Result) map[string]int {
+	summary := map[string]int{"excellent": 0, "good": 0, "fair": 0, "poor": 0, "failed": 0}
+	for _, result := range results {
+		if result.Level == "failed" || (result.Error != "" && !result.HTTP204OK && !result.TraceOK) {
+			summary["failed"]++
+			continue
+		}
+		if _, ok := summary[result.Level]; ok {
+			summary[result.Level]++
+		}
+	}
+	return summary
+}
+
+func isAllowedMonitorRegion(region string) bool {
+	return map[string]bool{"all": true, "us": true, "jp": true, "hk": true, "sg": true, "tw": true, "kr": true, "in": true, "ae": true, "ch": true, "au": true, "de": true, "gb": true, "ca": true, "other": true}[region]
+}
+
+func (s *Server) handleReputationIP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
+	if ip == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "missing ip"})
+		return
+	}
+	result, err := s.repChecker.LookupIP(r.Context(), ip)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"data": result})
+}
+
+func (s *Server) handleReputationCache(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		items := s.repChecker.CacheList()
+		writeJSON(w, map[string]any{"data": items, "count": len(items)})
+	case http.MethodDelete, http.MethodPost:
+		s.repChecker.ClearCache()
+		writeJSON(w, map[string]any{"message": "cache cleared"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
+	if region == "" {
+		region = "all"
+	}
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "" {
+		mode = "multi-port"
+	}
+	count := 10
+	if raw := strings.TrimSpace(r.URL.Query().Get("count")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "invalid count"})
+			return
+		}
+		count = parsed
+	}
+	if count > 50 {
+		count = 50
+	}
+	if !isAllowedMonitorRegion(region) {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid region"})
+		return
+	}
+	if mode != "multi-port" && mode != "multi_port" && mode != "multi" {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in reputation check"})
+		return
+	}
+
+	targets, err := s.buildReputationTargets(region, count)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return
+	}
+	results := s.repChecker.CheckProxies(r.Context(), targets, reputationExpectedCountry(region))
+	summary := summarizeReputation(results)
+	writeJSON(w, map[string]any{
+		"region":          region,
+		"mode":            "multi-port",
+		"requested_count": count,
+		"checked_count":   len(results),
+		"summary":         summary,
+		"data":            results,
+	})
+}
+
+func (s *Server) buildReputationTargets(region string, count int) ([]reputation.ProxyTarget, error) {
+	s.cfgMu.RLock()
+	username := s.cfg.ProxyUsername
+	password := s.cfg.ProxyPassword
+	s.cfgMu.RUnlock()
+
+	snaps := s.mgr.SnapshotFiltered(true)
+	targets := make([]reputation.ProxyTarget, 0, count)
+	for _, snap := range snaps {
+		if snap.ListenAddress == "" || snap.Port == 0 {
+			continue
+		}
+		if region != "all" && !extractorSnapshotMatchesRegion(snap, region) {
+			continue
+		}
+		host := s.resolveLocalHost(snap.ListenAddress)
+		auth := ""
+		if username != "" || password != "" {
+			auth = url.UserPassword(username, password).String() + "@"
+		}
+		proxyURL := fmt.Sprintf("http://%s%s:%d", auth, host, snap.Port)
+		targets = append(targets, reputation.ProxyTarget{
+			NodeName: snap.Name,
+			NodeTag:  snap.Tag,
+			Region:   extractorBestRegion(snap),
+			Host:     host,
+			Port:     snap.Port,
+			Mode:     "multi-port",
+			ProxyURL: proxyURL,
+		})
+		if len(targets) >= count {
+			break
+		}
+	}
+	if len(targets) == 0 {
+		return nil, errors.New("没有可用于信誉检查的 multi-port 节点")
+	}
+	return targets, nil
+}
+
+func reputationExpectedCountry(region string) string {
+	switch region {
+	case "us", "jp", "hk", "sg", "tw", "kr", "in", "ae", "ch", "au", "de", "gb", "ca":
+		return strings.ToUpper(region)
+	}
+	return ""
+}
+
+func summarizeReputation(results []reputation.NodeResult) map[string]int {
+	summary := map[string]int{"low": 0, "medium": 0, "high": 0, "failed": 0}
+	for _, item := range results {
+		if item.Error != "" || item.Result == nil {
+			summary["failed"]++
+			continue
+		}
+		summary[item.Result.RiskLevel]++
+	}
+	return summary
+}
+
 type extractorProxyEntry struct {
 	Host       string `json:"host"`
 	Port       uint16 `json:"port"`
@@ -822,7 +1110,7 @@ type extractorProxyEntry struct {
 }
 
 func androidExtractorRegions() []string {
-	return []string{geoip.RegionUS, geoip.RegionJP, geoip.RegionHK, geoip.RegionSG, geoip.RegionTW, geoip.RegionKR, geoip.RegionIN, geoip.RegionAE, geoip.RegionCH, geoip.RegionAU, geoip.RegionOther}
+	return []string{geoip.RegionUS, geoip.RegionJP, geoip.RegionHK, geoip.RegionSG, geoip.RegionTW, geoip.RegionKR, geoip.RegionIN, geoip.RegionAE, geoip.RegionCH, geoip.RegionAU, geoip.RegionOther, geoip.RegionDE, geoip.RegionGB, geoip.RegionCA}
 }
 
 func androidExtractorPort(cfg config.AndroidProxyConfig, region string) uint16 {
@@ -874,7 +1162,7 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	allowedRegions := map[string]bool{
-		"all": true, "us": true, "jp": true, "hk": true, "sg": true, "tw": true, "kr": true, "in": true, "ae": true, "ch": true, "au": true, "other": true,
+		"all": true, "us": true, "jp": true, "hk": true, "sg": true, "tw": true, "kr": true, "in": true, "ae": true, "ch": true, "au": true, "de": true, "gb": true, "ca": true, "other": true,
 	}
 	if !allowedRegions[region] {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1166,10 +1454,13 @@ func extractorSnapshotMatchesRegion(snap Snapshot, region string) bool {
 		"ae":    {" ae ", "uae", "united arab emirates", "dubai", "迪拜", "阿联酋"},
 		"ch":    {" ch ", "switzerland", "zurich", "瑞士", "苏黎世"},
 		"au":    {" au ", "australia", "sydney", "melbourne", "澳大利亚", "悉尼", "墨尔本"},
+		"de":    {" de ", "germany", "deutschland", "frankfurt", "德国", "法兰克福"},
+		"gb":    {" gb ", " uk ", "united kingdom", "great britain", "london", "英国", "伦敦"},
+		"ca":    {" ca ", "canada", "toronto", "vancouver", "montreal", "加拿大", "多伦多", "温哥华", "蒙特利尔"},
 		"other": {},
 	}
 	if region == "other" {
-		for _, known := range []string{"us", "jp", "hk", "sg", "tw", "kr", "in", "ae", "ch", "au"} {
+		for _, known := range []string{"us", "jp", "hk", "sg", "tw", "kr", "in", "ae", "ch", "au", "de", "gb", "ca"} {
 			if extractorSnapshotMatchesRegion(snap, known) {
 				return false
 			}

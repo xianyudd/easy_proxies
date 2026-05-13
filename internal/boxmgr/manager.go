@@ -1055,7 +1055,7 @@ func (m *Manager) prepareNodeLocked(node config.NodeConfig, currentName string) 
 }
 
 func androidRegionOrder() []string {
-	return []string{geoip.RegionUS, geoip.RegionJP, geoip.RegionHK, geoip.RegionSG, geoip.RegionTW, geoip.RegionKR, geoip.RegionIN, geoip.RegionAE, geoip.RegionCH, geoip.RegionAU, geoip.RegionOther}
+	return []string{geoip.RegionUS, geoip.RegionJP, geoip.RegionHK, geoip.RegionSG, geoip.RegionTW, geoip.RegionKR, geoip.RegionIN, geoip.RegionAE, geoip.RegionCH, geoip.RegionAU, geoip.RegionOther, geoip.RegionDE, geoip.RegionGB, geoip.RegionCA}
 }
 
 func androidRegionPort(cfg config.AndroidProxyConfig, region string, idx int) uint16 {

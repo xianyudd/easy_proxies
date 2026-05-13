@@ -1428,9 +1428,9 @@ func classifyRegionFromText(text string) string {
 	}
 
 	matchers := []struct {
-		region      string
-		keywords    []string
-		tokenCodes  []string
+		region     string
+		keywords   []string
+		tokenCodes []string
 	}{
 		{region: geoip.RegionJP, keywords: []string{"日本", "japan", "tokyo", "东京", "osaka", "大阪"}, tokenCodes: []string{"jp"}},
 		{region: geoip.RegionKR, keywords: []string{"韩国", "korea", "seoul", "首尔"}, tokenCodes: []string{"kr"}},
@@ -1442,6 +1442,9 @@ func classifyRegionFromText(text string) string {
 		{region: geoip.RegionAE, keywords: []string{"阿联酋", "uae", "united arab emirates", "dubai", "迪拜"}, tokenCodes: []string{"ae"}},
 		{region: geoip.RegionCH, keywords: []string{"瑞士", "switzerland", "zurich", "苏黎世"}, tokenCodes: []string{"ch"}},
 		{region: geoip.RegionAU, keywords: []string{"澳大利亚", "australia", "sydney", "悉尼", "melbourne", "墨尔本"}, tokenCodes: []string{"au"}},
+		{region: geoip.RegionDE, keywords: []string{"德国", "germany", "deutschland", "frankfurt", "法兰克福"}, tokenCodes: []string{"de"}},
+		{region: geoip.RegionGB, keywords: []string{"英国", "united kingdom", "great britain", "london", "伦敦"}, tokenCodes: []string{"gb", "uk"}},
+		{region: geoip.RegionCA, keywords: []string{"加拿大", "canada", "toronto", "多伦多", "vancouver", "温哥华", "montreal", "蒙特利尔"}, tokenCodes: []string{"ca"}},
 	}
 
 	for _, matcher := range matchers {

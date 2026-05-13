@@ -24,6 +24,12 @@ func TestAndroidExtractorPortUsesOverride(t *testing.T) {
 	if got := androidExtractorPort(cfg, geoip.RegionUS); got != 13001 {
 		t.Fatalf("expected base mapped port 13001, got %d", got)
 	}
+	if got := androidExtractorPort(cfg, geoip.RegionOther); got != 13011 {
+		t.Fatalf("expected existing other fallback port 13011, got %d", got)
+	}
+	if got := androidExtractorPort(cfg, geoip.RegionDE); got != 13012 {
+		t.Fatalf("expected germany fallback port 13012, got %d", got)
+	}
 }
 
 func TestFormatExtractorEntryAdditionalFormats(t *testing.T) {

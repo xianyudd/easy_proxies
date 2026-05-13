@@ -24,6 +24,24 @@ func TestExtractorSnapshotMatchesRegionExtendedAliases(t *testing.T) {
 			want:   true,
 		},
 		{
+			name:   "germany by name alias",
+			snap:   Snapshot{NodeInfo: NodeInfo{Name: "德国DE-HY2"}},
+			region: "de",
+			want:   true,
+		},
+		{
+			name:   "uk by name alias",
+			snap:   Snapshot{NodeInfo: NodeInfo{Name: "英国-优化2"}},
+			region: "gb",
+			want:   true,
+		},
+		{
+			name:   "canada excluded from other",
+			snap:   Snapshot{NodeInfo: NodeInfo{Name: "加拿大-优化"}},
+			region: "other",
+			want:   false,
+		},
+		{
 			name:   "other excludes extended regions",
 			snap:   Snapshot{NodeInfo: NodeInfo{Region: "ae", Name: "迪拜"}},
 			region: "other",

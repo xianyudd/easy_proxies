@@ -27,6 +27,13 @@
       --font-mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
       --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
       --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+      --radius-card: 18px;
+      --card-padding: 18px;
+      --grid-gap: 16px;
+      --accent-blue: #60a5fa;
+      --accent-green: #34d399;
+      --accent-orange: #f59e0b;
+      --accent-pink: #ec4899;
     }
     [data-theme="light"] {
       --bg-base: #f8fafc;
@@ -204,18 +211,18 @@
     .btn-danger { background: var(--error); border-color: var(--error); color: #fff; }
     .btn-sm { padding: 4px 10px; font-size: 11px; }
 
-    .extractor-shell { max-width: 1180px; margin: 0 auto; }
+    .extractor-shell { max-width: 1240px; margin: 0 auto; }
     .extractor-hero {
       display:grid;
       grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
-      gap:16px;
+      gap:var(--grid-gap);
       margin-bottom:18px;
     }
     .extractor-hero-card {
       background: linear-gradient(135deg, rgba(59,130,246,0.12), rgba(15,23,42,0.02));
       border: 1px solid rgba(96,165,250,0.22);
-      border-radius: 18px;
-      padding: 20px;
+      border-radius: var(--radius-card);
+      padding: 22px;
       box-shadow: var(--shadow-md);
     }
     .extractor-hero-card h2 { font-size: 26px; margin-bottom: 10px; }
@@ -244,16 +251,16 @@
     }
     .extractor-preset-grid {
       display:grid;
-      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap:14px;
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      gap:var(--grid-gap);
     }
     .extractor-preset-card {
       border:1px solid var(--border);
-      border-radius:16px;
-      padding:16px;
+      border-radius:var(--radius-card);
+      padding:var(--card-padding);
       background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
       box-shadow: var(--shadow-sm);
-      min-height: 214px;
+      min-height: 238px;
       display:flex;
       flex-direction:column;
       justify-content:space-between;
@@ -261,7 +268,7 @@
     .extractor-preset-card.featured {
       background: linear-gradient(135deg, rgba(236,72,153,0.15), rgba(99,102,241,0.06));
       border-color: rgba(236,72,153,0.28);
-      min-height: 246px;
+      min-height: 268px;
     }
     .extractor-card-head {
       display:flex;
@@ -270,7 +277,7 @@
       gap:12px;
       margin-bottom:12px;
     }
-    .extractor-card-title { font-size: 16px; font-weight: 700; }
+    .extractor-card-title { font-size: 17px; font-weight: 800; letter-spacing:.01em; }
     .extractor-card-subtitle { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin-top: 6px; }
     .extractor-badge {
       font-size: 10px;
@@ -300,7 +307,7 @@
       gap:8px;
       margin-top:auto;
     }
-    .extractor-action-row .btn { flex:1; justify-content:center; padding:9px 10px; }
+    .extractor-action-row .btn { flex:1; justify-content:center; padding:10px 12px; min-height:38px; }
     .extractor-random-grid {
       display:grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -330,7 +337,7 @@
     .extractor-status-badge strong { color: var(--text-main); }
     .extractor-result-grid {
       display:grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       gap:12px;
       margin-bottom:12px;
     }
@@ -361,8 +368,59 @@
       border:1px dashed var(--border);
       border-radius: 14px;
     }
+
+    .extractor-section-title {
+      display:flex; align-items:flex-end; justify-content:space-between; gap:12px;
+      margin-bottom:14px;
+    }
+    .extractor-section-title h3 { margin:0; font-size:18px; }
+    .extractor-section-title p { margin:4px 0 0; color:var(--text-muted); font-size:12px; line-height:1.6; }
+    .extractor-preset-card:hover { transform: translateY(-2px); border-color: rgba(96,165,250,0.35); box-shadow: var(--shadow-md); }
+    .extractor-scenario-icon {
+      width:42px; height:42px; border-radius:14px; display:flex; align-items:center; justify-content:center;
+      background:rgba(96,165,250,0.13); border:1px solid rgba(96,165,250,0.22); font-size:20px; flex:0 0 auto;
+    }
+    .extractor-advice-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:12px 0 0; }
+    .extractor-advice-item { border:1px solid var(--border); border-radius:14px; padding:12px; background:rgba(148,163,184,0.06); }
+    .extractor-advice-item strong { display:block; color:var(--text-main); margin-bottom:5px; }
+    .extractor-advanced { border:1px solid var(--border); border-radius:var(--radius-card); overflow:hidden; background:var(--bg-panel); }
+    .extractor-advanced summary { cursor:pointer; list-style:none; padding:16px; display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:700; }
+    .extractor-advanced summary::-webkit-details-marker { display:none; }
+    .extractor-advanced summary:after { content:'展开'; color:var(--text-muted); font-size:11px; font-weight:500; }
+    .extractor-advanced[open] summary:after { content:'收起'; }
+    .extractor-format-help { font-size:11px; color:var(--text-muted); line-height:1.7; padding:10px 12px; border-radius:12px; border:1px dashed var(--border); background:rgba(148,163,184,0.06); }
+    .extractor-result-toolbar { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin:12px 0; }
+    .extractor-danger-note { color:var(--warning); background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.22); border-radius:12px; padding:10px 12px; font-size:12px; line-height:1.7; }
+
+
+    .extractor-core-shell { max-width: 1120px; margin: 0 auto; display:grid; gap:16px; }
+    .extractor-core-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; }
+    .extractor-core-title h2 { margin:0 0 8px; font-size:24px; }
+    .extractor-core-title p { margin:0; color:var(--text-muted); line-height:1.7; max-width:760px; }
+    .extractor-core-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .extractor-workbench { display:grid; grid-template-columns: 360px minmax(0,1fr); gap:16px; align-items:start; }
+    .extractor-control-panel, .extractor-output-panel { background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-card); box-shadow:var(--shadow-sm); }
+    .extractor-control-panel { padding:16px; display:grid; gap:14px; }
+    .extractor-output-panel { padding:16px; }
+    .extractor-control-title { display:flex; justify-content:space-between; align-items:center; gap:10px; font-weight:800; }
+    .extractor-form-grid { display:grid; gap:12px; }
+    .extractor-form-grid .form-group { margin:0; }
+    .extractor-primary-run { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .extractor-primary-run .btn { justify-content:center; min-height:40px; }
+    .extractor-quick-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .extractor-quick-btn { border:1px solid var(--border); border-radius:14px; padding:12px; background:rgba(148,163,184,0.06); cursor:pointer; color:var(--text-main); text-align:left; transition:all .15s; }
+    .extractor-quick-btn:hover { border-color:rgba(96,165,250,.45); transform:translateY(-1px); }
+    .extractor-quick-btn strong { display:block; margin-bottom:5px; }
+    .extractor-quick-btn span { display:block; color:var(--text-muted); font-size:11px; line-height:1.5; }
+    .extractor-output-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+    .extractor-output-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .extractor-mode-note { font-size:11px; color:var(--text-muted); line-height:1.7; border:1px dashed var(--border); border-radius:12px; padding:10px 12px; background:rgba(148,163,184,.06); }
+    @media (max-width: 980px) { .extractor-workbench { grid-template-columns:1fr; } .extractor-quick-strip { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width: 640px) { .extractor-quick-strip, .extractor-primary-run { grid-template-columns:1fr; } }
+
     @media (max-width: 1080px) {
       .extractor-hero, .extractor-layout { grid-template-columns: 1fr; }
+      .extractor-preset-grid, .extractor-advice-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 768px) {
       .extractor-mini-stats,
@@ -524,7 +582,7 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 16px;
-      height: 320px;
+      height: 360px;
       position: relative;
     }
     .chart-title {
@@ -533,7 +591,58 @@
       font-size: 14px; font-weight: 600; color: var(--text-main);
       z-index: 10;
     }
+    .chart-title span {
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 500;
+      margin-left: 6px;
+    }
+    .region-chart-panel {
+      overflow: hidden;
+    }
     .chart-container { width: 100%; height: 100%; }
+
+    .reputation-shell { max-width: 1180px; margin: 0 auto; display:grid; gap:16px; }
+    .reputation-hero { display:grid; grid-template-columns: 1.2fr 1fr; gap:16px; }
+    .reputation-card { background: var(--bg-panel); border:1px solid var(--border); border-radius:14px; padding:18px; box-shadow: var(--shadow); }
+    .reputation-card h2 { margin:0 0 8px; font-size:24px; }
+    .reputation-card p { color:var(--text-muted); line-height:1.7; font-size:13px; }
+    .reputation-controls { display:grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap:12px; align-items:end; }
+    .reputation-summary { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; }
+    .rep-pill { border:1px solid var(--border); border-radius:12px; padding:14px; background:rgba(148,163,184,0.06); }
+    .rep-pill .label { color:var(--text-muted); font-size:12px; margin-bottom:6px; }
+    .rep-pill .value { font-size:24px; font-weight:700; }
+    .risk-low { color: var(--success); }
+    .risk-medium { color: var(--warning); }
+    .risk-high { color: var(--error); }
+    .risk-failed { color: var(--text-muted); }
+    .reputation-table { width:100%; border-collapse:collapse; font-size:12px; }
+    .reputation-table th, .reputation-table td { padding:10px 8px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+    .reputation-table th { color:var(--text-muted); font-weight:600; }
+    .reputation-table td { color:var(--text-main); }
+    .reputation-table code { font-size:11px; color:var(--text-muted); }
+    @media (max-width: 900px) { .reputation-hero, .reputation-controls, .reputation-summary { grid-template-columns: 1fr; } }
+
+    .cf-shell { max-width:1180px; margin:0 auto; display:grid; gap:16px; }
+    .cf-hero { display:grid; grid-template-columns:1.25fr 1fr; gap:16px; }
+    .cf-card { background:var(--bg-panel); border:1px solid var(--border); border-radius:14px; padding:18px; box-shadow:var(--shadow); }
+    .cf-card h2 { margin:0 0 8px; font-size:24px; }
+    .cf-card p { color:var(--text-muted); line-height:1.7; font-size:13px; }
+    .cf-controls { display:grid; grid-template-columns:repeat(4,minmax(130px,1fr)); gap:12px; align-items:end; margin-top:16px; }
+    .cf-summary { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; }
+    .cf-pill { border:1px solid var(--border); border-radius:12px; padding:12px; background:rgba(148,163,184,0.06); }
+    .cf-pill .label { color:var(--text-muted); font-size:11px; margin-bottom:6px; }
+    .cf-pill .value { font-size:22px; font-weight:700; }
+    .cf-excellent { color:var(--success); }
+    .cf-good { color:#22c55e; }
+    .cf-fair { color:var(--warning); }
+    .cf-poor { color:var(--error); }
+    .cf-failed { color:var(--text-muted); }
+    .cf-table { width:100%; border-collapse:collapse; font-size:12px; }
+    .cf-table th,.cf-table td { padding:10px 8px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+    .cf-table th { color:var(--text-muted); font-weight:600; }
+    .cf-table code { font-size:11px; color:var(--text-muted); }
+    @media (max-width:900px){ .cf-hero,.cf-controls,.cf-summary{ grid-template-columns:1fr; } }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <script>
@@ -567,7 +676,7 @@
       Easy Proxies
     </div>
     <div class="nav">
-      <div class="nav-item active" onclick="switchTab('dashboard')">
+      <div class="nav-item" onclick="switchTab('dashboard')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
         监控看板
       </div>
@@ -575,9 +684,17 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
         节点配置
       </div>
-      <div class="nav-item" onclick="switchTab('extractor')">
+      <div class="nav-item active" onclick="switchTab('extractor')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M5 21h14"></path></svg>
         代理提取
+      </div>
+      <div class="nav-item" onclick="switchTab('reputation')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="M9 12l2 2 4-5"></path></svg>
+        IP 信誉
+      </div>
+      <div class="nav-item" onclick="switchTab('cloudflare')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 19a4 4 0 0 1 .7-7.94A5.5 5.5 0 0 1 17.4 9.1 4.5 4.5 0 1 1 18 18H6z"></path></svg>
+        CF 评分
       </div>
       <div class="nav-item" onclick="switchTab('debug')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
@@ -637,7 +754,7 @@
 
     <div class="content">
       <!-- Dashboard Tab -->
-      <div id="dashboardTab" class="tab-content active">
+      <div id="dashboardTab" class="tab-content">
         <div class="overview-grid">
           <div class="stat-panel">
             <div class="stat-title">总节点数</div>
@@ -672,8 +789,8 @@
         </div>
 
         <div class="charts-grid">
-          <div class="chart-panel">
-            <div class="chart-title">地域连通率 (Region Availability)</div>
+          <div class="chart-panel region-chart-panel">
+            <div class="chart-title">地域连通率 <span>Region Availability</span></div>
             <div class="chart-container" id="regionChart"></div>
           </div>
           <div class="chart-panel">
@@ -699,6 +816,9 @@
           <button class="region-btn" data-region="ae" onclick="filterByRegion('ae')">🇦🇪 AE</button>
           <button class="region-btn" data-region="ch" onclick="filterByRegion('ch')">🇨🇭 CH</button>
           <button class="region-btn" data-region="au" onclick="filterByRegion('au')">🇦🇺 AU</button>
+          <button class="region-btn" data-region="de" onclick="filterByRegion('de')">🇩🇪 DE</button>
+          <button class="region-btn" data-region="gb" onclick="filterByRegion('gb')">🇬🇧 GB</button>
+          <button class="region-btn" data-region="ca" onclick="filterByRegion('ca')">🇨🇦 CA</button>
           <button class="region-btn" data-region="other" onclick="filterByRegion('other')">其他</button>
         </div>
 
@@ -969,313 +1089,244 @@
         </div>
       </div>
 
-      <!-- Extractor Tab -->
-      <div id="extractorTab" class="tab-content">
-        <div class="extractor-shell">
-          <div class="extractor-hero">
-            <div class="extractor-hero-card">
-              <div class="extractor-badge" style="display:inline-flex; margin-bottom:12px;">LOCAL ONLY · PROXY EXTRACTOR</div>
-              <h2>代理提取 / Proxy Extractor</h2>
-              <p>
-                现在这页更接近商业代理平台的提取台：左侧主打快捷提取，右侧保留高级参数；支持快捷提取、直接复制、随机 10 条、显示真实密码和卡片结果区。
-                GeoIP 地域入口仅支持完整 URL 格式；指纹浏览器优先推荐 multi-port 独立节点。
-              </p>
-              <div class="extractor-actions">
-                <button class="btn btn-primary" onclick="generateExtractor()">生成代理</button>
-                <button class="btn" onclick="copyExtractorOutput()">复制全部</button>
-                <button class="btn" onclick="downloadExtractorOutput()">下载 TXT</button>
+      <!-- Cloudflare Score Tab -->
+      <div id="cloudflareTab" class="tab-content">
+        <div class="cf-shell">
+          <div class="cf-hero">
+            <div class="cf-card">
+              <h2>CF 评分 / Cloudflare Compatibility Score</h2>
+              <p>这是本地 Cloudflare 兼容评分，不是 Cloudflare Enterprise Bot Score。快速检测只扫当前健康节点；完整扫描会包含不可用/未探测节点，耗时更长。检测通过 multi-port 访问 Cloudflare 204 和 cdn-cgi/trace，综合连通性、CF loc、colo、HTTP/TLS/WARP 和延迟给出 0-100 分。</p>
+              <div class="cf-controls">
+                <div class="form-group">
+                  <label>地区</label>
+                  <select id="cfRegion" class="setting-input">
+                    <option value="all">全部(all)</option><option value="us">美国(us)</option><option value="jp">日本(jp)</option><option value="hk">香港(hk)</option><option value="sg">新加坡(sg)</option><option value="tw">台湾(tw)</option><option value="kr">韩国(kr)</option><option value="in">印度(in)</option><option value="ae">阿联酋(ae)</option><option value="ch">瑞士(ch)</option><option value="au">澳大利亚(au)</option><option value="de">德国(de)</option><option value="gb">英国(gb)</option><option value="ca">加拿大(ca)</option><option value="other">其他(other)</option>
+                  </select>
+                </div>
+                <div class="form-group"><label>模式</label><select id="cfMode" class="setting-input"><option value="multi-port">multi-port 独立节点</option></select></div>
+                <div class="form-group"><label>数量</label><input id="cfCount" type="number" min="1" max="50" value="10" class="setting-input" /></div>
+                <button class="btn btn-primary" onclick="checkCloudflareScore(false)">快速检测当前可用节点</button>
+                <button class="btn" onclick="checkCloudflareScore(true)">完整扫描全部配置节点</button>
               </div>
             </div>
-            <div class="extractor-mini-stats">
-              <div class="extractor-stat-card">
-                <div class="extractor-stat-label">推荐模式</div>
-                <div class="extractor-stat-value">Multi-Port</div>
-                <div class="extractor-stat-note">更适合指纹浏览器、单账号隔离、固定端口和单节点稳定使用。</div>
+            <div class="cf-card">
+              <h2>评分概览</h2>
+              <div class="cf-summary">
+                <div class="cf-pill"><div class="label">优秀</div><div id="cfExcellent" class="value cf-excellent">0</div></div>
+                <div class="cf-pill"><div class="label">良好</div><div id="cfGood" class="value cf-good">0</div></div>
+                <div class="cf-pill"><div class="label">一般</div><div id="cfFair" class="value cf-fair">0</div></div>
+                <div class="cf-pill"><div class="label">较差</div><div id="cfPoor" class="value cf-poor">0</div></div>
+                <div class="cf-pill"><div class="label">检测失败</div><div id="cfFailed" class="value cf-failed">0</div></div>
               </div>
-              <div class="extractor-stat-card">
-                <div class="extractor-stat-label">最快上手</div>
-                <div class="extractor-stat-value">Pool Endpoint</div>
-                <div class="extractor-stat-note">一个入口长期使用，最像“代理平台主入口”。</div>
-              </div>
-              <div class="extractor-stat-card">
-                <div class="extractor-stat-label">地区定向</div>
-                <div class="extractor-stat-value">GeoIP Region</div>
-                <div class="extractor-stat-note">适合 US / JP / HK / SG 这种按地区路由的提取方式。</div>
-              </div>
-              <div class="extractor-stat-card">
-                <div class="extractor-stat-label">Android 全局代理</div>
-                <div class="extractor-stat-value">Smart Port</div>
-                <div class="extractor-stat-note">自动按国家映射本地无认证端口，适合 adb reverse + Android 全局代理。</div>
-              </div>
-              <div class="extractor-stat-card">
-                <div class="extractor-stat-label">当前输出</div>
-                <div id="extractorLiveState" class="extractor-stat-value">真实密码</div>
-                <div class="extractor-stat-note">复制、下载、卡片结果和快捷提取都会按当前设置输出。</div>
+              <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:14px;">
+                <button class="btn" onclick="loadCloudflareCache()">查看缓存</button>
+                <button class="btn" onclick="copyCloudflareJSON()">复制 JSON</button>
+                <button class="btn" onclick="downloadCloudflareCSV()">下载 CSV</button>
               </div>
             </div>
           </div>
-
-          <div class="extractor-layout">
-            <div class="panel">
-              <div class="panel-header"><div class="panel-title">快捷提取</div></div>
-              <div style="padding:16px;">
-                <div class="extractor-preset-grid">
-                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(59,130,246,0.10), rgba(59,130,246,0.04));">
-                    <div>
-                      <div class="extractor-card-head">
-                        <div>
-                          <div class="extractor-card-title">默认池入口</div>
-                          <div class="extractor-card-subtitle">统一出口，适合长期常驻、本机全局代理、curl 和 Python requests。</div>
-                        </div>
-                        <span class="extractor-badge">POOL</span>
-                      </div>
-                      <div class="extractor-card-meta">
-                        <span class="extractor-chip">完整 URL</span>
-                        <span class="extractor-chip">1 条</span>
-                        <span class="extractor-chip">长期稳定</span>
-                      </div>
-                    </div>
-                    <div class="extractor-action-row">
-                      <button class="btn" onclick="runQuickExtract('pool','all','http_url',1,true)">立即提取</button>
-                      <button class="btn btn-primary" onclick="quickCopy('pool','all','http_url',1)">直接复制</button>
-                    </div>
-                  </div>
-
-                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(16,185,129,0.10), rgba(16,185,129,0.04));">
-                    <div>
-                      <div class="extractor-card-head">
-                        <div>
-                          <div class="extractor-card-title">US 地域入口</div>
-                          <div class="extractor-card-subtitle">美国地区池，适合地区定向访问与流量分流。</div>
-                        </div>
-                        <span class="extractor-badge" style="background:rgba(16,185,129,0.14); color:var(--success); border-color:rgba(16,185,129,0.22);">US</span>
-                      </div>
-                      <div class="extractor-card-meta">
-                        <span class="extractor-chip">GeoIP URL</span>
-                        <span class="extractor-chip">1 条</span>
-                        <span class="extractor-chip">地区路由</span>
-                      </div>
-                    </div>
-                    <div class="extractor-action-row">
-                      <button class="btn" onclick="runQuickExtract('geoip','us','http_url',1,true)">立即提取</button>
-                      <button class="btn btn-primary" onclick="quickCopy('geoip','us','http_url',1)">直接复制</button>
-                    </div>
-                  </div>
-
-                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(245,158,11,0.10), rgba(245,158,11,0.04));">
-                    <div>
-                      <div class="extractor-card-head">
-                        <div>
-                          <div class="extractor-card-title">JP 地域入口</div>
-                          <div class="extractor-card-subtitle">日本地区池，适合日本业务、定向访问与区域化网络请求。</div>
-                        </div>
-                        <span class="extractor-badge" style="background:rgba(245,158,11,0.14); color:var(--warning); border-color:rgba(245,158,11,0.22);">JP</span>
-                      </div>
-                      <div class="extractor-card-meta">
-                        <span class="extractor-chip">GeoIP URL</span>
-                        <span class="extractor-chip">1 条</span>
-                        <span class="extractor-chip">区域业务</span>
-                      </div>
-                    </div>
-                    <div class="extractor-action-row">
-                      <button class="btn" onclick="runQuickExtract('geoip','jp','http_url',1,true)">立即提取</button>
-                      <button class="btn btn-primary" onclick="quickCopy('geoip','jp','http_url',1)">直接复制</button>
-                    </div>
-                  </div>
-
-                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(168,85,247,0.10), rgba(168,85,247,0.04));">
-                    <div>
-                      <div class="extractor-card-head">
-                        <div>
-                          <div class="extractor-card-title">HK / SG 地域入口</div>
-                          <div class="extractor-card-subtitle">香港、新加坡常用地区快捷提取，适合电商、业务分区和东南亚访问。</div>
-                        </div>
-                        <span class="extractor-badge" style="background:rgba(168,85,247,0.14); color:#a855f7; border-color:rgba(168,85,247,0.22);">HK · SG</span>
-                      </div>
-                      <div class="extractor-card-meta">
-                        <span class="extractor-chip">GeoIP URL</span>
-                        <span class="extractor-chip">单击提取</span>
-                        <span class="extractor-chip">地区池</span>
-                      </div>
-                    </div>
-                    <div class="extractor-action-row">
-                      <button class="btn" onclick="quickCopy('geoip','hk','http_url',1)">复制 HK</button>
-                      <button class="btn btn-primary" onclick="quickCopy('geoip','sg','http_url',1)">复制 SG</button>
-                    </div>
-                  </div>
-
-                  <div class="extractor-preset-card featured" style="grid-column: span 2;">
-                    <div>
-                      <div class="extractor-card-head">
-                        <div>
-                          <div class="extractor-card-title">指纹浏览器推荐入口</div>
-                          <div class="extractor-card-subtitle">优先提取 multi-port 独立节点，更像商业代理平台的“单条代理提取”。适合浏览器矩阵、账号隔离和固定端口导入。</div>
-                        </div>
-                        <span class="extractor-badge" style="background:rgba(236,72,153,0.16); color:#ec4899; border-color:rgba(236,72,153,0.28);">FINGERPRINT</span>
-                      </div>
-                      <div class="extractor-card-meta">
-                        <span class="extractor-chip">multi-port</span>
-                        <span class="extractor-chip">支持随机 1 / 5 / 10 条</span>
-                        <span class="extractor-chip">适合指纹浏览器</span>
-                      </div>
-                      <div class="extractor-random-grid">
-                        <button class="btn btn-primary" onclick="runQuickExtract('multi-port','all','host_port_user_pass',1,true)">随机 1 条</button>
-                        <button class="btn btn-primary" onclick="runQuickExtract('multi-port','all','host_port_user_pass',5,true)">随机 5 条</button>
-                        <button class="btn btn-primary" onclick="runQuickExtract('multi-port','all','host_port_user_pass',10,true)">随机 10 条</button>
-                      </div>
-                    </div>
-                    <div class="extractor-action-row" style="margin-top:16px;">
-                      <button class="btn" onclick="runQuickExtract('multi-port','jp','host_port_user_pass',3,true)">JP 多端口 / 3 条</button>
-                      <button class="btn" onclick="runQuickExtract('multi-port','us','host_port_user_pass',3,true)">US 多端口 / 3 条</button>
-                      <button class="btn btn-primary" onclick="quickCopy('multi-port','all','host_port_user_pass',1)">直接复制随机 1 条</button>
-                    </div>
-                  </div>
-
-                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(34,197,94,0.10), rgba(34,197,94,0.04));">
-                    <div>
-                      <div class="extractor-card-head">
-                        <div>
-                          <div class="extractor-card-title">Android 全局代理</div>
-                          <div class="extractor-card-subtitle">给 adb reverse / Android 全局代理用。自动按国家选择本地无认证端口，避免手动记端口。</div>
-                        </div>
-                        <span class="extractor-badge" style="background:rgba(34,197,94,0.14); color:var(--success); border-color:rgba(34,197,94,0.22);">ANDROID</span>
-                      </div>
-                      <div class="extractor-card-meta">
-                        <span class="extractor-chip">host:port</span>
-                        <span class="extractor-chip">智能端口</span>
-                        <span class="extractor-chip">无认证</span>
-                      </div>
-                    </div>
-                    <div class="extractor-action-row">
-                      <button class="btn" onclick="runQuickExtract('android','us','host_port',1,true)">美国端口</button>
-                      <button class="btn" onclick="runQuickExtract('android','jp','host_port',1,true)">日本端口</button>
-                      <button class="btn btn-primary" onclick="runQuickExtract('android','ch','host_port',1,true)">瑞士端口</button>
-                    </div>
-                  </div>
-
-                  <div class="extractor-preset-card" style="background:linear-gradient(180deg, rgba(6,182,212,0.10), rgba(6,182,212,0.04));">
-                    <div>
-                      <div class="extractor-card-head">
-                        <div>
-                          <div class="extractor-card-title">ADB 命令快捷提取</div>
-                          <div class="extractor-card-subtitle">直接生成可执行命令。默认适配 adb reverse 场景；如果手机走局域网直连，请改成电脑局域网 IP。</div>
-                        </div>
-                        <span class="extractor-badge" style="background:rgba(6,182,212,0.14); color:#06b6d4; border-color:rgba(6,182,212,0.22);">ADB</span>
-                      </div>
-                      <div class="extractor-card-meta">
-                        <span class="extractor-chip">adb command</span>
-                        <span class="extractor-chip">单条复制</span>
-                        <span class="extractor-chip">全局代理</span>
-                      </div>
-                    </div>
-                    <div class="extractor-action-row">
-                      <button class="btn" onclick="quickCopy('android','us','adb_command',1)">复制 US 命令</button>
-                      <button class="btn" onclick="quickCopy('android','jp','adb_command',1)">复制 JP 命令</button>
-                      <button class="btn btn-primary" onclick="quickCopy('android','ch','adb_command',1)">复制 CH 命令</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="extractor-side-stack">
-              <div class="panel">
-                <div class="panel-header"><div class="panel-title">高级参数</div></div>
-                <div style="padding:16px; display:grid; gap:14px;">
-                  <div class="form-group">
-                    <label>区域选择</label>
-                    <select id="extractorRegion" class="setting-input">
-                      <option value="all">全部(all)</option>
-                      <option value="us">美国(us)</option>
-                      <option value="jp">日本(jp)</option>
-                      <option value="hk">香港(hk)</option>
-                      <option value="sg">新加坡(sg)</option>
-                      <option value="tw">台湾(tw)</option>
-                      <option value="kr">韩国(kr)</option>
-                      <option value="in">印度(in)</option>
-                      <option value="ae">阿联酋(ae)</option>
-                      <option value="ch">瑞士(ch)</option>
-                      <option value="au">澳大利亚(au)</option>
-                      <option value="other">其他(other)</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label>模式选择</label>
-                    <select id="extractorMode" class="setting-input" onchange="handleExtractorModeChange()">
-                      <option value="pool">pool endpoint</option>
-                      <option value="geoip">geoip region endpoint</option>
-                      <option value="multi-port">multi-port node list</option>
-                      <option value="android">android global proxy</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label>格式选择</label>
-                    <select id="extractorFormat" class="setting-input">
-                      <option value="host_port">host:port</option>
-                      <option value="adb_command">adb shell settings put global http_proxy host:port</option>
-                      <option value="http_no_auth">http://host:port</option>
-                      <option value="socks5_url">socks5://username:password@host:port</option>
-                      <option value="socks5_no_auth">socks5://host:port</option>
-                      <option value="host_port_user_pass">host:port:username:password</option>
-                      <option value="user_pass_at_host_port">username:password@host:port</option>
-                      <option value="http_url">http://username:password@host:port</option>
-                      <option value="csv">host,port,username,password</option>
-                      <option value="pipe">host|port|username|password</option>
-                      <option value="curl_command">curl -x http://username:password@host:port</option>
-                      <option value="python_requests_json">Python requests JSON</option>
-                      <option value="clash_yaml">Clash YAML object</option>
-                      <option value="host_port_user_pass_refresh_remark">host:port:username:password[refresh_url]{remark}</option>
-                      <option value="user_pass_at_host_port_refresh_remark">username:password@host:port[refresh_url]{remark}</option>
-                      <option value="json">JSON</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label>输出数量</label>
-                    <input id="extractorCount" type="number" min="1" max="500" value="1" class="setting-input" />
-                  </div>
-                  <div class="checkbox-row" style="margin-bottom:0;">
-                    <input type="checkbox" id="extractorReveal" checked onchange="handleExtractorModeChange()" />
-                    <label for="extractorReveal">显示真实凭据</label>
-                  </div>
-                  <div id="extractorModeHint" style="font-size:11px; color:var(--text-muted); line-height:1.8;">
-                    默认池适合长期稳定使用；GeoIP 入口适合地区路由；指纹浏览器优先选择 multi-port 节点。
-                  </div>
-                </div>
-              </div>
-
-              <div class="panel">
-                <div class="panel-header"><div class="panel-title">使用建议</div></div>
-                <div style="padding:16px; display:grid; gap:10px; font-size:12px; color:var(--text-muted); line-height:1.8;">
-                  <div><strong style="color:var(--text-main);">curl / requests：</strong> 优先默认池或 GeoIP 地区 URL。</div>
-                  <div><strong style="color:var(--text-main);">浏览器扩展：</strong> 推荐完整 URL 或账号格式。</div>
-                  <div><strong style="color:var(--text-main);">指纹浏览器：</strong> 优先随机多端口或指定地区多端口。</div>
-                  <div><strong style="color:var(--text-main);">Android 全局代理：</strong> 选择 android global proxy，优先用 host:port 或 ADB 命令格式。</div>
-                  <div><strong style="color:var(--text-main);">批量导出：</strong> 先生成，再用“复制全部”或“下载 TXT”。</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <div class="panel">
-            <div class="panel-header"><div class="panel-title">提取结果</div></div>
-            <div style="padding:16px;">
-              <div class="extractor-summary-row">
-                <div>
-                  <div id="extractorMeta" style="font-size:12px; color:var(--text-muted); margin-bottom:6px;">尚未生成</div>
-                  <div style="font-size:12px; color:var(--text-muted);">卡片结果区更适合单条复制；下方文本框更适合批量复制、导入脚本和下载 TXT。</div>
+            <div class="panel-header"><div class="panel-title">CF 检测结果</div></div>
+            <div style="padding:16px; overflow:auto;">
+              <div id="cfStatus" style="color:var(--text-muted); font-size:13px; margin-bottom:10px;">尚未检测。建议先选择地区，再检测 5-10 条 multi-port 节点。</div>
+              <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
+                <select id="cfLevelFilter" class="setting-input" style="max-width:180px;" onchange="renderCloudflareRows()">
+                  <option value="all">全部等级</option>
+                  <option value="excellent">优秀</option>
+                  <option value="good">良好</option>
+                  <option value="fair">一般</option>
+                  <option value="poor">较差</option>
+                  <option value="failed">检测失败</option>
+                </select>
+                <select id="cfSortMode" class="setting-input" style="max-width:190px;" onchange="renderCloudflareRows()">
+                  <option value="score_desc">分数从高到低</option>
+                  <option value="latency_asc">延迟从低到高</option>
+                  <option value="node_asc">节点名 A-Z</option>
+                </select>
+              </div>
+              <table class="cf-table">
+                <thead><tr><th>节点</th><th>地区/端口</th><th>出口 IP</th><th>CF loc / colo</th><th>HTTP / TLS / WARP</th><th>204 / trace</th><th>评分 / 等级</th><th>延迟 / 缓存</th><th>操作</th></tr></thead>
+                <tbody id="cfTableBody"><tr><td colspan="9" style="color:var(--text-muted);">暂无数据</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Reputation Tab -->
+      <div id="reputationTab" class="tab-content">
+        <div class="reputation-shell">
+          <div class="reputation-hero">
+            <div class="reputation-card">
+              <h2>IP 信誉检查 / IP Reputation</h2>
+              <p>通过当前本地 multi-port 代理实际访问出口 IP 检测接口，展示出口 IP、国家、ASN/ISP、机房/代理风险和缓存状态。该功能只返回节点名、本地端口和出口画像，不返回订阅地址或代理密码。</p>
+              <div class="reputation-controls" style="margin-top:16px;">
+                <div class="form-group">
+                  <label>地区</label>
+                  <select id="repRegion" class="setting-input">
+                    <option value="all">全部(all)</option><option value="us">美国(us)</option><option value="jp">日本(jp)</option><option value="hk">香港(hk)</option><option value="sg">新加坡(sg)</option><option value="tw">台湾(tw)</option><option value="kr">韩国(kr)</option><option value="in">印度(in)</option><option value="ae">阿联酋(ae)</option><option value="ch">瑞士(ch)</option><option value="au">澳大利亚(au)</option><option value="de">德国(de)</option><option value="gb">英国(gb)</option><option value="ca">加拿大(ca)</option><option value="other">其他(other)</option>
+                  </select>
                 </div>
-                <div class="extractor-status-badge"><span>当前输出</span><strong id="extractorResultState">真实密码</strong></div>
+                <div class="form-group">
+                  <label>模式</label>
+                  <select id="repMode" class="setting-input"><option value="multi-port">multi-port 独立节点</option></select>
+                </div>
+                <div class="form-group">
+                  <label>数量</label>
+                  <input id="repCount" type="number" min="1" max="50" value="10" class="setting-input" />
+                </div>
+                <button class="btn btn-primary" onclick="checkReputation()">开始检查</button>
+              </div>
+            </div>
+            <div class="reputation-card">
+              <h2>结果概览</h2>
+              <div class="reputation-summary">
+                <div class="rep-pill"><div class="label">低风险</div><div id="repLow" class="value risk-low">0</div></div>
+                <div class="rep-pill"><div class="label">中风险</div><div id="repMedium" class="value risk-medium">0</div></div>
+                <div class="rep-pill"><div class="label">高风险</div><div id="repHigh" class="value risk-high">0</div></div>
+                <div class="rep-pill"><div class="label">失败</div><div id="repFailed" class="value risk-failed">0</div></div>
+              </div>
+              <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:14px;">
+                <button class="btn" onclick="loadReputationCache()">查看缓存</button>
+                <button class="btn" onclick="copyReputationJSON()">复制 JSON</button>
+                <button class="btn" onclick="downloadReputationCSV()">下载 CSV</button>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><div class="panel-title">检测结果</div></div>
+            <div style="padding:16px; overflow:auto;">
+              <div id="repStatus" style="color:var(--text-muted); font-size:13px; margin-bottom:10px;">尚未检查。建议先选择地区，再检查 5-10 条 multi-port 节点。</div>
+              <table class="reputation-table">
+                <thead><tr><th>节点</th><th>地区/端口</th><th>出口 IP</th><th>国家</th><th>ASN / ISP</th><th>风险</th><th>缓存/耗时</th></tr></thead>
+                <tbody id="repTableBody"><tr><td colspan="7" style="color:var(--text-muted);">暂无数据</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Extractor Tab -->
+      <div id="extractorTab" class="tab-content active">
+        <div class="extractor-core-shell">
+          <div class="extractor-core-header">
+            <div class="extractor-core-title">
+              <div class="extractor-badge" style="display:inline-flex; margin-bottom:10px;">LOCAL ONLY · PROXY EXTRACTOR</div>
+              <h2>代理提取</h2>
+              <p>核心流程只保留四步：选择地区 / 模式 / 格式 / 数量，生成结果后直接复制或下载。真实密码默认显示，仅限本地 WebUI 使用。</p>
+            </div>
+            <div class="extractor-core-actions">
+              <button class="btn btn-primary" onclick="generateExtractor()">生成</button>
+              <button class="btn" onclick="copyExtractorOutput()">复制全部</button>
+              <button class="btn" onclick="downloadExtractorOutput()">下载 TXT</button>
+            </div>
+          </div>
+
+          <div class="extractor-quick-strip">
+            <button class="extractor-quick-btn" onclick="runQuickExtract('multi-port','all','host_port_user_pass',10,true)">
+              <strong>随机 10 条</strong><span>指纹浏览器推荐，multi-port 批量导入</span>
+            </button>
+            <button class="extractor-quick-btn" onclick="runQuickExtract('multi-port','jp','host_port_user_pass',5,true)">
+              <strong>日本 5 条</strong><span>JP 独立端口，适合固定节点使用</span>
+            </button>
+            <button class="extractor-quick-btn" onclick="runQuickExtract('geoip','us','http_url',1,true)">
+              <strong>美国地区池</strong><span>GeoIP /us/ 完整 URL</span>
+            </button>
+            <button class="extractor-quick-btn" onclick="runQuickExtract('android','jp','adb_command',1,true)">
+              <strong>Android JP</strong><span>无认证端口，复制 ADB 命令</span>
+            </button>
+          </div>
+
+          <div class="extractor-workbench">
+            <div class="extractor-control-panel">
+              <div class="extractor-control-title">
+                <span>提取参数</span>
+                <span class="extractor-badge">REAL PASSWORD</span>
+              </div>
+              <div class="extractor-form-grid">
+                <div class="form-group">
+                  <label>区域</label>
+                  <select id="extractorRegion" class="setting-input">
+                    <option value="all">全部(all)</option>
+                    <option value="us">美国(us)</option>
+                    <option value="jp">日本(jp)</option>
+                    <option value="hk">香港(hk)</option>
+                    <option value="sg">新加坡(sg)</option>
+                    <option value="tw">台湾(tw)</option>
+                    <option value="kr">韩国(kr)</option>
+                    <option value="in">印度(in)</option>
+                    <option value="ae">阿联酋(ae)</option>
+                    <option value="ch">瑞士(ch)</option>
+                    <option value="au">澳大利亚(au)</option>
+                    <option value="de">德国(de)</option>
+                    <option value="gb">英国(gb)</option>
+                    <option value="ca">加拿大(ca)</option>
+                    <option value="other">其他未分类(other)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>模式</label>
+                  <select id="extractorMode" class="setting-input" onchange="handleExtractorModeChange()">
+                    <option value="multi-port" selected>multi-port 独立节点 / 指纹浏览器推荐</option>
+                    <option value="pool">默认池入口 / 长期通用</option>
+                    <option value="geoip">GeoIP 地区池 / 带路径 URL</option>
+                    <option value="android">Android 无认证端口</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>格式</label>
+                  <select id="extractorFormat" class="setting-input">
+                    <option value="host_port">host:port</option>
+                    <option value="adb_command">adb shell settings put global http_proxy host:port</option>
+                    <option value="http_no_auth">http://host:port</option>
+                    <option value="socks5_url">socks5://username:password@host:port</option>
+                    <option value="socks5_no_auth">socks5://host:port</option>
+                    <option value="host_port_user_pass" selected>host:port:username:password</option>
+                    <option value="user_pass_at_host_port">username:password@host:port</option>
+                    <option value="http_url">http://username:password@host:port</option>
+                    <option value="csv">host,port,username,password</option>
+                    <option value="pipe">host|port|username|password</option>
+                    <option value="curl_command">curl -x http://username:password@host:port</option>
+                    <option value="python_requests_json">Python requests JSON</option>
+                    <option value="clash_yaml">Clash YAML object</option>
+                    <option value="host_port_user_pass_refresh_remark">host:port:username:password[refresh_url]{remark}</option>
+                    <option value="user_pass_at_host_port_refresh_remark">username:password@host:port[refresh_url]{remark}</option>
+                    <option value="json">JSON</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>数量</label>
+                  <input id="extractorCount" type="number" min="1" max="500" value="10" class="setting-input" />
+                </div>
+                <div class="checkbox-row" style="margin-bottom:0;">
+                  <input type="checkbox" id="extractorReveal" checked onchange="handleExtractorModeChange()" />
+                  <label for="extractorReveal">显示真实凭据</label>
+                </div>
+                <div id="extractorModeHint" class="extractor-mode-note">multi-port 独立节点最适合指纹浏览器、浏览器扩展和账号隔离。</div>
+                <div id="extractorFormatHelp" class="extractor-mode-note">格式会根据模式自动约束，避免生成不可导入的代理。</div>
+              </div>
+              <div class="extractor-primary-run">
+                <button class="btn btn-primary" onclick="generateExtractor()">生成代理</button>
+                <button class="btn" onclick="quickCopy(document.getElementById('extractorMode').value, document.getElementById('extractorRegion').value, document.getElementById('extractorFormat').value, document.getElementById('extractorCount').value || 1)">生成并复制</button>
+              </div>
+            </div>
+
+            <div class="extractor-output-panel">
+              <div class="extractor-output-head">
+                <div>
+                  <div style="font-weight:800; margin-bottom:6px;">提取结果</div>
+                  <div id="extractorMeta" style="font-size:12px; color:var(--text-muted);">尚未生成</div>
+                </div>
+                <div class="extractor-output-actions">
+                  <span class="extractor-status-badge"><span>当前输出</span><strong id="extractorResultState">真实密码</strong></span>
+                  <button class="btn btn-sm" onclick="copyExtractorOutput()">复制全部</button>
+                  <button class="btn btn-sm" onclick="downloadExtractorOutput()">下载 TXT</button>
+                  <button class="btn btn-sm" onclick="clearExtractorOutput('已清空，请重新生成')">清空</button>
+                </div>
               </div>
               <div id="extractorWarnings" style="display:none; margin-bottom:10px; background: rgba(245, 158, 11, 0.1); border: 1px solid var(--warning); color: var(--warning); padding: 10px 12px; border-radius: 10px; font-size:12px;"></div>
-              <div style="display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-                <span class="extractor-chip">快捷提取</span>
-                <span class="extractor-chip">直接复制</span>
-                <span class="extractor-chip">随机 10 条</span>
-                <span class="extractor-chip">显示真实密码</span>
-                <span class="extractor-chip">卡片结果区</span>
-              </div>
               <div id="extractorCards" class="extractor-result-grid"></div>
-              <textarea id="extractorOutput" readonly class="setting-input" style="height:300px; resize:vertical; font-family: var(--font-mono); line-height:1.7;"></textarea>
+              <textarea id="extractorOutput" readonly class="setting-input" style="height:360px; resize:vertical; font-family: var(--font-mono); line-height:1.7;"></textarea>
             </div>
           </div>
         </div>
@@ -1395,7 +1446,24 @@
       trafficChartInst && trafficChartInst.resize();
     });
 
-    const EMOJIS = { jp: '🇯🇵', kr: '🇰🇷', us: '🇺🇸', hk: '🇭🇰', tw: '🇹🇼', sg: '🇸🇬', in: '🇮🇳', ae: '🇦🇪', ch: '🇨🇭', au: '🇦🇺', other: '🌍' };
+    const REGION_META = {
+      us: { emoji: '🇺🇸', label: '美国 US', color: '#60a5fa' },
+      jp: { emoji: '🇯🇵', label: '日本 JP', color: '#f472b6' },
+      hk: { emoji: '🇭🇰', label: '香港 HK', color: '#fb7185' },
+      sg: { emoji: '🇸🇬', label: '新加坡 SG', color: '#34d399' },
+      tw: { emoji: '🇹🇼', label: '台湾 TW', color: '#a78bfa' },
+      kr: { emoji: '🇰🇷', label: '韩国 KR', color: '#38bdf8' },
+      in: { emoji: '🇮🇳', label: '印度 IN', color: '#f59e0b' },
+      ae: { emoji: '🇦🇪', label: '阿联酋 AE', color: '#2dd4bf' },
+      ch: { emoji: '🇨🇭', label: '瑞士 CH', color: '#ef4444' },
+      au: { emoji: '🇦🇺', label: '澳大利亚 AU', color: '#22c55e' },
+      de: { emoji: '🇩🇪', label: '德国 DE', color: '#facc15' },
+      gb: { emoji: '🇬🇧', label: '英国 GB', color: '#818cf8' },
+      ca: { emoji: '🇨🇦', label: '加拿大 CA', color: '#f97316' },
+      other: { emoji: '🌍', label: '其他 OTHER', color: '#94a3b8' }
+    };
+    const EMOJIS = Object.fromEntries(Object.entries(REGION_META).map(([code, meta]) => [code, meta.emoji]));
+    function regionMeta(code) { return REGION_META[String(code || 'other').toLowerCase()] || REGION_META.other; }
 
     function showToast(msg, type='success') {
       const c = document.getElementById('toastContainer');
@@ -1444,6 +1512,8 @@
       }
       if (name === 'settings') loadSettingsPage();
       if (name === 'extractor') handleExtractorModeChange();
+      if (name === 'reputation') loadReputationCache();
+      if (name === 'cloudflare') { loadCloudflareProxySettings(); loadCloudflareCache(); }
     }
 
     function toggleAutoRefresh() {
@@ -1466,7 +1536,7 @@
       return 'var(--error)';
     }
     function formatTime(ts) {
-      if(tsc || ts==='0001-01-01T00:00:00Z') return '-';
+      if(!ts || ts==='0001-01-01T00:00:00Z') return '-';
       return new Date(ts).toLocaleTimeString();
     }
 
@@ -1518,38 +1588,89 @@
       // 1. Region Chart Data
       const regionStats = {};
       allNodesCache.forEach(n => {
-        const r = (n.region || 'other').toUpperCase();
-        if(!regionStats[r]) regionStats[r] = { total: 0, healthy: 0 };
-        regionStats[r].total++;
+        const code = String(n.region || 'other').toLowerCase();
+        if(!regionStats[code]) regionStats[code] = { total: 0, healthy: 0 };
+        regionStats[code].total++;
         if(!n.blacklisted && n.initial_check_done && n.available) {
-          regionStats[r].healthy++;
+          regionStats[code].healthy++;
         }
       });
-      
-      const regionData = Object.keys(regionStats).map(k => ({
-        name: k,
-        value: regionStats[k].total,
-        itemStyle: { color: regionStats[k].healthy === 0 ? '#ef4444' : (regionStats[k].healthy < regionStats[k].total ? '#f59e0b' : '#3b82f6') }
-      }));
+
+      const regionEntries = Object.entries(regionStats)
+        .sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0]));
+      const totalRegionNodes = regionEntries.reduce((sum, [, stat]) => sum + stat.total, 0);
+      const healthyRegionNodes = regionEntries.reduce((sum, [, stat]) => sum + stat.healthy, 0);
+      const legendStats = {};
+      const regionColors = [];
+      const regionData = regionEntries.map(([code, stat]) => {
+        const meta = regionMeta(code);
+        const name = meta.label;
+        legendStats[name] = { ...stat, code, meta };
+        regionColors.push(meta.color);
+        return { name, value: stat.total, code, healthy: stat.healthy };
+      });
 
       regionChartInst && regionChartInst.setOption({
         backgroundColor: 'transparent',
-        tooltip: { trigger: 'item',
-          backgroundColor: getCssVar('--bg-panel'), borderColor: getCssVar('--border'), textStyle: { color: getCssVar('--text-main') },
+        tooltip: {
+          trigger: 'item',
+          backgroundColor: getCssVar('--bg-panel'),
+          borderColor: getCssVar('--border'),
+          textStyle: { color: getCssVar('--text-main') },
           formatter: (params) => {
-             const stat = regionStats[params.name];
-             return `${params.name} Region<br/>Total Node: ${stat.total}<br/>Available: ${stat.healthy}`;
+             const stat = legendStats[params.name];
+             if (!stat) return params.name;
+             const rate = stat.total ? Math.round(stat.healthy * 100 / stat.total) : 0;
+             return `${stat.meta.emoji} ${stat.meta.label}<br/>节点总数：${stat.total}<br/>健康在线：${stat.healthy}<br/>连通率：${rate}%`;
           }
         },
-        legend: { top: 'bottom', textStyle: { color: getCssVar('--text-muted') } },
+        legend: {
+          type: 'scroll',
+          orient: 'vertical',
+          right: 8,
+          top: 56,
+          bottom: 18,
+          itemWidth: 10,
+          itemHeight: 10,
+          itemGap: 9,
+          pageIconColor: getCssVar('--primary'),
+          pageIconInactiveColor: getCssVar('--border'),
+          pageTextStyle: { color: getCssVar('--text-muted') },
+          textStyle: { color: getCssVar('--text-muted'), fontSize: 12, lineHeight: 18 },
+          formatter: (name) => {
+            const stat = legendStats[name];
+            if (!stat) return name;
+            return `${stat.meta.emoji} ${stat.meta.label}  ${stat.total}`;
+          }
+        },
+        color: regionColors,
+        graphic: [],
         series: [{
-          name: 'Regions', type: 'pie', radius: ['40%', '70%'], center: ['50%', '55%'],
-          itemStyle: { borderRadius: 10, borderColor: getCssVar('--bg-panel'), borderWidth: 2 },
-          label: { show: false, position: 'center' },
-          emphasis: { label: { show: true, fontSize: '20', fontWeight: 'bold', color: getCssVar('--text-main') } },
+          name: 'Regions',
+          type: 'pie',
+          z: 3,
+          radius: [72, 126],
+          center: [170, 205],
+          minAngle: 5,
+          avoidLabelOverlap: true,
+          itemStyle: { borderRadius: 8, borderColor: getCssVar('--bg-panel'), borderWidth: 3 },
+          label: {
+            show: true,
+            position: 'center',
+            formatter: () => `{total|${totalRegionNodes}}\n{hint|健康 ${healthyRegionNodes}}`,
+            rich: {
+              total: { color: getCssVar('--text-main'), fontSize: 28, fontWeight: 700, lineHeight: 34 },
+              hint: { color: getCssVar('--text-muted'), fontSize: 12, lineHeight: 18 }
+            }
+          },
+          labelLine: { show: false },
+          emphasis: {
+            scaleSize: 8,
+            label: { show: true, formatter: '{b}\n{c} 个', fontSize: 14, fontWeight: 'bold', color: getCssVar('--text-main') }
+          },
           data: regionData
         }]
-      });
+      }, true);
 
       // 2. Latency Chart Data
       const sorted = allNodesCache.filter(n => n.last_latency_ms > 0 && !n.blacklisted).sort((a,b) => a.last_latency_ms - b.last_latency_ms).slice(0, 10);
@@ -1763,6 +1884,74 @@
       } catch(e) { showToast('导出失败', 'error');}
     }
 
+    const EXTRACTOR_FORMAT_RULES = {
+      pool: {
+        preferred: 'http_url',
+        allowed: ['http_url', 'curl_command', 'python_requests_json', 'socks5_url', 'host_port_user_pass', 'user_pass_at_host_port', 'csv', 'pipe', 'clash_yaml', 'json'],
+        help: '默认池适合长期稳定使用；推荐完整 URL、curl 或 Python requests JSON。'
+      },
+      geoip: {
+        preferred: 'http_url',
+        allowed: ['http_url', 'json'],
+        help: 'GeoIP 地区入口包含 /us/、/jp/ 这类路径，host:port:username:password 无法表达路径，所以只允许完整 URL 或 JSON。'
+      },
+      android: {
+        preferred: 'host_port',
+        allowed: ['host_port', 'adb_command', 'http_no_auth', 'json'],
+        help: 'Android 全局代理使用无认证本地端口；推荐 host:port 或 adb_command，不需要用户名密码。'
+      },
+      'multi-port': {
+        preferred: 'host_port_user_pass',
+        allowed: ['host_port', 'http_no_auth', 'socks5_url', 'socks5_no_auth', 'host_port_user_pass', 'user_pass_at_host_port', 'http_url', 'csv', 'pipe', 'curl_command', 'python_requests_json', 'clash_yaml', 'host_port_user_pass_refresh_remark', 'user_pass_at_host_port_refresh_remark', 'json'],
+        help: 'Multi-port 输出独立节点端口，最适合指纹浏览器、浏览器扩展、账号隔离和批量导入。'
+      }
+    };
+
+    function syncExtractorFormatOptions(mode) {
+      const select = document.getElementById('extractorFormat');
+      const help = document.getElementById('extractorFormatHelp');
+      if (!select) return;
+      const rule = EXTRACTOR_FORMAT_RULES[mode] || EXTRACTOR_FORMAT_RULES['multi-port'];
+      Array.from(select.options).forEach(option => {
+        const allowed = rule.allowed.includes(option.value);
+        option.disabled = !allowed;
+        option.hidden = !allowed;
+      });
+      if (!rule.allowed.includes(select.value)) {
+        select.value = rule.preferred;
+      }
+      if (help) help.textContent = rule.help;
+    }
+
+    function extractorEntriesAreObjects(entries) {
+      return Array.isArray(entries) && entries.some(item => item && typeof item === 'object');
+    }
+
+    function formatExtractorOutput(entries, effectiveFormat) {
+      if (!Array.isArray(entries)) return '';
+      if (effectiveFormat === 'json' || extractorEntriesAreObjects(entries)) {
+        return JSON.stringify(entries, null, 2);
+      }
+      return entries.map(item => String(item)).join('\n');
+    }
+
+    function proxyToCurlCommand(entry) {
+      const text = String(entry || '').trim();
+      if (!text) return '';
+      if (text.startsWith('curl ')) return text;
+      if (text.startsWith('http://') || text.startsWith('https://') || text.startsWith('socks5://')) {
+        return `curl -x ${text} http://cp.cloudflare.com/generate_204`;
+      }
+      const parts = text.split(':');
+      if (parts.length === 4 && /^\d+$/.test(parts[1])) {
+        return `curl -x http://${parts[2]}:${parts[3]}@${parts[0]}:${parts[1]} http://cp.cloudflare.com/generate_204`;
+      }
+      if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+        return `curl -x http://${text} http://cp.cloudflare.com/generate_204`;
+      }
+      return '';
+    }
+
     function handleExtractorModeChange() {
       const mode = document.getElementById('extractorMode')?.value;
       const format = document.getElementById('extractorFormat');
@@ -1770,21 +1959,16 @@
       const region = document.getElementById('extractorRegion');
       const live = document.getElementById('extractorLiveState');
       if (!mode || !format || !hint || !region) return;
+      syncExtractorFormatOptions(mode);
       if (mode === 'pool') {
-        hint.textContent = 'pool endpoint 会输出默认代理池入口，适合 curl、Python requests、系统代理长期使用。';
+        hint.textContent = '当前是默认池入口：一个地址长期使用，适合 curl、Python requests、系统代理和常驻任务。';
         region.value = 'all';
       } else if (mode === 'geoip') {
-        hint.textContent = 'geoip region endpoint 会输出带 /us/ /jp/ 的地区 URL；非完整 URL 格式会自动切换。';
+        hint.textContent = '当前是地区池入口：会输出带 /us/ /jp/ 的地区 URL，只用完整 URL 表达。';
       } else if (mode === 'android') {
-        hint.textContent = 'android global proxy 会按国家智能计算无认证本地端口；推荐 host:port 或 ADB 命令格式，适合 adb reverse 场景。';
+        hint.textContent = '当前是 Android 无认证端口：适合 adb reverse + Android 全局代理，不需要用户名密码。';
       } else {
-        hint.textContent = 'multi-port node list 会输出独立节点端口，最适合指纹浏览器、浏览器扩展和稳定单节点场景。';
-      }
-      if (mode === 'geoip' && format.value !== 'http_url' && format.value !== 'json') {
-        format.value = 'http_url';
-      }
-      if (mode === 'android' && !['host_port', 'adb_command', 'http_no_auth', 'json'].includes(format.value)) {
-        format.value = 'host_port';
+        hint.textContent = '当前是 multi-port 独立节点：最适合指纹浏览器、浏览器扩展和单账号隔离。';
       }
       if (live) {
         live.textContent = mode === 'android'
@@ -1813,7 +1997,9 @@
       document.getElementById('extractorCount').value = String(count);
       document.getElementById('extractorReveal').checked = !!reveal;
       handleExtractorModeChange();
-      return runExtractorRequest({ region, mode, format, count, reveal, syncForm: true });
+      const effectiveRegion = document.getElementById('extractorRegion').value;
+      const effectiveFormat = document.getElementById('extractorFormat').value;
+      return runExtractorRequest({ region: effectiveRegion, mode, format: effectiveFormat, count, reveal, syncForm: true });
     }
 
     function clearExtractorOutput(message) {
@@ -1839,11 +2025,7 @@
           return;
         }
         extractorLastMasked = !!data.masked;
-        const output = Array.isArray(data.entries)
-          ? (data.effective_format === 'json'
-              ? JSON.stringify(data.entries, null, 2)
-              : data.entries.join('\n'))
-          : '';
+        const output = formatExtractorOutput(data.entries, data.effective_format);
         extractorLastText = output;
         document.getElementById('extractorOutput').value = output;
         renderExtractorCards(data.entries || [], data);
@@ -1876,16 +2058,22 @@
         el.innerHTML = '<div class="extractor-empty-note">还没有生成代理，先使用上方快捷提取或高级参数生成结果。</div>';
         return;
       }
-      const isJSON = data.effective_format === 'json';
       const previewEntries = entries.slice(0, 20);
       el.innerHTML = previewEntries.map((item, index) => {
-        const rawEntry = isJSON ? item : null;
-        const entry = isJSON ? (item.url || `${item.host}:${item.port}`) : String(item);
+        const rawEntry = item && typeof item === 'object' ? item : null;
+        const entry = rawEntry
+          ? (rawEntry.url || rawEntry.http || rawEntry.https || (rawEntry.host && rawEntry.port ? `${rawEntry.host}:${rawEntry.port}` : JSON.stringify(rawEntry)))
+          : String(item);
+        const displayEntry = rawEntry && !rawEntry.url && !rawEntry.http && !rawEntry.https
+          ? JSON.stringify(rawEntry, null, 2)
+          : String(entry);
         const cardMode = escapeHtml(String(rawEntry?.mode || data.mode || 'extractor'));
         const cardRegion = escapeHtml(String(rawEntry?.region || data.region || 'all'));
         const cardRemark = rawEntry?.remark ? `<span class="extractor-chip">${escapeHtml(String(rawEntry.remark))}</span>` : '';
         const cardNode = rawEntry?.node_name ? `<span class="extractor-chip">${escapeHtml(String(rawEntry.node_name))}</span>` : '';
         const copyLabel = data.masked ? '复制脱敏' : '复制本条';
+        const curlCommand = proxyToCurlCommand(entry);
+        const curlButton = curlCommand ? `<button class="btn btn-sm" onclick="copySingleExtractorEntry('${encodeURIComponent(curlCommand)}')">复制 curl</button>` : '';
         return `
           <div class="extractor-result-card">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
@@ -1899,14 +2087,26 @@
                   ${cardNode}
                 </div>
               </div>
-              <button class="btn btn-sm btn-primary" onclick="copySingleExtractorEntry('${encodeURIComponent(String(entry))}')">${copyLabel}</button>
+              <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
+                ${curlButton}
+                <button class="btn btn-sm btn-primary" onclick="copySingleExtractorEntry('${encodeURIComponent(String(entry))}')">${copyLabel}</button>
+              </div>
             </div>
-            <div class="extractor-result-string">${escapeHtml(String(entry))}</div>
+            <div class="extractor-result-string">${escapeHtml(String(displayEntry))}</div>
           </div>
         `;
       }).join('');
       if (entries.length > 20) {
         el.innerHTML += `<div class="extractor-empty-note">当前共生成 ${entries.length} 条代理，卡片区仅展示前 20 条，完整结果请在下方文本框查看或下载 TXT。</div>`;
+      }
+    }
+
+    async function copyStaticText(text, message) {
+      try {
+        await navigator.clipboard.writeText(String(text || ''));
+        showToast(message || '已复制');
+      } catch (e) {
+        showToast('复制失败', 'error');
       }
     }
 
@@ -1922,9 +2122,7 @@
     async function quickCopy(mode, region, format, count) {
       const data = await runQuickExtract(mode, region, format, count, true);
       if (!data || !Array.isArray(data.entries) || !data.entries.length) return;
-      const text = data.effective_format === 'json'
-        ? JSON.stringify(data.entries, null, 2)
-        : data.entries.join('\n');
+      const text = formatExtractorOutput(data.entries, data.effective_format);
       try {
         await navigator.clipboard.writeText(text);
         showToast('快捷代理已复制');
@@ -2356,6 +2554,283 @@
       } catch(e){}
     }
 
+
+
+
+
+    let cloudflareLastData = [];
+    let cloudflareVisibleData = [];
+    let cloudflareProxySettings = null;
+
+    async function loadCloudflareProxySettings() {
+      try {
+        const res = await fetch('/api/settings');
+        const data = await res.json();
+        if (res.ok) cloudflareProxySettings = data.multi_port || data.listener || null;
+      } catch(e) {}
+    }
+
+    function updateCloudflareSummary(summary) {
+      summary = summary || {};
+      document.getElementById('cfExcellent').textContent = summary.excellent || 0;
+      document.getElementById('cfGood').textContent = summary.good || 0;
+      document.getElementById('cfFair').textContent = summary.fair || 0;
+      document.getElementById('cfPoor').textContent = summary.poor || 0;
+      document.getElementById('cfFailed').textContent = summary.failed || 0;
+    }
+
+    function cfLevelClass(level) {
+      return level === 'excellent' ? 'cf-excellent' : (level === 'good' ? 'cf-good' : (level === 'fair' ? 'cf-fair' : (level === 'poor' ? 'cf-poor' : 'cf-failed')));
+    }
+
+    function cfLevelLabel(level) {
+      return ({excellent:'优秀', good:'良好', fair:'一般', poor:'较差', failed:'检测失败'})[level] || level || '-';
+    }
+
+    function cfProxyUrl(item) {
+      const user = cloudflareProxySettings && cloudflareProxySettings.username ? cloudflareProxySettings.username : '';
+      const pass = cloudflareProxySettings && cloudflareProxySettings.password ? cloudflareProxySettings.password : '';
+      const host = item.host || '127.0.0.1';
+      const port = item.port || '';
+      const auth = user || pass ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : '';
+      return `http://${auth}${host}:${port}`;
+    }
+
+    function renderCloudflareRows(rows) {
+      if (Array.isArray(rows)) cloudflareLastData = rows;
+      const body = document.getElementById('cfTableBody');
+      if (!body) return;
+      const filter = document.getElementById('cfLevelFilter') ? document.getElementById('cfLevelFilter').value : 'all';
+      const sortMode = document.getElementById('cfSortMode') ? document.getElementById('cfSortMode').value : 'score_desc';
+      cloudflareVisibleData = (cloudflareLastData || []).filter(item => filter === 'all' || item.level === filter);
+      cloudflareVisibleData.sort((a,b) => {
+        if (sortMode === 'latency_asc') return (a.latency_ms || 999999999) - (b.latency_ms || 999999999);
+        if (sortMode === 'node_asc') return String(a.node_name || a.node_tag || '').localeCompare(String(b.node_name || b.node_tag || ''));
+        return (b.score || 0) - (a.score || 0) || (a.latency_ms || 999999999) - (b.latency_ms || 999999999);
+      });
+      if (!cloudflareVisibleData.length) {
+        body.innerHTML = '<tr><td colspan="9" style="color:var(--text-muted);">暂无数据</td></tr>';
+        return;
+      }
+      body.innerHTML = cloudflareVisibleData.map((item, idx) => {
+        const level = item.level || (item.error ? 'failed' : '-');
+        const cls = cfLevelClass(level);
+        const proxy = cfProxyUrl(item);
+        return `<tr>
+          <td>${escapeHtml(item.node_name || item.node_tag || '-')}<br/><code>${escapeHtml(item.node_tag || '')}</code></td>
+          <td>${escapeHtml(item.region || '-')}:${item.port || '-'}</td>
+          <td>${escapeHtml(item.exit_ip || '-')}</td>
+          <td>${escapeHtml(item.cf_loc || '-')}<br/><code>${escapeHtml(item.cf_colo || '-')}</code></td>
+          <td>${escapeHtml(item.http_protocol || '-')}<br/><code>${escapeHtml(item.tls_version || '-')} / warp=${escapeHtml(item.warp || '-')}</code></td>
+          <td>${item.http_204_ok ? '204 OK' : '204 FAIL'}<br/><code>${item.trace_ok ? 'trace OK' : 'trace FAIL'} · ${escapeHtml(item.challenge_status || 'not_configured')}</code></td>
+          <td><span class="${cls}">${item.score ?? '-'} / ${escapeHtml(cfLevelLabel(level))}</span><br/><code>${escapeHtml(item.error || '')}</code></td>
+          <td>${item.latency_ms || 0} ms<br/><code>${item.cached ? 'cache' : 'live'}</code></td>
+          <td>
+            <button class="btn" style="padding:5px 8px; font-size:11px;" onclick="copyCloudflareProxy(${idx})">复制代理</button><br/>
+            <button class="btn" style="padding:5px 8px; font-size:11px; margin-top:6px;" onclick="copyCloudflareCurl(${idx})">复制 curl</button><br/>
+            <button class="btn btn-primary" style="padding:5px 8px; font-size:11px; margin-top:6px;" onclick="extractCloudflareToExtractor(${idx})">提取到代理页</button>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function checkCloudflareScore(includeUnavailable) {
+      const region = document.getElementById('cfRegion').value;
+      const count = includeUnavailable ? 500 : (document.getElementById('cfCount').value || 10);
+      const status = document.getElementById('cfStatus');
+      status.textContent = includeUnavailable ? 'CF 全量扫描中，请稍候...' : 'CF 检测中，请稍候...';
+      try {
+        await loadCloudflareProxySettings();
+        const include = includeUnavailable ? '&include_unavailable=true' : '';
+        const res = await fetch(`/api/cloudflare/check?region=${encodeURIComponent(region)}&mode=multi-port&count=${encodeURIComponent(count)}${include}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        updateCloudflareSummary(data.summary);
+        renderCloudflareRows(data.data || []);
+        status.textContent = `完成：检测 ${data.checked_count || 0} 条，地区 ${data.region || region}${data.include_unavailable ? '，包含不可用节点' : ''}。注意：这是本地兼容评分，不是官方 Bot Score。`;
+      } catch (e) {
+        status.textContent = '检测失败：' + e.message;
+        showToast('CF 评分检测失败', 'error');
+      }
+    }
+
+    async function loadCloudflareCache() {
+      const status = document.getElementById('cfStatus');
+      if (status) status.textContent = '读取 CF 缓存中...';
+      try {
+        await loadCloudflareProxySettings();
+        const res = await fetch('/api/cloudflare/cache');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const rows = data.data || [];
+        renderCloudflareRows(rows);
+        const summary = {excellent:0, good:0, fair:0, poor:0, failed:0};
+        rows.forEach(item => { const l = item.level; if (summary[l] !== undefined) summary[l]++; });
+        updateCloudflareSummary(summary);
+        if (status) status.textContent = `CF 缓存记录：${data.count || 0} 条`;
+      } catch (e) {
+        if (status) status.textContent = '缓存读取失败：' + e.message;
+      }
+    }
+
+    function copyCloudflareJSON() {
+      navigator.clipboard.writeText(JSON.stringify(cloudflareVisibleData.length ? cloudflareVisibleData : cloudflareLastData, null, 2)).then(() => showToast('已复制 CF JSON'));
+    }
+
+    function copyCloudflareProxy(idx) {
+      const item = cloudflareVisibleData[idx];
+      if (!item) return;
+      navigator.clipboard.writeText(cfProxyUrl(item)).then(() => showToast('已复制代理 URL'));
+    }
+
+    function copyCloudflareCurl(idx) {
+      const item = cloudflareVisibleData[idx];
+      if (!item) return;
+      navigator.clipboard.writeText(`curl -x ${cfProxyUrl(item)} http://cp.cloudflare.com/generate_204`).then(() => showToast('已复制 curl 命令'));
+    }
+
+    function extractCloudflareToExtractor(idx) {
+      const item = cloudflareVisibleData[idx];
+      if (!item) return;
+      const url = cfProxyUrl(item);
+      switchTab('extractor');
+      const modeEl = document.getElementById('extractorMode');
+      const regionEl = document.getElementById('extractorRegion');
+      const formatEl = document.getElementById('extractorFormat');
+      const countEl = document.getElementById('extractorCount');
+      const revealEl = document.getElementById('extractorReveal');
+      if (modeEl) modeEl.value = 'multi-port';
+      if (regionEl) regionEl.value = item.region || 'all';
+      if (formatEl) formatEl.value = 'http_url';
+      if (countEl) countEl.value = '1';
+      if (revealEl) revealEl.checked = true;
+      handleExtractorModeChange();
+      const entry = {
+        url,
+        host: item.host || '127.0.0.1',
+        port: item.port || '',
+        region: item.region || 'all',
+        mode: 'multi-port',
+        remark: `CF ${cfLevelLabel(item.level)} · ${item.score ?? '-'}分`,
+        node_name: item.node_name || item.node_tag || ''
+      };
+      extractorLastText = url;
+      const output = document.getElementById('extractorOutput');
+      if (output) output.value = url;
+      renderExtractorCards([entry], {mode:'multi-port', region:item.region || 'all', effective_format:'http_url', masked:false});
+      const meta = document.getElementById('extractorMeta');
+      if (meta) meta.textContent = `来自 CF 评分 | 节点: ${item.node_name || item.node_tag || '-'} | 区域: ${item.region || '-'} | 分数: ${item.score ?? '-'} | 真实凭据`;
+      const state = document.getElementById('extractorResultState');
+      if (state) state.textContent = '真实密码';
+      showToast('已提取到代理页');
+    }
+
+    function downloadCloudflareCSV() {
+      const rows = [['node','region','port','exit_ip','cf_loc','cf_colo','http','tls','warp','http_204_ok','trace_ok','score','level','latency_ms','cached']];
+      (cloudflareVisibleData.length ? cloudflareVisibleData : cloudflareLastData).forEach(item => rows.push([item.node_name || '', item.region || '', item.port || '', item.exit_ip || '', item.cf_loc || '', item.cf_colo || '', item.http_protocol || '', item.tls_version || '', item.warp || '', item.http_204_ok ? 'true' : 'false', item.trace_ok ? 'true' : 'false', item.score ?? '', item.level || '', item.latency_ms || 0, item.cached ? 'true' : 'false']));
+      const csv = rows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'cloudflare_score.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    let reputationLastData = [];
+
+    function updateReputationSummary(summary) {
+      summary = summary || {};
+      document.getElementById('repLow').textContent = summary.low || 0;
+      document.getElementById('repMedium').textContent = summary.medium || 0;
+      document.getElementById('repHigh').textContent = summary.high || 0;
+      document.getElementById('repFailed').textContent = summary.failed || 0;
+    }
+
+    function renderReputationRows(rows) {
+      reputationLastData = rows || [];
+      const body = document.getElementById('repTableBody');
+      if (!body) return;
+      if (!reputationLastData.length) {
+        body.innerHTML = '<tr><td colspan="7" style="color:var(--text-muted);">暂无数据</td></tr>';
+        return;
+      }
+      body.innerHTML = reputationLastData.map(item => {
+        const r = item.result || item;
+        const level = r.risk_level || (item.error ? 'failed' : '-');
+        const levelClass = level === 'low' ? 'risk-low' : (level === 'medium' ? 'risk-medium' : (level === 'high' ? 'risk-high' : 'risk-failed'));
+        const node = item.node_name || item.node_tag || '-';
+        const port = item.port ? `${escapeHtml(item.region || '-')}:${item.port}` : '-';
+        const asn = [r.asn, r.isp || r.org].filter(Boolean).join('<br/>');
+        const flags = [r.hosting ? 'hosting' : '', r.proxy ? 'proxy' : '', r.vpn ? 'vpn' : '', r.tor ? 'tor' : ''].filter(Boolean).join(' / ');
+        return `<tr>
+          <td>${escapeHtml(node)}<br/><code>${escapeHtml(item.node_tag || '')}</code></td>
+          <td>${port}</td>
+          <td>${escapeHtml(r.ip || '-')}</td>
+          <td>${escapeHtml(r.country_code || '')} ${escapeHtml(r.country || '')}</td>
+          <td>${asn || '-'}</td>
+          <td><span class="${levelClass}">${escapeHtml(level)}</span><br/><code>${r.risk_score ?? '-'} ${flags ? '· '+escapeHtml(flags) : ''}</code></td>
+          <td>${r.cached ? 'cache' : 'live'}<br/><code>${r.latency_ms || 0} ms</code></td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function checkReputation() {
+      const region = document.getElementById('repRegion').value;
+      const count = document.getElementById('repCount').value || 10;
+      const status = document.getElementById('repStatus');
+      status.textContent = '检查中，请稍候...';
+      try {
+        const res = await fetch(`/api/reputation/check?region=${encodeURIComponent(region)}&mode=multi-port&count=${encodeURIComponent(count)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        updateReputationSummary(data.summary);
+        renderReputationRows(data.data || []);
+        status.textContent = `完成：检查 ${data.checked_count || 0} 条，地区 ${data.region || region}`;
+      } catch (e) {
+        status.textContent = '检查失败：' + e.message;
+        showToast('IP 信誉检查失败', 'error');
+      }
+    }
+
+    async function loadReputationCache() {
+      const status = document.getElementById('repStatus');
+      if (status) status.textContent = '读取缓存中...';
+      try {
+        const res = await fetch('/api/reputation/cache');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const rows = (data.data || []).map(r => ({ result: r }));
+        renderReputationRows(rows);
+        const summary = {low:0, medium:0, high:0, failed:0};
+        rows.forEach(x => { const l = x.result && x.result.risk_level; if (summary[l] !== undefined) summary[l]++; });
+        updateReputationSummary(summary);
+        if (status) status.textContent = `缓存记录：${data.count || 0} 条`;
+      } catch (e) {
+        if (status) status.textContent = '缓存读取失败：' + e.message;
+      }
+    }
+
+    function copyReputationJSON() {
+      const text = JSON.stringify(reputationLastData, null, 2);
+      navigator.clipboard.writeText(text).then(() => showToast('已复制 JSON'));
+    }
+
+    function downloadReputationCSV() {
+      const rows = [['node','region','port','ip','country_code','asn','isp','risk_level','risk_score','cached','latency_ms']];
+      reputationLastData.forEach(item => {
+        const r = item.result || item;
+        rows.push([item.node_name || '', item.region || '', item.port || '', r.ip || '', r.country_code || '', r.asn || '', r.isp || r.org || '', r.risk_level || '', r.risk_score ?? '', r.cached ? 'true' : 'false', r.latency_ms || 0]);
+      });
+      const csv = rows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'ip_reputation.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
     // ─── Theme System: Dark / Light / Auto (follow OS) ───
     const THEME_LABELS = { dark: '深色模式', light: '浅色模式', auto: '跟随系统' };
     const osMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -2433,7 +2908,7 @@
     })();
 
     // Init App
-    checkAuth().then(ok => { if(ok) { refresh(); startAutoRefresh(); } });
+    checkAuth().then(ok => { if(ok) { refresh(); handleExtractorModeChange(); startAutoRefresh(); } });
 
     // Fetch GitHub stars
     fetch('https://api.github.com/repos/jasonwong1991/easy_proxies')

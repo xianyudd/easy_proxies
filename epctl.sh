@@ -9,6 +9,9 @@ ADB_SERIAL="${ADB_SERIAL:-192.168.1.118:5555}"
 TEST_URL="${TEST_URL:-http://cp.cloudflare.com/generate_204}"
 TIMEOUT="${TIMEOUT:-10}"
 RETRIES="${RETRIES:-3}"
+WEBUI_URL="${WEBUI_URL:-http://127.0.0.1:9091}"
+WEBUI_TOKEN="${WEBUI_TOKEN:-}"
+WEBUI_PASSWORD="${WEBUI_PASSWORD:-}"
 
 usage() {
   cat <<'EOF'
@@ -31,6 +34,15 @@ Proxy:
   proxy:test [region]        Test Android no-auth region port, default jp
   proxy:regions              Show region to port mapping
 
+IP Reputation:
+  reputation:check <region> [count]  Check IP reputation for a region via local WebUI API
+  reputation:cache           Show local WebUI reputation cache summary
+
+Cloudflare Score:
+  cf:check <region> [count]  Check local Cloudflare compatibility score for available nodes
+  cf:check-all [region]      Check all configured nodes, including unavailable nodes
+  cf:cache                   Show local Cloudflare score cache summary
+
 ADB:
   adb:set [region]           Set adb reverse and Android global proxy, default jp
   adb:status                 Show adb reverse and proxy settings
@@ -41,7 +53,7 @@ Short aliases:
   adb-set, adb-status, adb-clear
 
 Regions:
-  us jp hk sg tw kr in ae ch au other
+  us jp hk sg tw kr in ae ch au de gb ca other
 
 Environment:
   CONFIG_FILE=config.yaml
@@ -49,6 +61,9 @@ Environment:
   LOG_FILE=/tmp/easy_proxies.run.log
   ADB_SERIAL=192.168.1.118:5555
   RETRIES=3
+  WEBUI_URL=http://127.0.0.1:9091
+  WEBUI_TOKEN=<session token, optional>
+  WEBUI_PASSWORD=<WebUI password, optional; never printed>
 EOF
 }
 
@@ -74,6 +89,7 @@ cfg_value() {
 region_port() {
   local region="${1:-jp}"
   case "$region" in
+    all) echo all ;;
     us) echo 13001 ;;
     jp) echo 13002 ;;
     hk) echo 13003 ;;
@@ -85,8 +101,111 @@ region_port() {
     ch) echo 13019 ;;
     au) echo 13010 ;;
     other) echo 13011 ;;
+    de) echo 13012 ;;
+    gb) echo 13015 ;;
+    ca) echo 13014 ;;
     *) echo "[ERROR] Unknown region: $region" >&2; exit 2 ;;
   esac
+}
+
+
+json_pretty() {
+  if command -v jq >/dev/null 2>&1; then
+    jq .
+  else
+    cat
+  fi
+}
+
+webui_api() {
+  local method="$1"
+  local path="$2"
+  local body="${3:-}"
+  local url="${WEBUI_URL%/}${path}"
+  local curl_args=(--max-time "$TIMEOUT" -sS -X "$method" -H 'Accept: application/json')
+  local cookie_jar=""
+
+  clean_proxy_env
+
+  if [ -n "$WEBUI_TOKEN" ]; then
+    curl_args+=(-H "Authorization: Bearer ${WEBUI_TOKEN}")
+  elif [ -n "$WEBUI_PASSWORD" ]; then
+    cookie_jar="$(mktemp -t epctl-webui-cookie.XXXXXX)"
+    trap 'rm -f "$cookie_jar"' RETURN
+    local auth_code
+    auth_code="$(
+      printf '{"password":"%s"}' "$WEBUI_PASSWORD" | \
+        curl --max-time "$TIMEOUT" -sS -o /dev/null -w '%{http_code}' \
+          -c "$cookie_jar" -H 'Content-Type: application/json' \
+          -X POST --data-binary @- "${WEBUI_URL%/}/api/auth" || true
+    )"
+    if [ "$auth_code" != "200" ]; then
+      echo "[ERROR] WebUI authentication failed HTTP=${auth_code:-000}" >&2
+      rm -f "$cookie_jar"
+      trap - RETURN
+      exit 1
+    fi
+    curl_args+=(-b "$cookie_jar")
+  fi
+
+  if [ -n "$body" ]; then
+    curl_args+=(-H 'Content-Type: application/json' --data-binary "$body")
+  fi
+
+  local response_file status
+  response_file="$(mktemp -t epctl-webui-response.XXXXXX)"
+  status="$(curl "${curl_args[@]}" -o "$response_file" -w '%{http_code}' "$url" || true)"
+
+  if [ -n "$cookie_jar" ]; then
+    rm -f "$cookie_jar"
+    trap - RETURN
+  fi
+
+  if ! [[ "$status" =~ ^[0-9]+$ ]] || [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+    echo "[ERROR] WebUI API ${method} ${path} failed HTTP=${status:-000}" >&2
+    cat "$response_file" >&2 || true
+    rm -f "$response_file"
+    exit 1
+  fi
+
+  json_pretty <"$response_file"
+  rm -f "$response_file"
+}
+
+reputation_check() {
+  local region="${1:-}"
+  if [ -z "$region" ]; then
+    echo "[ERROR] Usage: ./epctl.sh reputation:check <region>" >&2
+    exit 2
+  fi
+  region_port "$region" >/dev/null
+  local count="${2:-10}"
+  webui_api GET "/api/reputation/check?region=${region}&mode=multi-port&count=${count}"
+}
+
+reputation_cache() {
+  webui_api GET "/api/reputation/cache"
+}
+
+cf_check() {
+  local region="${1:-}"
+  if [ -z "$region" ]; then
+    echo "[ERROR] Usage: ./epctl.sh cf:check <region> [count]" >&2
+    exit 2
+  fi
+  region_port "$region" >/dev/null
+  local count="${2:-10}"
+  webui_api GET "/api/cloudflare/check?region=${region}&mode=multi-port&count=${count}"
+}
+
+cf_check_all() {
+  local region="${1:-all}"
+  region_port "$region" >/dev/null
+  webui_api GET "/api/cloudflare/check?region=${region}&mode=multi-port&count=500&include_unavailable=true"
+}
+
+cf_cache() {
+  webui_api GET "/api/cloudflare/cache"
 }
 
 show_regions() {
@@ -102,6 +221,9 @@ Region ports:
   ae     13008
   au     13010
   other  13011
+  de     13012
+  gb     13015
+  ca     13014
   ch     13019
 EOF
 }
@@ -181,7 +303,7 @@ status_service() {
     fi
   fi
   echo
-  ss -ltnp 2>/dev/null | grep -E ':9091|:2323|:1221|:1300[1-9]|:13010|:13011|:13019' || true
+  ss -ltnp 2>/dev/null | grep -E ':9091|:2323|:1221|:1300[1-9]|:1301[0-5]|:13019' || true
   echo
   if [ "$web" = "200" ]; then
     curl -s http://127.0.0.1:9091/api/nodes | jq '{total_nodes, visible_nodes:(.nodes|length), available:([.nodes[] | select(.available==true)] | length), region_stats}' || true
@@ -246,6 +368,11 @@ case "${1:-}" in
   logs:follow|logs-follow) tail -f "$LOG_FILE" ;;
   proxy:test|test) test_region "${2:-jp}" ;;
   proxy:regions|regions) show_regions ;;
+  reputation:check) reputation_check "${2:-}" "${3:-10}" ;;
+  reputation:cache) reputation_cache ;;
+  cf:check) cf_check "${2:-}" "${3:-10}" ;;
+  cf:check-all) cf_check_all "${2:-all}" ;;
+  cf:cache) cf_cache ;;
   adb:set|adb-set) adb_set "${2:-jp}" ;;
   adb:clear|adb-clear) adb_clear ;;
   adb:status|adb-status) adb_status ;;
