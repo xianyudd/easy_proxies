@@ -43,6 +43,11 @@ Cloudflare Score:
   cf:check-all [region]      Check all configured nodes, including unavailable nodes
   cf:cache                   Show local Cloudflare score cache summary
 
+WebUI development:
+  web:dev                    Start Vite dev server for React WebUI
+  web:typecheck              Run TypeScript typecheck
+  web:build                  Build React WebUI into internal/monitor/assets/dist
+
 ADB:
   adb:set [region]           Set adb reverse and Android global proxy, default jp
   adb:status                 Show adb reverse and proxy settings
@@ -359,6 +364,18 @@ adb_status() {
   adb -s "$ADB_SERIAL" shell settings list global | grep -E 'proxy|http_proxy' || true
 }
 
+web_dev() {
+  (cd web && npm run dev)
+}
+
+web_typecheck() {
+  (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run typecheck)
+}
+
+web_build() {
+  (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run build)
+}
+
 case "${1:-}" in
   service:start|start) start_service ;;
   service:stop|stop) stop_service ;;
@@ -373,6 +390,9 @@ case "${1:-}" in
   cf:check) cf_check "${2:-}" "${3:-10}" ;;
   cf:check-all) cf_check_all "${2:-all}" ;;
   cf:cache) cf_cache ;;
+  web:dev) web_dev ;;
+  web:typecheck) web_typecheck ;;
+  web:build) web_build ;;
   adb:set|adb-set) adb_set "${2:-jp}" ;;
   adb:clear|adb-clear) adb_clear ;;
   adb:status|adb-status) adb_status ;;

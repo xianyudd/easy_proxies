@@ -369,3 +369,17 @@ go test ./...
 ## License
 
 MIT License
+
+## React WebUI
+
+新 WebUI 位于 `web/`，使用 Vite + React + TypeScript。构建产物输出到 `internal/monitor/assets/dist/`，Go 管理服务会优先服务 dist；如果 dist 不存在，则回退到 legacy WebUI。
+
+常用命令：
+
+```bash
+./epctl.sh web:typecheck
+./epctl.sh web:build
+./epctl.sh restart
+```
+
+详细说明见 `WEB_UI_ARCHITECTURE.md`。

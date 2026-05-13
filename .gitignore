@@ -46,3 +46,7 @@ coverage.html
 
 # Browser verification artifacts
 .playwright-mcp/
+
+# Frontend dependencies/build cache
+web/node_modules/
+web/tsconfig.tsbuildinfo

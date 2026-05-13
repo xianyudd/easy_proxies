@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	mathrand "math/rand"
 	"net/http"
@@ -26,7 +27,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-//go:embed assets/index.html
+//go:embed assets
 var embeddedFS embed.FS
 
 // Session represents a user session with expiration.
@@ -282,12 +283,45 @@ func (s *Server) Shutdown(ctx context.Context) {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		http.NotFound(w, r)
+		return
+	}
+	if distFS, err := fs.Sub(embeddedFS, "assets/dist"); err == nil {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" {
+			path = "index.html"
+		}
+		if data, err := fs.ReadFile(distFS, path); err == nil {
+			serveEmbeddedFile(w, path, data)
+			return
+		}
+		if data, err := fs.ReadFile(distFS, "index.html"); err == nil {
+			serveEmbeddedFile(w, "index.html", data)
+			return
+		}
+	}
 	data, err := embeddedFS.ReadFile("assets/index.html")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	serveEmbeddedFile(w, "index.html", data)
+}
+
+func serveEmbeddedFile(w http.ResponseWriter, name string, data []byte) {
+	switch {
+	case strings.HasSuffix(name, ".html"):
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	case strings.HasSuffix(name, ".js"):
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	case strings.HasSuffix(name, ".css"):
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case strings.HasSuffix(name, ".svg"):
+		w.Header().Set("Content-Type", "image/svg+xml")
+	case strings.HasSuffix(name, ".json"):
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	}
 	_, _ = w.Write(data)
 }
 
