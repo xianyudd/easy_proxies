@@ -16,5 +16,13 @@ export default defineConfig({
     outDir: '../internal/monitor/assets/dist',
     emptyOutDir: true,
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          echarts: ['echarts'],
+          vendor: ['react', 'react-dom', '@tanstack/react-query', 'zustand'],
+        },
+      },
+    },
   },
 })

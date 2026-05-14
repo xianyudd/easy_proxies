@@ -2093,15 +2093,6 @@ func (s *Server) respondNodeError(w http.ResponseWriter, err error) {
 // handleTraffic streams real-time traffic from sing-box Clash API as SSE.
 // Clash API /traffic returns newline-delimited JSON; we convert to SSE for browser EventSource.
 func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
-	// Connect to sing-box Clash API
-	resp, err := http.Get("http://127.0.0.1:9092/traffic")
-	if err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		writeJSON(w, map[string]any{"error": "无法连接到流量统计接口", "details": err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2112,6 +2103,25 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+
+	// Connect to sing-box Clash API. If the Clash API is not ready, keep the
+	// SSE stream alive with zero traffic samples so the WebUI chart can render
+	// without noisy browser-side EventSource failures.
+	resp, err := http.Get("http://127.0.0.1:9092/traffic")
+	if err != nil {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				fmt.Fprintf(w, "data: {\"up\":0,\"down\":0,\"status\":\"unavailable\"}\n\n")
+				flusher.Flush()
+			}
+		}
+	}
+	defer resp.Body.Close()
 
 	// Read NDJSON lines from Clash API and forward as SSE
 	buf := make([]byte, 4096)
