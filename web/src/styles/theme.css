@@ -1,23 +1,44 @@
 :root {
-  --bg: #0b1120;
-  --panel: #111827;
-  --panel-2: #172033;
-  --border: #263143;
-  --text: #eef2ff;
-  --muted: #94a3b8;
-  --primary: #2563eb;
-  --primary-2: #1d4ed8;
-  --green: #10b981;
-  --orange: #f59e0b;
-  --red: #ef4444;
-  --radius: 14px;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --bg: #061016;
+  --bg-deep: #02070b;
+  --panel: rgba(10, 25, 34, 0.88);
+  --panel-2: rgba(15, 38, 49, 0.82);
+  --panel-3: rgba(20, 55, 67, 0.72);
+  --border: rgba(120, 228, 218, 0.16);
+  --border-strong: rgba(120, 228, 218, 0.34);
+  --text: #e8fbf7;
+  --muted: #7fa5a8;
+  --faint: #48666a;
+  --primary: #19d3c5;
+  --primary-2: #0ba39e;
+  --primary-soft: rgba(25, 211, 197, 0.14);
+  --green: #37f18f;
+  --orange: #ffb84d;
+  --red: #ff5f6d;
+  --blue: #58a6ff;
+  --violet: #a78bfa;
+  --radius: 18px;
+  --radius-sm: 11px;
+  --shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
+  --glow: 0 0 28px rgba(25, 211, 197, 0.2);
+  --mono: "IBM Plex Mono", "Cascadia Code", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --sans: "Aptos", "Segoe UI Variable", "Helvetica Neue", ui-sans-serif, system-ui, sans-serif;
 }
+
 [data-theme="light"] {
-  --bg: #f3f6fb;
-  --panel: #ffffff;
-  --panel-2: #f8fafc;
-  --border: #dbe3ef;
-  --text: #0f172a;
-  --muted: #64748b;
+  --bg: #e9f3f1;
+  --bg-deep: #d9e9e6;
+  --panel: rgba(255, 255, 255, 0.86);
+  --panel-2: rgba(240, 249, 247, 0.92);
+  --panel-3: rgba(225, 243, 240, 0.9);
+  --border: rgba(15, 95, 96, 0.16);
+  --border-strong: rgba(15, 95, 96, 0.3);
+  --text: #09242a;
+  --muted: #527075;
+  --faint: #7f999d;
+  --primary: #087f7c;
+  --primary-2: #056966;
+  --primary-soft: rgba(8, 127, 124, 0.12);
+  --shadow: 0 20px 55px rgba(23, 71, 75, 0.14);
+  --glow: 0 0 26px rgba(8, 127, 124, 0.16);
 }
