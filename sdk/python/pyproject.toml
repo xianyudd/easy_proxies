@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "easy-proxies-sdk"
+version = "0.1.0"
+description = "Python SDK for Easy Proxies external integration"
+requires-python = ">=3.9"
+readme = "README.md"
+authors = [
+  { name = "Easy Proxies" }
+]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]

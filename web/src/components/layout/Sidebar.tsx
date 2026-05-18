@@ -1,22 +1,28 @@
+import { Activity, FileSearch, Gauge, List, Settings, ShieldCheck, Wifi } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 
 const items = [
-  ['extractor', 'EX', '代理提取', 'Proxy Extractor'],
-  ['quality', 'QL', '节点质量', 'Quality Radar'],
-  ['status', 'ST', '运行状态', 'Live Telemetry'],
-  ['settings', 'CF', '系统设置', 'Control Flags'],
-  ['diagnostics', 'LG', '日志诊断', 'Event Stream'],
+  ['extractor', FileSearch, '代理提取'],
+  ['overview', List, '节点总览'],
+  ['quality', ShieldCheck, '节点质量'],
+  ['status', Gauge, '运行状态'],
+  ['settings', Settings, '系统设置'],
+  ['diagnostics', Activity, '日志诊断'],
 ] as const
 
 export function Sidebar() {
   const active = useAppStore(s => s.activeTab)
   const setActive = useAppStore(s => s.setActiveTab)
+  const activate = (id: typeof items[number][0]) => {
+    setActive(id)
+    window.history.replaceState(null, '', `#${id}`)
+  }
   return <aside className="sidebar">
-    <div className="brand">Easy Proxies</div>
+    <div className="brand"><span className="brand-mark">EP</span><strong>Easy Proxies</strong></div>
+    <nav className="nav">{items.map(([id, Icon, label]) => <button key={id} className={active === id ? 'active' : ''} onClick={() => activate(id)}><span className="nav-code"><Icon size={18} strokeWidth={2.1} /></span><span className="nav-copy"><strong>{label}</strong></span></button>)}</nav>
     <div className="sidebar-status">
-      <span className="status-orb" />
-      <div><strong>ARRAY ONLINE</strong><span>local control plane</span></div>
+      <span className="status-orb"><Wifi size={13} strokeWidth={2.4} /></span>
+      <strong>服务在线</strong>
     </div>
-    <nav className="nav">{items.map(([id, code, label, sub]) => <button key={id} className={active === id ? 'active' : ''} onClick={() => setActive(id)}><span className="nav-code">{code}</span><span className="nav-copy"><strong>{label}</strong><small>{sub}</small></span></button>)}</nav>
   </aside>
 }

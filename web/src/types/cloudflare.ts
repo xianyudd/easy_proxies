@@ -17,6 +17,7 @@ export interface CloudflareResult {
   level?: 'excellent'|'good'|'fair'|'poor'|'failed'|string
   latency_ms?: number
   cached?: boolean
+  checked_at?: string
   error?: string
 }
 export interface CloudflareCheckResponse {

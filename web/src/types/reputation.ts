@@ -10,6 +10,7 @@ export interface ReputationResult {
   risk_level?: 'low'|'medium'|'high'|'failed'|string
   risk_score?: number
   cached?: boolean
+  checked_at?: string
   duration_ms?: number
   error?: string
   result?: ReputationResult

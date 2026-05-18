@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppLayout } from './components/layout/AppLayout'
 import { useAppStore } from './store/appStore'
@@ -8,10 +8,26 @@ import { ApiError } from './api/client'
 import { Button } from './components/ui/Button'
 import { useToast } from './components/ui/Toast'
 import { ExtractorPage } from './pages/ExtractorPage'
+import { NodeOverviewPage } from './pages/NodeOverviewPage'
 import { QualityPage } from './pages/QualityPage'
 import { StatusPage } from './pages/StatusPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { DiagnosticsPage } from './pages/DiagnosticsPage'
+
+const hashTabMap = new Map<string, ReturnType<typeof useAppStore.getState>['activeTab']>([
+  ['#extractor', 'extractor'],
+  ['#overview', 'overview'],
+  ['#quality', 'quality'],
+  ['#status', 'status'],
+  ['#settings', 'settings'],
+  ['#subscriptions', 'settings'],
+  ['#pool', 'settings'],
+  ['#multi-port', 'settings'],
+  ['#routing', 'settings'],
+  ['#quality-check', 'settings'],
+  ['#management', 'settings'],
+  ['#diagnostics', 'diagnostics'],
+])
 
 function LoginPage() {
   const [password, setPassword] = useState('')
@@ -29,11 +45,22 @@ export default function App() {
   const activeTab = useAppStore(s => s.activeTab)
   const authenticated = useAppStore(s => s.authenticated)
   const setAuthenticated = useAppStore(s => s.setAuthenticated)
+  const setActiveTab = useAppStore(s => s.setActiveTab)
   const authProbe = useQuery({ queryKey: ['auth-probe'], queryFn: getNodes, retry: false })
+  useEffect(() => {
+    const syncHash = () => {
+      const tab = hashTabMap.get(window.location.hash)
+      if (tab) setActiveTab(tab)
+    }
+    syncHash()
+    window.addEventListener('hashchange', syncHash)
+    return () => window.removeEventListener('hashchange', syncHash)
+  }, [setActiveTab])
   if (authProbe.error instanceof ApiError && authProbe.error.status === 401 && authenticated) setAuthenticated(false)
   if (!authenticated) return <LoginPage />
   return <AppLayout>
     {activeTab === 'extractor' && <ExtractorPage />}
+    {activeTab === 'overview' && <NodeOverviewPage />}
     {activeTab === 'quality' && <QualityPage />}
     {activeTab === 'status' && <StatusPage />}
     {activeTab === 'settings' && <SettingsPage />}
