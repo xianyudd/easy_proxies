@@ -5,6 +5,37 @@ import (
 	"testing"
 )
 
+func TestParseSubscriptionContent_FiltersPlainHTTPMetadata(t *testing.T) {
+	content := `https://example.com/status#473-62-gb
+https://example.com/expire/2026-06-18
+http://example.com/reset/27
+vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none#valid
+hy2://secret@example.org:443?sni=example.org#hy2-valid
+`
+
+	nodes, err := ParseSubscriptionContent(content)
+	if err != nil {
+		t.Fatalf("parse subscription failed: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 real proxy nodes, got %d: %#v", len(nodes), nodes)
+	}
+	for _, node := range nodes {
+		if node.URI == "" || node.URI[:4] == "http" {
+			t.Fatalf("unexpected metadata node imported: %#v", node)
+		}
+	}
+}
+
+func TestParseNodesFromContent_AllowsManualHTTPProxy(t *testing.T) {
+	nodes, err := parseNodesFromContent("http://user:pass@example.com:8080\nhttps://example.org:8443\n")
+	if err != nil {
+		t.Fatalf("parse nodes failed: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected manual HTTP(S) proxy nodes to be kept, got %d", len(nodes))
+	}
+}
 func TestParseClashYAML_Hysteria2PortHoppingAndObfs(t *testing.T) {
 	content := `proxies:
   - name: "test-hy2"

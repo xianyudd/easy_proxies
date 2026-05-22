@@ -19,6 +19,7 @@ const LOG_LEVELS = [
 type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'neutral'
 type LogFilter = typeof LOG_LEVELS[number]['value']
 type LogRow = { id: number; text: string; level: LogLevel }
+type FailureBucket = { key: string; label: string; value: number }
 
 function percentValue(value: unknown) {
   const num = Number(value)
@@ -41,11 +42,47 @@ function avgLatency(rows: Record<string, unknown>[]) {
 }
 
 function detectLogLevel(line: string): LogLevel {
-  if (/\b(error|fatal|panic|failed|failure)\b/i.test(line)) return 'error'
-  if (/\b(warn|warning)\b/i.test(line)) return 'warn'
-  if (/\b(debug|trace)\b/i.test(line)) return 'debug'
-  if (/\b(info|success|ready|started|listening)\b/i.test(line)) return 'info'
+  if (/\b(error|fatal|panic)\b[:\]]?/i.test(line)) return 'error'
+  if (/\b(warn|warning)\b[:\]]?/i.test(line)) return 'warn'
+  if (/\b(debug|trace)\b[:\]]?/i.test(line)) return 'debug'
+  if (/\b(info|success|ready|started|listening)\b[:\]]?/i.test(line)) return 'info'
+  if (/\b(failed|failure|blacklisted|timeout|deadline exceeded|EOF|tls:|reality verification failed)\b/i.test(line)) return 'warn'
   return 'neutral'
+}
+
+function classifyFailureReason(text: string) {
+  const line = text.toLowerCase()
+  if (/blacklisted/.test(line)) return 'blacklisted'
+  if (/reality verification failed/.test(line)) return 'reality'
+  if (/timeout|no recent network activity|deadline exceeded|i\/o timeout/.test(line)) return 'timeout'
+  if (/\beof\b/.test(line)) return 'eof'
+  if (/tls:|handshake failure/.test(line)) return 'tls'
+  if (/unexpected http response status: (429|503)/.test(line)) return 'http-status'
+  return ''
+}
+
+function isMetadataLikeNodeTag(value: unknown) {
+  const text = String(value || '').trim().toLowerCase()
+  return /^\d+(?:-\d+)?-gb$/.test(text) || /^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{1,3}$/.test(text)
+}
+
+function buildFailureBuckets(logRows: LogRow[], debugNodes: Record<string, unknown>[]): FailureBucket[] {
+  const counts = new Map<string, number>()
+  for (const row of logRows) {
+    const reason = classifyFailureReason(row.text)
+    if (reason) counts.set(reason, (counts.get(reason) || 0) + 1)
+  }
+  const metadataNodes = debugNodes.filter(node => isMetadataLikeNodeTag(node.tag || node.name)).length
+  if (metadataNodes) counts.set('metadata', metadataNodes)
+  return [
+    { key: 'timeout', label: '超时 / 无活动', value: counts.get('timeout') || 0 },
+    { key: 'reality', label: 'Reality 校验', value: counts.get('reality') || 0 },
+    { key: 'eof', label: 'EOF 断开', value: counts.get('eof') || 0 },
+    { key: 'tls', label: 'TLS 握手', value: counts.get('tls') || 0 },
+    { key: 'http-status', label: 'HTTP 429/503', value: counts.get('http-status') || 0 },
+    { key: 'blacklisted', label: '拉黑事件', value: counts.get('blacklisted') || 0 },
+    { key: 'metadata', label: '疑似元数据节点', value: counts.get('metadata') || 0 },
+  ].filter(item => item.value > 0)
 }
 
 function includesKeyword(line: string, keyword: string, caseSensitive: boolean) {
@@ -97,6 +134,7 @@ export function DiagnosticsPage() {
   const warnLines = useMemo(() => logRows.filter(row => row.level === 'warn').length, [logRows])
   const debugData = useMemo(() => debug.data || {}, [debug.data])
   const debugNodes = useMemo<Record<string, unknown>[]>(() => Array.isArray(debugData.nodes) ? debugData.nodes as Record<string, unknown>[] : [], [debugData])
+  const failureBuckets = useMemo(() => buildFailureBuckets(logRows, debugNodes), [debugNodes, logRows])
   const diagnosticSummary = useMemo(() => {
     const activeConnections = sumNumbers(debugNodes, 'active_connections')
     const failedNodes = debugNodes.filter(node => Number(node.failure_count) > 0).length
@@ -150,6 +188,13 @@ export function DiagnosticsPage() {
           <div className="panel-subtitle">聚合后端调试接口的核心健康数据，不展示原始 JSON 和重复指标。</div>
           <div className="diagnostic-summary-list">
             {diagnosticSummary.length ? diagnosticSummary.map(item => <div key={item.label}><span>{item.label}</span><strong title={item.value}>{item.value}</strong></div>) : <div><span>状态</span><strong>暂无诊断数据</strong></div>}
+          </div>
+        </div>
+        <div className="card diagnostics-json-card diagnostics-summary-card diagnostics-failure-card">
+          <div className="section-title">失败原因聚合</div>
+          <div className="panel-subtitle">按日志关键词和节点标签聚合，优先定位协议、网络和订阅污染问题。</div>
+          <div className="diagnostic-summary-list">
+            {failureBuckets.length ? failureBuckets.map(item => <div key={item.key}><span>{item.label}</span><strong>{item.value}</strong></div>) : <div><span>状态</span><strong>暂无失败分类</strong></div>}
           </div>
         </div>
         <div className="diagnostics-advice-card">

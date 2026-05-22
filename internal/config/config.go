@@ -663,14 +663,14 @@ func parseSubscriptionContent(content string) ([]NodeConfig, error) {
 			decoded, err = base64.RawStdEncoding.DecodeString(content)
 			if err != nil {
 				// Not base64, try as plain text
-				return parseNodesFromContent(content)
+				return parseSubscriptionNodesFromContent(content)
 			}
 		}
 		content = string(decoded)
 	}
 
 	// Parse as plain text (one URI per line)
-	return parseNodesFromContent(content)
+	return parseSubscriptionNodesFromContent(content)
 }
 
 // ParseSubscriptionContent parses subscription content in various formats (base64, plain text, Clash YAML).
@@ -679,8 +679,24 @@ func ParseSubscriptionContent(content string) ([]NodeConfig, error) {
 	return parseSubscriptionContent(content)
 }
 
-// parseNodesFromContent parses nodes from plain text content (one URI per line)
 func parseNodesFromContent(content string) ([]NodeConfig, error) {
+	return parseNodesFromContentWith(content, IsProxyURI)
+}
+
+func plainTextSubscriptionProxyURI(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return false
+	}
+	return IsProxyURI(line)
+}
+
+func parseSubscriptionNodesFromContent(content string) ([]NodeConfig, error) {
+	return parseNodesFromContentWith(content, plainTextSubscriptionProxyURI)
+}
+
+// parseNodesFromContent parses nodes from plain text content (one URI per line)
+func parseNodesFromContentWith(content string, validURI func(string) bool) ([]NodeConfig, error) {
 	var nodes []NodeConfig
 	lines := strings.Split(content, "\n")
 
@@ -693,7 +709,7 @@ func parseNodesFromContent(content string) ([]NodeConfig, error) {
 		}
 
 		// Check if it's a valid proxy URI
-		if IsProxyURI(line) {
+		if validURI(line) {
 			nodes = append(nodes, NodeConfig{
 				URI: line,
 			})
