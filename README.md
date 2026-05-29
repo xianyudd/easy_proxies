@@ -285,6 +285,30 @@ subscription_refresh:
 
 Supports Base64, plain text, and Clash YAML formats. When subscriptions are configured, fetched nodes are written to `nodes_file`. Subscription changes trigger automatic hot-reload without restart.
 
+### Free Proxy Sources
+
+```yaml
+free_proxy_sources:
+  - name: "local-free-list"
+    file: free-proxies.txt
+    format: txt
+    enabled: true
+  - name: "remote-json-list"
+    url: "https://example.com/free-proxies.json"
+    format: json
+    timeout: 15s
+    enabled: false
+```
+
+Free proxy sources are loaded at startup and merged with inline/file/subscription nodes. They are runtime inputs and are **not** written back to `nodes.txt` or `config.yaml` by the settings save path.
+
+Supported MVP formats:
+
+- `txt`: one proxy per line, accepting either `host:port` (defaults to `http://`) or a full `http://`, `https://`, `socks5://`, or `socks://` URI.
+- `json`: arrays or wrapped objects (`proxies`, `data`, or `items`) with either `uri` / `url` fields, or `ip` / `host` / `address` + `port` + optional `protocol` / `type`.
+
+Relative `file` paths are resolved relative to `config.yaml`.
+
 ## WebUI Dashboard
 
 Access at `http://your-server:9091` (configurable via the `management` section).

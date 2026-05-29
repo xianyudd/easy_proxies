@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"easy_proxies/internal/nodesource"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,6 +34,7 @@ type Config struct {
 	GeoIP               GeoIPConfig               `yaml:"geoip"`
 	Log                 LogConfig                 `yaml:"log"`
 	Nodes               []NodeConfig              `yaml:"nodes"`
+	FreeProxySources    []nodesource.SourceConfig `yaml:"free_proxy_sources"`
 	NodesFile           string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
 	Subscriptions       []string                  `yaml:"subscriptions"` // 订阅链接列表
 	ExternalIP          string                    `yaml:"external_ip"`   // 外部 IP 地址，用于导出时替换 0.0.0.0
@@ -159,6 +162,7 @@ const (
 	NodeSourceInline       NodeSource = "inline"       // Defined directly in config.yaml nodes array
 	NodeSourceFile         NodeSource = "nodes_file"   // Loaded from external nodes file
 	NodeSourceSubscription NodeSource = "subscription" // Fetched from subscription URL
+	NodeSourceFreeProxy    NodeSource = "free_proxy"   // Loaded from configured free proxy source
 )
 
 // NodeConfig describes a single upstream proxy endpoint expressed as URI.
@@ -189,10 +193,15 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.filePath = path
 
-	// Resolve nodes_file path relative to config file directory
+	// Resolve local source paths relative to config file directory
+	configDir := filepath.Dir(path)
 	if cfg.NodesFile != "" && !filepath.IsAbs(cfg.NodesFile) {
-		configDir := filepath.Dir(path)
 		cfg.NodesFile = filepath.Join(configDir, cfg.NodesFile)
+	}
+	for idx := range cfg.FreeProxySources {
+		if cfg.FreeProxySources[idx].File != "" && !filepath.IsAbs(cfg.FreeProxySources[idx].File) {
+			cfg.FreeProxySources[idx].File = filepath.Join(configDir, cfg.FreeProxySources[idx].File)
+		}
 	}
 
 	if err := cfg.normalize(); err != nil {
@@ -331,6 +340,31 @@ func (c *Config) normalize() error {
 			fileNodes[idx].Source = NodeSourceFile
 		}
 		c.Nodes = append(c.Nodes, fileNodes...)
+	}
+
+	// Load nodes from configured free proxy sources. These are runtime-only inputs
+	// and are intentionally not persisted back to nodes.txt or config.yaml.
+	for _, source := range c.FreeProxySources {
+		provider := nodesource.NewProvider(source)
+		sourceNodes, err := provider.Load()
+		if err != nil {
+			name := strings.TrimSpace(source.Name)
+			if name == "" {
+				name = firstNonEmptyString(source.File, source.URL, "unnamed")
+			}
+			log.Printf("⚠️ Failed to load free proxy source %q: %v (skipping)", name, err)
+			continue
+		}
+		for _, sourceNode := range sourceNodes {
+			c.Nodes = append(c.Nodes, NodeConfig{
+				Name:   sourceNode.Name,
+				URI:    sourceNode.URI,
+				Source: NodeSourceFreeProxy,
+			})
+		}
+		if len(sourceNodes) > 0 {
+			log.Printf("✅ Loaded %d nodes from free proxy source %q", len(sourceNodes), source.Name)
+		}
 	}
 
 	// Load nodes from subscriptions (highest priority - writes to nodes.txt)
@@ -792,6 +826,15 @@ func isBase64(s string) bool {
 	return len(s)%4 == 0
 }
 
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 // IsProxyURI checks if a string is a valid proxy URI
 func IsProxyURI(s string) bool {
 	schemes := []string{"vmess://", "vless://", "trojan://", "ss://", "ssr://", "hysteria://", "hysteria2://", "hy2://", "tuic://", "socks5://", "socks://", "http://", "https://", "anytls://"}
@@ -1208,6 +1251,10 @@ func (c *Config) SaveNodes() error {
 			inlineNodes = append(inlineNodes, cleanNode)
 		case NodeSourceFile, NodeSourceSubscription:
 			fileNodes = append(fileNodes, cleanNode)
+		case NodeSourceFreeProxy:
+			// Free proxy source nodes are loaded from external sources at runtime.
+			// Do not persist them into config.yaml or nodes.txt.
+			continue
 		default:
 			// Default to file nodes for unknown source
 			fileNodes = append(fileNodes, cleanNode)

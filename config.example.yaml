@@ -142,7 +142,24 @@ geoip:
 # nodes_file: nodes.txt
 
 # ───────────────────────────────────────────────────────────────
-# 方式 3: 直接在配置文件中配置节点
+# 方式 3: 免费代理源（启动时加载，运行时来源，不写回 nodes.txt）
+# ───────────────────────────────────────────────────────────────
+# free_proxy_sources:
+#   # 文本格式：每行一个 host:port 或完整 http/socks URI
+#   - name: "local-free-list"
+#     file: free-proxies.txt
+#     format: txt
+#     enabled: true
+#
+#   # 简单 JSON 格式：支持 [{"ip":"1.2.3.4","port":8080,"protocol":"http"}]
+#   - name: "remote-json-list"
+#     url: "https://example.com/free-proxies.json"
+#     format: json
+#     timeout: 15s
+#     enabled: false
+
+# ───────────────────────────────────────────────────────────────
+# 方式 4: 直接在配置文件中配置节点
 # ───────────────────────────────────────────────────────────────
 nodes:
   # 最简配置：只需 URI，名称从 # 后自动提取
