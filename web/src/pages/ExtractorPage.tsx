@@ -34,11 +34,30 @@ export function ExtractorPage() {
   const copyAll = async () => { if (!text) return toast('请先生成代理', 'error'); await navigator.clipboard.writeText(text); toast('已复制全部', 'ok') }
   const download = () => { if (!text) return toast('请先生成代理', 'error'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], {type:'text/plain;charset=utf-8'})); a.download = 'proxy_extractor.txt'; a.click(); URL.revokeObjectURL(a.href) }
   return <div className="page">
-    <div className="page-header"><div><h1>代理提取</h1><p>选择条件后生成可直接导入的代理。默认输出 10 条 multi-port，并显示真实凭据。</p></div><div className="toolbar"><Button variant="primary" onClick={() => run()} disabled={mutation.isPending}>生成</Button><Button onClick={copyAll}>复制全部</Button><Button onClick={download}>下载 TXT</Button></div></div>
-    <QuickExtractBar run={run} />
-    <div className="grid-2">
-      <div className="card"><div className="section-title">提取参数</div><ExtractorForm /><div className="split-actions" style={{marginTop: 12}}><Button variant="primary" onClick={() => run()} disabled={mutation.isPending}>{mutation.isPending ? '生成中...' : '生成代理'}</Button><Button onClick={runAndCopy}>生成并复制</Button><Button variant="danger" onClick={clear}>清空</Button></div></div>
-      <div className="card"><div className="page-header"><div><div className="section-title">提取结果</div><div className="muted">{meta}</div></div><div className="toolbar"><Button onClick={copyAll}>复制全部</Button><Button onClick={download}>下载</Button></div></div>{warnings.map(w => <div className="hint" key={w}>{w}</div>)}<ProxyResultList entries={entries} /><textarea className="input mono" readOnly value={text} style={{height: 260}} /></div>
+    <div className="page-header"><div><h1>代理提取</h1><p>先选择模式和区域，再生成可复制、可下载的代理结果。常用预设收纳在参数区，减少页面跳动。</p></div></div>
+    <div className="workspace-grid">
+      <div className="dashboard-stack">
+        <div className="card control-panel">
+          <div className="panel-header"><div><div className="panel-title">提取参数</div><div className="panel-subtitle">配置一次后可直接生成或生成并复制。</div></div></div>
+          <ExtractorForm />
+          <div className="control-actions" style={{marginTop: 14}}>
+            <Button className="primary-wide" variant="primary" onClick={() => run()} disabled={mutation.isPending}>{mutation.isPending ? '生成中...' : '生成代理'}</Button>
+            <div className="action-row"><Button onClick={runAndCopy}>生成并复制</Button><Button variant="danger" onClick={clear}>清空结果</Button></div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="panel-header"><div><div className="panel-title">快速预设</div><div className="panel-subtitle">适合批量导入、地区池和 Android 调试。</div></div></div>
+          <QuickExtractBar run={run} />
+        </div>
+      </div>
+      <div className="card result-panel">
+        <div className="panel-header">
+          <div><div className="panel-title">提取结果</div><div className="panel-subtitle">{meta || '尚未生成代理'}</div></div>
+          <div className="toolbar"><Button onClick={copyAll}>复制全部</Button><Button onClick={download}>下载 TXT</Button></div>
+        </div>
+        <div>{warnings.map(w => <div className="hint" key={w}>{w}</div>)}{entries.length ? <ProxyResultList entries={entries} /> : <div className="empty-state"><div><strong>等待生成代理</strong><span>左侧选择区域、模式和格式，点击生成后这里会展示结构化结果。</span></div></div>}</div>
+        <textarea className="input mono result-textarea" readOnly value={text} placeholder="原始文本输出会显示在这里" />
+      </div>
     </div>
   </div>
 }

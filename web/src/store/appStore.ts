@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type Tab = 'extractor'|'quality'|'status'|'settings'|'diagnostics'
+type Tab = 'extractor'|'overview'|'quality'|'status'|'settings'|'diagnostics'
 type Theme = 'dark'|'light'
 
 interface AppState {

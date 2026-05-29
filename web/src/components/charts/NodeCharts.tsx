@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
 import type { NodeSnapshot } from '../../types/node'
+import { Button } from '../ui/Button'
 import { EChart, cssVar, formatBytes } from './EChart'
 import { regionMeta } from './region'
 
@@ -9,6 +10,14 @@ function chartText() { return cssVar('--text', '#eef2ff') }
 function chartMuted() { return cssVar('--muted', '#94a3b8') }
 function chartPanel() { return cssVar('--panel', '#111827') }
 function chartBorder() { return cssVar('--border', '#263143') }
+
+type TrafficWindow = '1m' | '5m' | '15m' | '1h'
+const TRAFFIC_WINDOWS: Record<TrafficWindow, { label: string; ms: number }> = {
+  '1m': { label: '1 分钟', ms: 60_000 },
+  '5m': { label: '5 分钟', ms: 5 * 60_000 },
+  '15m': { label: '15 分钟', ms: 15 * 60_000 },
+  '1h': { label: '1 小时', ms: 60 * 60_000 },
+}
 
 export function RegionAvailabilityChart({ nodes }: { nodes: NodeSnapshot[] }) {
   const option = useMemo<EChartsOption>(() => {
@@ -30,36 +39,54 @@ export function RegionAvailabilityChart({ nodes }: { nodes: NodeSnapshot[] }) {
     return {
       backgroundColor: 'transparent',
       tooltip: {
-        trigger: 'item', backgroundColor: chartPanel(), borderColor: chartBorder(), textStyle: { color: chartText() },
+        trigger: 'item',
+        backgroundColor: chartPanel(),
+        borderColor: chartBorder(),
+        textStyle: { color: chartText() },
         formatter: (p: any) => {
           const rate = p.data.value ? Math.round((p.data.healthy || 0) * 100 / p.data.value) : 0
           return `${p.name}<br/>节点总数：${p.data.value}<br/>健康在线：${p.data.healthy || 0}<br/>连通率：${rate}%`
-        }
+        },
       },
       legend: { type: 'scroll', orient: 'vertical', right: 4, top: 36, bottom: 8, textStyle: { color: chartMuted(), fontSize: 12 } },
       series: [{
         type: 'pie', radius: ['45%', '72%'], center: ['36%', '54%'], minAngle: 5, avoidLabelOverlap: true,
         itemStyle: { borderRadius: 8, borderColor: chartPanel(), borderWidth: 3 },
-        label: { show: true, position: 'center', formatter: `{a|${total}}\n{b|健康 ${healthy}}`, rich: { a: { color: chartText(), fontSize: 28, fontWeight: 800 }, b: { color: chartMuted(), fontSize: 12, lineHeight: 22 } } },
-        labelLine: { show: false }, data,
-      }]
+        label: {
+          show: true,
+          position: 'center',
+          formatter: `{a|${total}}\n{b|健康 ${healthy}}`,
+          rich: {
+            a: { color: chartText(), fontSize: 28, fontWeight: 800 },
+            b: { color: chartMuted(), fontSize: 12, lineHeight: 22 },
+          },
+        },
+        labelLine: { show: false },
+        data,
+      }],
     }
   }, [nodes])
+
   return <EChart option={option} height={340} />
 }
 
 export function LatencyTopChart({ nodes }: { nodes: NodeSnapshot[] }) {
   const option = useMemo<EChartsOption>(() => {
-    const sorted = nodes.filter(n => Number(n.last_latency_ms) > 0 && !n.blacklisted).sort((a, b) => Number(a.last_latency_ms) - Number(b.last_latency_ms)).slice(0, 10).reverse()
+    const sorted = nodes
+      .filter(n => Number(n.last_latency_ms) > 0 && !n.blacklisted)
+      .sort((a, b) => Number(a.last_latency_ms) - Number(b.last_latency_ms))
+      .slice(0, 10)
+      .reverse()
     return {
       backgroundColor: 'transparent',
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: chartPanel(), borderColor: chartBorder(), textStyle: { color: chartText() } },
       grid: { left: 10, right: 18, bottom: 12, top: 24, containLabel: true },
       xAxis: { type: 'value', splitLine: { lineStyle: { color: chartBorder(), type: 'dashed' } }, axisLabel: { color: chartMuted(), formatter: '{value} ms' } },
       yAxis: { type: 'category', data: sorted.map(n => String(n.name || n.tag || '-')), axisLabel: { color: chartMuted(), width: 120, overflow: 'truncate' } },
-      series: [{ name: '延迟', type: 'bar', data: sorted.map(n => Number(n.last_latency_ms) || 0), itemStyle: { color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [{ offset: 0, color: '#10b981' }, { offset: 1, color: '#3b82f6' }]), borderRadius: [0, 6, 6, 0] } }]
+      series: [{ name: '延迟', type: 'bar', data: sorted.map(n => Number(n.last_latency_ms) || 0), itemStyle: { color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [{ offset: 0, color: '#10b981' }, { offset: 1, color: '#3b82f6' }]), borderRadius: [0, 6, 6, 0] } }],
     }
   }, [nodes])
+
   return <EChart option={option} height={340} />
 }
 
@@ -72,15 +99,17 @@ export function FailureRankChart({ nodes }: { nodes: NodeSnapshot[] }) {
       grid: { left: 10, right: 18, bottom: 70, top: 24, containLabel: true },
       xAxis: { type: 'category', data: sorted.map(n => String(n.name || n.tag || '-')), axisLabel: { color: chartMuted(), width: 80, overflow: 'truncate', rotate: 28 } },
       yAxis: { type: 'value', splitLine: { lineStyle: { color: chartBorder(), type: 'dashed' } }, axisLabel: { color: chartMuted() } },
-      series: [{ name: '失败次数', type: 'bar', data: sorted.map(n => Number(n.failure_count) || 0), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#f43f5e' }, { offset: 1, color: '#9f1239' }]), borderRadius: [6, 6, 0, 0] } }]
+      series: [{ name: '失败次数', type: 'bar', data: sorted.map(n => Number(n.failure_count) || 0), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#f43f5e' }, { offset: 1, color: '#9f1239' }]), borderRadius: [6, 6, 0, 0] } }],
     }
   }, [nodes])
+
   return <EChart option={option} height={300} />
 }
 
 export function TrafficTrendChart() {
-  const [points, setPoints] = useState<Array<{ time: string; up: number; down: number }>>([])
+  const [points, setPoints] = useState<Array<{ time: string; ts: number; up: number; down: number }>>([])
   const [connected, setConnected] = useState(false)
+  const [windowKey, setWindowKey] = useState<TrafficWindow>('5m')
 
   useEffect(() => {
     const source = new EventSource('/api/traffic')
@@ -88,26 +117,49 @@ export function TrafficTrendChart() {
     source.onmessage = event => {
       try {
         const data = JSON.parse(event.data)
-        const now = new Date().toLocaleTimeString([], { hour12: false })
-        setPoints(prev => [...prev.slice(-59), { time: now, up: Number(data.up || 0), down: Number(data.down || 0) }])
+        const now = Date.now()
+        const time = new Date(now).toLocaleTimeString([], { hour12: false })
+        setPoints(prev => [...prev.slice(-599), { time, ts: now, up: Number(data.up || 0), down: Number(data.down || 0) }])
       } catch {}
     }
     source.onerror = () => setConnected(false)
     return () => source.close()
   }, [])
 
+  const visiblePoints = useMemo(() => {
+    const windowMs = TRAFFIC_WINDOWS[windowKey].ms
+    const cutoff = Date.now() - windowMs
+    return points.filter(point => point.ts >= cutoff)
+  }, [points, windowKey])
+
   const option = useMemo<EChartsOption>(() => ({
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'axis', backgroundColor: chartPanel(), borderColor: chartBorder(), textStyle: { color: chartText() }, formatter: (params: any) => `${params[0]?.axisValue || ''}<br/>${params.map((p: any) => `${p.marker}${p.seriesName}: ${formatBytes(p.value)}/s`).join('<br/>')}` },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: chartPanel(),
+      borderColor: chartBorder(),
+      textStyle: { color: chartText() },
+      formatter: (params: any) => `${params[0]?.axisValue || ''}<br/>${params.map((p: any) => `${p.marker}${p.seriesName}: ${formatBytes(p.value)}/s`).join('<br/>')}`,
+    },
     legend: { top: 0, right: 10, textStyle: { color: chartMuted() } },
     grid: { left: 10, right: 18, bottom: 18, top: 36, containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: points.map(p => p.time), axisLine: { lineStyle: { color: chartBorder() } }, axisLabel: { color: chartMuted() } },
+    xAxis: { type: 'category', boundaryGap: false, data: visiblePoints.map(p => p.time), axisLine: { lineStyle: { color: chartBorder() } }, axisLabel: { color: chartMuted() } },
     yAxis: { type: 'value', splitLine: { lineStyle: { color: chartBorder(), type: 'dashed' } }, axisLabel: { color: chartMuted(), formatter: (v: number) => `${formatBytes(v)}/s` } },
     series: [
-      { name: 'Up', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#3b82f6' }, areaStyle: { color: 'rgba(59,130,246,.18)' }, data: points.map(p => p.up) },
-      { name: 'Down', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#10b981' }, areaStyle: { color: 'rgba(16,185,129,.18)' }, data: points.map(p => p.down) },
-    ]
-  }), [points])
+      { name: 'Up', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#3b82f6' }, areaStyle: { color: 'rgba(59,130,246,.18)' }, data: visiblePoints.map(p => p.up) },
+      { name: 'Down', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#10b981' }, areaStyle: { color: 'rgba(16,185,129,.18)' }, data: visiblePoints.map(p => p.down) },
+    ],
+  }), [visiblePoints])
 
-  return <div><div className={`chart-status ${connected ? 'ok' : 'warn'}`}>{connected ? '实时流量已连接' : '等待流量数据 / Clash API'}</div><EChart option={option} height={300} /></div>
+  return <div>
+    <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+      <div className={`chart-status ${connected ? 'ok' : 'warn'}`}>{connected ? '实时流量已连接' : '等待流量数据 / Clash API'}</div>
+      <div className="toolbar">
+        {(Object.keys(TRAFFIC_WINDOWS) as TrafficWindow[]).map(key => (
+          <Button key={key} variant={windowKey === key ? 'primary' : 'secondary'} onClick={() => setWindowKey(key)}>{TRAFFIC_WINDOWS[key].label}</Button>
+        ))}
+      </div>
+    </div>
+    <EChart option={option} height={300} />
+  </div>
 }

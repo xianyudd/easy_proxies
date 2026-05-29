@@ -291,7 +291,9 @@ Access at `http://your-server:9091` (configurable via the `management` section).
 
 Features:
 
-- **Dashboard**: Real-time node status, traffic charts, region availability, latency monitoring
+- **Dashboard**: Real-time node status, traffic charts with selectable time windows, region availability, latency monitoring
+- **Node Overview**: Full node table with region/status/latency filters, sorting, refresh, and proxy copy actions
+- **Node Quality**: One-click all-node Cloudflare compatibility and IP reputation scans, cached results, failed-node retry, and composite quality ranking
 - **Node Config**: Add/edit/delete inline nodes and subscription URLs
 - **Diagnostics**: Connectivity testing and node state export
 - **Console**: Real-time application logs (last 1000 lines, WebSocket streaming)
@@ -310,6 +312,11 @@ When `management.password` is empty, authentication is bypassed.
 | `/api/nodes/{tag}/blacklist` | POST | Manually blacklist a node |
 | `/api/nodes/{tag}/release` | POST | Release node from blacklist |
 | `/api/nodes/probe-all` | POST | Probe all nodes (SSE stream) |
+| `/api/cloudflare/check` | GET | Run Cloudflare compatibility checks; supports cached all-node scans and failed-node retry |
+| `/api/cloudflare/cache` | GET, POST, DELETE | Read or clear Cloudflare compatibility cache |
+| `/api/reputation/check` | GET | Run IP reputation checks for nodes; supports all-node scans and retry mode |
+| `/api/reputation/cache` | GET, POST, DELETE | Read or clear IP reputation cache |
+| `/api/reputation/ip` | GET | Check reputation for a single IP address |
 | `/api/export` | GET | Export node configuration |
 | `/api/subscription/config` | GET, PUT | Manage subscription URLs |
 | `/api/subscription/status` | GET | Check subscription status |
@@ -377,9 +384,32 @@ MIT License
 常用命令：
 
 ```bash
+./epctl.sh service:start
+./epctl.sh service:status
+./epctl.sh web:dev
 ./epctl.sh web:typecheck
 ./epctl.sh web:build
 ./epctl.sh restart
 ```
 
+主要页面：
+
+- `代理提取`：按地区、协议格式和数量提取代理。
+- `节点总览`：展示全部节点，支持地区、可用性、延迟筛选和排序。
+- `节点质量`：自动加载 CF/IP 信誉缓存，可一键扫描全部节点、重试失败节点，并按综合质量排序；也可通过 `quality_check` 配置定时刷新质量缓存。
+- `运行状态`：展示节点状态、实时流量和可切换时间尺度的带宽图。
+- `系统设置`：维护配置并写回 `config.yaml`。
+- `日志诊断`：查看日志和诊断信息。
+
 详细说明见 `WEB_UI_ARCHITECTURE.md`。
+
+## Verify Zo Computer API Token
+
+Use the standalone Node.js script to verify that a Zo Computer API access token can call `POST https://api.zo.computer/zo/ask`.
+
+```bash
+export ZO_API_TOKEN="zo_sk_xxx"
+node verify_zo_token.mjs
+```
+
+The script reads the token from `ZO_API_TOKEN` and never prints the token.

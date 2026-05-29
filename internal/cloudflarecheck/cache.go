@@ -77,6 +77,15 @@ func (c *Cache) List() []Result {
 	return out
 }
 
+func (c *Cache) Delete(key string) {
+	if c == nil || key == "" {
+		return
+	}
+	c.mu.Lock()
+	delete(c.items, key)
+	c.mu.Unlock()
+}
+
 func (c *Cache) Clear() {
 	if c == nil {
 		return

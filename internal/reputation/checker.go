@@ -16,6 +16,8 @@ import (
 type Checker struct {
 	providers      []Provider
 	cache          *Cache
+	nodeMu         sync.RWMutex
+	nodeResults    map[string]NodeResult
 	timeout        time.Duration
 	maxConcurrency int
 }
@@ -26,7 +28,7 @@ func WithCache(cache *Cache) Option              { return func(c *Checker) { c.c
 func WithTimeout(timeout time.Duration) Option   { return func(c *Checker) { c.timeout = timeout } }
 func WithMaxConcurrency(n int) Option            { return func(c *Checker) { c.maxConcurrency = n } }
 func NewChecker(opts ...Option) *Checker {
-	c := &Checker{timeout: 8 * time.Second, maxConcurrency: 5, cache: NewCache(6 * time.Hour)}
+	c := &Checker{timeout: 8 * time.Second, maxConcurrency: 5, cache: NewCache(6 * time.Hour), nodeResults: make(map[string]NodeResult)}
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -75,7 +77,21 @@ func (c *Checker) LookupIP(ctx context.Context, ip string) (*Result, error) {
 	return nil, errors.New(strings.Join(errs, "; "))
 }
 func (c *Checker) CacheList() []Result { return c.cache.List() }
-func (c *Checker) ClearCache()         { c.cache.Clear() }
+func (c *Checker) ClearCache() {
+	c.cache.Clear()
+	c.nodeMu.Lock()
+	c.nodeResults = make(map[string]NodeResult)
+	c.nodeMu.Unlock()
+}
+func (c *Checker) NodeResults() []NodeResult {
+	c.nodeMu.RLock()
+	out := make([]NodeResult, 0, len(c.nodeResults))
+	for _, result := range c.nodeResults {
+		out = append(out, result)
+	}
+	c.nodeMu.RUnlock()
+	return out
+}
 func (c *Checker) ExitIPViaProxy(ctx context.Context, proxyURL string) (string, int64, error) {
 	parsed, err := url.Parse(strings.TrimSpace(proxyURL))
 	if err != nil {
@@ -127,6 +143,7 @@ func (c *Checker) CheckProxies(ctx context.Context, items []ProxyTarget, expecte
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			results[i] = NodeResult{NodeName: item.NodeName, NodeTag: item.NodeTag, Region: item.Region, Host: item.Host, Port: item.Port, Mode: item.Mode}
+			defer func() { c.setNodeResult(item, results[i]) }()
 			ip, lat, err := c.ExitIPViaProxy(ctx, item.ProxyURL)
 			if err != nil {
 				results[i].Error = err.Error()
@@ -148,4 +165,30 @@ func (c *Checker) CheckProxies(ctx context.Context, items []ProxyTarget, expecte
 	}
 	wg.Wait()
 	return results
+}
+
+func (c *Checker) setNodeResult(item ProxyTarget, result NodeResult) {
+	if c == nil {
+		return
+	}
+	key := nodeResultKey(item.NodeTag, item.Host, item.Port)
+	if key == "" {
+		return
+	}
+	c.nodeMu.Lock()
+	if c.nodeResults == nil {
+		c.nodeResults = make(map[string]NodeResult)
+	}
+	c.nodeResults[key] = result
+	c.nodeMu.Unlock()
+}
+
+func nodeResultKey(tag, host string, port uint16) string {
+	if tag != "" {
+		return tag
+	}
+	if host == "" || port == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", host, port)
 }

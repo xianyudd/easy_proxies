@@ -4,6 +4,7 @@ easy-proxies-*
 easy_proxies
 easy_proxies-*
 easy_proxies_local
+easy_proxies_local_*
 *.exe
 
 # Configuration (contains sensitive data)
@@ -37,12 +38,27 @@ vendor/
 # Test artifacts
 coverage.out
 coverage.html
+reports/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local UI diagnostics/screenshots
+diagnostics-*.png
+settings-page-*.png
+quality-check-*.png
+sidebar-fixed-extractor.png
 
 # Qodo
 .qodo/
 
 # AI tool artifacts
 .ace-tool/
+.agents/
+.codex/
+.claude/settings.local.json
+.claude/worktrees/
 
 # Browser verification artifacts
 .playwright-mcp/

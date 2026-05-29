@@ -28,6 +28,7 @@ type Config struct {
 	Pool                PoolConfig                `yaml:"pool"`
 	Management          ManagementConfig          `yaml:"management"`
 	SubscriptionRefresh SubscriptionRefreshConfig `yaml:"subscription_refresh"`
+	QualityCheck        QualityCheckConfig        `yaml:"quality_check"`
 	GeoIP               GeoIPConfig               `yaml:"geoip"`
 	Log                 LogConfig                 `yaml:"log"`
 	Nodes               []NodeConfig              `yaml:"nodes"`
@@ -36,6 +37,7 @@ type Config struct {
 	ExternalIP          string                    `yaml:"external_ip"`   // 外部 IP 地址，用于导出时替换 0.0.0.0
 	LogLevel            string                    `yaml:"log_level"`
 	SkipCertVerify      bool                      `yaml:"skip_cert_verify"` // 全局跳过 SSL 证书验证
+	UpstreamProxy       string                    `yaml:"upstream_proxy"`   // Optional SOCKS/HTTP proxy used as sing-box outbound detour
 
 	filePath string `yaml:"-"` // 配置文件路径，用于保存
 }
@@ -107,6 +109,47 @@ type SubscriptionRefreshConfig struct {
 	HealthCheckTimeout time.Duration `yaml:"health_check_timeout"` // 新节点健康检查超时
 	DrainTimeout       time.Duration `yaml:"drain_timeout"`        // 旧实例排空超时时间
 	MinAvailableNodes  int           `yaml:"min_available_nodes"`  // 最少可用节点数，低于此值不切换
+}
+
+const (
+	DefaultQualityCheckInterval = 24 * time.Hour
+	MinQualityCheckInterval     = time.Hour
+	DefaultQualityCheckRegion   = "all"
+	DefaultQualityCheckCount    = 500
+	MaxQualityCheckCount        = 500
+)
+
+// QualityCheckConfig controls scheduled node quality checks.
+type QualityCheckConfig struct {
+	Enabled            bool          `yaml:"enabled"`             // 是否启用节点质量定时检测
+	Interval           time.Duration `yaml:"interval"`            // 检测间隔，默认 24 小时
+	Region             string        `yaml:"region"`              // 检测地区范围，默认 all
+	Count              int           `yaml:"count"`               // 单次检测数量，默认 500
+	IncludeUnavailable bool          `yaml:"include_unavailable"` // 是否包含不可用节点，默认 true
+	RetryFailed        bool          `yaml:"retry_failed"`        // 是否优先重试失败节点，默认 false
+}
+
+func (q QualityCheckConfig) Normalized() QualityCheckConfig {
+	if q == (QualityCheckConfig{}) {
+		q.IncludeUnavailable = true
+	}
+	if q.Interval <= 0 {
+		q.Interval = DefaultQualityCheckInterval
+	}
+	if q.Interval < MinQualityCheckInterval {
+		q.Interval = MinQualityCheckInterval
+	}
+	q.Region = strings.ToLower(strings.TrimSpace(q.Region))
+	if q.Region == "" {
+		q.Region = DefaultQualityCheckRegion
+	}
+	if q.Count <= 0 {
+		q.Count = DefaultQualityCheckCount
+	}
+	if q.Count > MaxQualityCheckCount {
+		q.Count = MaxQualityCheckCount
+	}
+	return q
 }
 
 // NodeSource indicates where a node configuration originated from.
@@ -256,10 +299,10 @@ func (c *Config) normalize() error {
 		c.Management.Enabled = &defaultEnabled
 	}
 
-	// Subscription refresh defaults
 	if c.SubscriptionRefresh.Interval <= 0 {
 		c.SubscriptionRefresh.Interval = 1 * time.Hour
 	}
+	c.QualityCheck = c.QualityCheck.Normalized()
 	if c.SubscriptionRefresh.Timeout <= 0 {
 		c.SubscriptionRefresh.Timeout = 30 * time.Second
 	}
@@ -1240,6 +1283,7 @@ func (c *Config) SaveSettings() error {
 	saveCfg.Log = c.Log
 	saveCfg.Subscriptions = c.Subscriptions
 	saveCfg.SubscriptionRefresh = c.SubscriptionRefresh
+	saveCfg.QualityCheck = c.QualityCheck
 	saveCfg.GeoIP = c.GeoIP
 	saveCfg.Mode = c.Mode
 	saveCfg.Listener = c.Listener

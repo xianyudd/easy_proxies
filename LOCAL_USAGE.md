@@ -148,6 +148,9 @@ curl -x http://<USERNAME>:<PASSWORD>@127.0.0.1:24000 http://cp.cloudflare.com/ge
 ./epctl.sh service:status
 ./epctl.sh logs:tail 100
 ./epctl.sh logs:follow
+./epctl.sh web:dev
+./epctl.sh web:typecheck
+./epctl.sh web:build
 ./epctl.sh proxy:test jp
 ./epctl.sh proxy:regions
 ./epctl.sh adb:set jp
@@ -158,6 +161,8 @@ curl -x http://<USERNAME>:<PASSWORD>@127.0.0.1:24000 http://cp.cloudflare.com/ge
 说明：
 
 - `service:status` 会显示 WebUI、监听端口、节点统计和地区分布
+- `web:dev` 会启动 React WebUI 的 Vite 开发服务器
+- `web:typecheck` / `web:build` 用于前端类型检查和构建
 - `proxy:test <region>` 会测试 Android 无认证地区端口，并带重试
 - `proxy:regions` 会显示地区和端口映射
 - `adb:set <region>` 会设置 `adb reverse` 和 Android 全局代理

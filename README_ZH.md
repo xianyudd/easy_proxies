@@ -39,6 +39,13 @@ cp nodes.example nodes.txt
 
 ### 2）启动
 
+推荐使用本地控制脚本：
+
+```bash
+./epctl.sh service:start
+./epctl.sh service:status
+```
+
 Docker：
 
 ```bash
@@ -51,6 +58,12 @@ docker compose up -d
 
 ```bash
 go run ./cmd/easy_proxies -config config.yaml
+```
+
+前端开发：
+
+```bash
+./epctl.sh web:dev
 ```
 
 ## 最小配置示例（Pool）
@@ -146,6 +159,11 @@ dns:
 - `POST /api/nodes/{tag}/release`
 - `POST /api/nodes/{tag}/blacklist`
 - `POST /api/nodes/probe-all`（SSE）
+- `GET /api/cloudflare/check`（CF 兼容性检测，支持全量扫描、缓存和失败重试）
+- `GET|POST|DELETE /api/cloudflare/cache`
+- `GET /api/reputation/check`（IP 信誉检测，支持全量扫描和重试模式）
+- `GET|POST|DELETE /api/reputation/cache`
+- `GET /api/reputation/ip`
 - `GET /api/export`
 - `GET|PUT /api/subscription/config`
 - `GET|POST /api/subscription/status|refresh`
@@ -160,6 +178,19 @@ dns:
 - Settings API 会把配置写回 `config.yaml`；部分设置需要重载后才能完全生效。
 - 省略项默认值可在 `internal/config/config.go` 中查看。
 - 日志轮转通过 `log` 配置段设置；当 `output: file` 时，日志同时写入控制台和文件，并自动轮转。
+
+## WebUI 页面
+
+访问地址默认是 `http://127.0.0.1:9091`。
+
+主要页面：
+
+- `代理提取`：按地区、协议格式和数量提取代理，并支持复制。
+- `节点总览`：展示全部节点，支持地区、可用性、延迟筛选和排序。
+- `节点质量`：进入页面自动加载缓存；可一键扫描全部节点，同时写入 CF 评分和 IP 风险缓存；支持重试失败节点，并展示综合质量排名。后端也支持通过 `quality_check` 配置定时刷新质量缓存。
+- `运行状态`：展示节点状态、实时流量和可切换时间尺度的带宽图。
+- `系统设置`：维护配置并写回 `config.yaml`。
+- `日志诊断`：查看日志、运行状态和诊断信息。
 
 ## 更新日志
 

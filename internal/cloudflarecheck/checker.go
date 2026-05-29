@@ -49,8 +49,9 @@ func NewChecker(opts ...Option) *Checker {
 	return c
 }
 
-func (c *Checker) CacheList() []Result { return c.cache.List() }
-func (c *Checker) ClearCache()         { c.cache.Clear() }
+func (c *Checker) CacheList() []Result    { return c.cache.List() }
+func (c *Checker) DeleteCache(key string) { c.cache.Delete(key) }
+func (c *Checker) ClearCache()            { c.cache.Clear() }
 
 func (c *Checker) CheckTargets(ctx context.Context, targets []ProxyTarget) []Result {
 	results := make([]Result, len(targets))

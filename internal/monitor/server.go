@@ -93,6 +93,11 @@ type Server struct {
 	nodeMgr      NodeManager
 	repChecker   *reputation.Checker
 	cfChecker    *cloudflarecheck.Checker
+
+	qualityMu      sync.Mutex
+	qualityStop    chan struct{}
+	qualityRunning bool
+	qualityConfig  config.QualityCheckConfig
 }
 
 // NewServer constructs a server; it can be nil when disabled.
@@ -195,6 +200,7 @@ func (s *Server) SetConfig(cfg *config.Config) {
 			s.cfg.ProxyPassword = cfg.Listener.Password
 		}
 	}
+	go s.ensureQualityScheduler()
 }
 
 // getSettings returns current dynamic settings (thread-safe).
@@ -267,6 +273,7 @@ func (s *Server) Start(ctx context.Context) {
 	// Give server a moment to start and check for immediate errors
 	time.Sleep(100 * time.Millisecond)
 	s.logger.Printf("✅ Monitor server started on http://%s", s.cfg.Listen)
+	s.ensureQualityScheduler()
 
 	go func() {
 		<-ctx.Done()
@@ -279,7 +286,126 @@ func (s *Server) Shutdown(ctx context.Context) {
 	if s == nil || s.srv == nil {
 		return
 	}
+	s.stopQualityScheduler()
 	_ = s.srv.Shutdown(ctx)
+}
+
+func (s *Server) ensureQualityScheduler() {
+	if s == nil {
+		return
+	}
+	s.cfgMu.RLock()
+	cfg := s.cfgSrc
+	if cfg == nil || !cfg.QualityCheck.Enabled {
+		s.cfgMu.RUnlock()
+		s.stopQualityScheduler()
+		return
+	}
+	q := cfg.QualityCheck.Normalized()
+	s.cfgMu.RUnlock()
+	if !isAllowedMonitorRegion(q.Region) {
+		s.stopQualityScheduler()
+		s.logger.Printf("⚠️ quality check scheduler disabled: invalid region %q", q.Region)
+		return
+	}
+
+	s.qualityMu.Lock()
+	defer s.qualityMu.Unlock()
+	if s.qualityRunning && s.qualityConfig == q {
+		return
+	}
+	if s.qualityStop != nil {
+		close(s.qualityStop)
+	}
+	stop := make(chan struct{})
+	s.qualityStop = stop
+	s.qualityRunning = true
+	s.qualityConfig = q
+	go s.qualityLoop(stop, q)
+}
+
+func (s *Server) stopQualityScheduler() {
+	s.qualityMu.Lock()
+	defer s.qualityMu.Unlock()
+	if s.qualityStop != nil {
+		close(s.qualityStop)
+		s.qualityStop = nil
+	}
+	s.qualityRunning = false
+	s.qualityConfig = config.QualityCheckConfig{}
+}
+
+func (s *Server) qualityLoop(stop <-chan struct{}, q config.QualityCheckConfig) {
+	s.logger.Printf("quality check scheduler enabled: interval=%s region=%s count=%d", q.Interval, q.Region, q.Count)
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-timer.C:
+			s.runScheduledQualityCheck(q)
+			timer.Reset(q.Interval)
+		}
+	}
+}
+
+func (s *Server) runScheduledQualityCheck(q config.QualityCheckConfig) {
+	q = q.Normalized()
+	ctx, cancel := context.WithTimeout(context.Background(), maxDuration(q.Interval/2, 2*time.Minute))
+	defer cancel()
+	count := q.Count
+	region := q.Region
+	if !isAllowedMonitorRegion(region) {
+		s.logger.Printf("⚠️ scheduled quality check skipped: invalid region %q", region)
+		return
+	}
+
+	var retryTags map[string]bool
+	if q.RetryFailed {
+		retryTags = failedCloudflareTags(s.cfChecker.CacheList())
+		if len(retryTags) == 0 {
+			retryTags = nil
+		}
+	}
+	cfTargets, err := s.buildCloudflareTargets(region, count, q.IncludeUnavailable, retryTags)
+	if err != nil {
+		s.logger.Printf("⚠️ scheduled CF check skipped: %v", err)
+	} else {
+		if q.RetryFailed {
+			for _, target := range cfTargets {
+				key := target.NodeTag
+				if key == "" {
+					key = fmt.Sprintf("%s:%d", target.Host, target.Port)
+				}
+				s.cfChecker.DeleteCache(key)
+			}
+		}
+		cfResults := s.cfChecker.CheckTargets(ctx, cfTargets)
+		s.logger.Printf("scheduled CF check completed: checked=%d summary=%v", len(cfResults), summarizeCloudflare(cfResults))
+	}
+
+	var repRetryTags map[string]bool
+	if q.RetryFailed {
+		repRetryTags = failedReputationTags(s.repChecker.NodeResults())
+		if len(repRetryTags) == 0 {
+			repRetryTags = nil
+		}
+	}
+	repTargets, err := s.buildReputationTargets(region, count, q.IncludeUnavailable, repRetryTags)
+	if err != nil {
+		s.logger.Printf("⚠️ scheduled reputation check skipped: %v", err)
+		return
+	}
+	repResults := s.repChecker.CheckProxies(ctx, repTargets, reputationExpectedCountry(region))
+	s.logger.Printf("scheduled reputation check completed: checked=%d summary=%v", len(repResults), summarizeReputation(repResults))
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -889,6 +1015,7 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 		count = parsed
 	}
 	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
+	retryFailed := r.URL.Query().Get("retry_failed") == "1" || strings.EqualFold(r.URL.Query().Get("retry_failed"), "true")
 	maxCount := 50
 	if includeUnavailable {
 		maxCount = 500
@@ -906,11 +1033,37 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in cloudflare check"})
 		return
 	}
-	targets, err := s.buildCloudflareTargets(region, count, includeUnavailable)
+	var retryTags map[string]bool
+	if retryFailed {
+		retryTags = failedCloudflareTags(s.cfChecker.CacheList())
+		if len(retryTags) == 0 {
+			writeJSON(w, map[string]any{
+				"region":              region,
+				"mode":                "multi-port",
+				"requested_count":     count,
+				"checked_count":       0,
+				"retry_failed":        true,
+				"include_unavailable": includeUnavailable,
+				"summary":             summarizeCloudflare(nil),
+				"data":                []cloudflarecheck.Result{},
+			})
+			return
+		}
+	}
+	targets, err := s.buildCloudflareTargets(region, count, includeUnavailable, retryTags)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": err.Error()})
 		return
+	}
+	if retryFailed {
+		for _, target := range targets {
+			key := target.NodeTag
+			if key == "" {
+				key = fmt.Sprintf("%s:%d", target.Host, target.Port)
+			}
+			s.cfChecker.DeleteCache(key)
+		}
 	}
 	results := s.cfChecker.CheckTargets(r.Context(), targets)
 	writeJSON(w, map[string]any{
@@ -918,6 +1071,7 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 		"mode":                "multi-port",
 		"requested_count":     count,
 		"checked_count":       len(results),
+		"retry_failed":        retryFailed,
 		"include_unavailable": includeUnavailable,
 		"summary":             summarizeCloudflare(results),
 		"data":                results,
@@ -925,7 +1079,7 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) buildCloudflareTargets(region string, count int, includeUnavailable bool) ([]cloudflarecheck.ProxyTarget, error) {
+func (s *Server) buildCloudflareTargets(region string, count int, includeUnavailable bool, targetTags map[string]bool) ([]cloudflarecheck.ProxyTarget, error) {
 	s.cfgMu.RLock()
 	username := s.cfg.ProxyUsername
 	password := s.cfg.ProxyPassword
@@ -938,6 +1092,9 @@ func (s *Server) buildCloudflareTargets(region string, count int, includeUnavail
 			continue
 		}
 		if region != "all" && !extractorSnapshotMatchesRegion(snap, region) {
+			continue
+		}
+		if targetTags != nil && !targetTags[snap.Tag] {
 			continue
 		}
 		host := s.resolveLocalHost(snap.ListenAddress)
@@ -961,6 +1118,40 @@ func (s *Server) buildCloudflareTargets(region string, count int, includeUnavail
 		return nil, errors.New("没有可用于 CF 评分的 multi-port 节点")
 	}
 	return targets, nil
+}
+
+func failedCloudflareTags(results []cloudflarecheck.Result) map[string]bool {
+	failed := make(map[string]bool)
+	for _, result := range results {
+		if result.NodeTag != "" && (result.Level == "failed" || result.Error != "") {
+			failed[result.NodeTag] = true
+		}
+	}
+	return failed
+}
+
+func failedReputationTags(results []reputation.NodeResult) map[string]bool {
+	failed := make(map[string]bool)
+	for _, result := range results {
+		if result.Error == "" && (result.Result == nil || result.Result.Error == "") {
+			continue
+		}
+		key := monitorTargetKey(result.NodeTag, result.Host, result.Port)
+		if key != "" {
+			failed[key] = true
+		}
+	}
+	return failed
+}
+
+func monitorTargetKey(tag, host string, port uint16) string {
+	if tag != "" {
+		return tag
+	}
+	if host == "" || port == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", host, port)
 }
 
 func summarizeCloudflare(results []cloudflarecheck.Result) map[string]int {
@@ -1037,8 +1228,13 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		}
 		count = parsed
 	}
-	if count > 50 {
-		count = 50
+	retryFailed := r.URL.Query().Get("retry_failed") == "1" || strings.EqualFold(r.URL.Query().Get("retry_failed"), "true")
+	maxCount := 50
+	if retryFailed || strings.EqualFold(r.URL.Query().Get("scope"), "all") || r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") {
+		maxCount = 500
+	}
+	if count > maxCount {
+		count = maxCount
 	}
 	if !isAllowedMonitorRegion(region) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1051,7 +1247,26 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targets, err := s.buildReputationTargets(region, count)
+	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
+	var retryTags map[string]bool
+	if retryFailed {
+		retryTags = failedReputationTags(s.repChecker.NodeResults())
+		if len(retryTags) == 0 {
+			writeJSON(w, map[string]any{
+				"region":              region,
+				"mode":                "multi-port",
+				"requested_count":     count,
+				"checked_count":       0,
+				"retry_failed":        true,
+				"include_unavailable": includeUnavailable,
+				"summary":             summarizeReputation(nil),
+				"data":                []reputation.NodeResult{},
+			})
+			return
+		}
+	}
+
+	targets, err := s.buildReputationTargets(region, count, includeUnavailable, retryTags)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": err.Error()})
@@ -1060,22 +1275,24 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	results := s.repChecker.CheckProxies(r.Context(), targets, reputationExpectedCountry(region))
 	summary := summarizeReputation(results)
 	writeJSON(w, map[string]any{
-		"region":          region,
-		"mode":            "multi-port",
-		"requested_count": count,
-		"checked_count":   len(results),
-		"summary":         summary,
-		"data":            results,
+		"region":              region,
+		"mode":                "multi-port",
+		"requested_count":     count,
+		"checked_count":       len(results),
+		"retry_failed":        retryFailed,
+		"include_unavailable": includeUnavailable,
+		"summary":             summary,
+		"data":                results,
 	})
 }
 
-func (s *Server) buildReputationTargets(region string, count int) ([]reputation.ProxyTarget, error) {
+func (s *Server) buildReputationTargets(region string, count int, includeUnavailable bool, targetTags map[string]bool) ([]reputation.ProxyTarget, error) {
 	s.cfgMu.RLock()
 	username := s.cfg.ProxyUsername
 	password := s.cfg.ProxyPassword
 	s.cfgMu.RUnlock()
 
-	snaps := s.mgr.SnapshotFiltered(true)
+	snaps := s.mgr.SnapshotFiltered(!includeUnavailable)
 	targets := make([]reputation.ProxyTarget, 0, count)
 	for _, snap := range snaps {
 		if snap.ListenAddress == "" || snap.Port == 0 {
@@ -1085,6 +1302,9 @@ func (s *Server) buildReputationTargets(region string, count int) ([]reputation.
 			continue
 		}
 		host := s.resolveLocalHost(snap.ListenAddress)
+		if targetTags != nil && !targetTags[monitorTargetKey(snap.Tag, host, snap.Port)] {
+			continue
+		}
 		auth := ""
 		if username != "" || password != "" {
 			auth = url.UserPassword(username, password).String() + "@"
@@ -1647,7 +1867,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"auto_update_enabled":  false,
 				"auto_update_interval": "",
 			},
+			"quality_check": map[string]any{
+				"enabled":             false,
+				"interval":            "",
+				"region":              "all",
+				"count":               500,
+				"include_unavailable": true,
+				"retry_failed":        false,
+			},
 		}
+
 		if cfg != nil {
 			resp["mode"] = cfg.Mode
 			resp["listener"] = map[string]any{
@@ -1684,6 +1913,21 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"port":                 cfg.GeoIP.Port,
 				"auto_update_enabled":  cfg.GeoIP.AutoUpdateEnabled,
 				"auto_update_interval": cfg.GeoIP.AutoUpdateInterval.String(),
+			}
+			resp["subscriptions"] = cfg.Subscriptions
+			resp["subscription_refresh"] = map[string]any{
+				"enabled":  cfg.SubscriptionRefresh.Enabled,
+				"interval": cfg.SubscriptionRefresh.Interval.String(),
+			}
+
+			q := cfg.QualityCheck.Normalized()
+			resp["quality_check"] = map[string]any{
+				"enabled":             q.Enabled,
+				"interval":            q.Interval.String(),
+				"region":              q.Region,
+				"count":               q.Count,
+				"include_unavailable": q.IncludeUnavailable,
+				"retry_failed":        q.RetryFailed,
 			}
 		}
 		writeJSON(w, resp)
@@ -1729,6 +1973,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				AutoUpdateEnabled  bool   `json:"auto_update_enabled"`
 				AutoUpdateInterval string `json:"auto_update_interval"`
 			} `json:"geoip"`
+			QualityCheck *struct {
+				Enabled            bool   `json:"enabled"`
+				Interval           string `json:"interval"`
+				Region             string `json:"region"`
+				Count              int    `json:"count"`
+				IncludeUnavailable bool   `json:"include_unavailable"`
+				RetryFailed        bool   `json:"retry_failed"`
+			} `json:"quality_check"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -1739,68 +1991,124 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		extIP := strings.TrimSpace(req.ExternalIP)
 		probeTarget := strings.TrimSpace(req.ProbeTarget)
 
-		var logCfg *config.LogConfig
+		logCfg := config.LogConfig{}
+		hasLogCfg := false
 		if req.Log != nil {
-			logCfg = &config.LogConfig{
+			logCfg = config.LogConfig{
 				Output:     req.Log.Output,
 				MaxSize:    req.Log.MaxSize,
 				MaxBackups: req.Log.MaxBackups,
 				MaxAge:     req.Log.MaxAge,
 				Compress:   req.Log.Compress,
 			}
+			hasLogCfg = true
 		}
 
-		if err := s.updateSettings(extIP, probeTarget, req.SkipCertVerify, logCfg, req.GeoIP != nil && req.GeoIP.Enabled); err != nil {
+		s.cfgMu.Lock()
+		if s.cfgSrc == nil {
+			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)
-			writeJSON(w, map[string]any{"error": err.Error()})
+			writeJSON(w, map[string]any{"error": "配置存储未初始化"})
 			return
 		}
 
-		// Update extended settings
-		s.cfgMu.Lock()
-		if s.cfgSrc != nil {
-			if req.Mode != "" {
-				s.cfgSrc.Mode = req.Mode
+		s.cfg.ExternalIP = extIP
+		s.cfg.ProbeTarget = probeTarget
+		s.cfg.SkipCertVerify = req.SkipCertVerify
+		s.cfgSrc.ExternalIP = extIP
+		s.cfgSrc.Management.ProbeTarget = probeTarget
+		s.cfgSrc.SkipCertVerify = req.SkipCertVerify
+
+		geoipEnabled := req.GeoIP != nil && req.GeoIP.Enabled
+		s.cfgSrc.GeoIP.Enabled = geoipEnabled
+		if geoipEnabled && s.cfgSrc.GeoIP.DatabasePath == "" {
+			s.cfgSrc.GeoIP.DatabasePath = "./GeoLite2-Country.mmdb"
+			s.cfgSrc.GeoIP.AutoUpdateEnabled = true
+			s.cfgSrc.GeoIP.AutoUpdateInterval = 24 * time.Hour
+		}
+		if hasLogCfg {
+			s.cfgSrc.Log.Output = logCfg.Output
+			if logCfg.MaxSize > 0 {
+				s.cfgSrc.Log.MaxSize = logCfg.MaxSize
 			}
-			if req.Listener != nil {
-				s.cfgSrc.Listener.Address = req.Listener.Address
-				s.cfgSrc.Listener.Port = req.Listener.Port
-				s.cfgSrc.Listener.Username = req.Listener.Username
-				s.cfgSrc.Listener.Password = req.Listener.Password
+			if logCfg.MaxBackups > 0 {
+				s.cfgSrc.Log.MaxBackups = logCfg.MaxBackups
 			}
-			if req.MultiPort != nil {
-				s.cfgSrc.MultiPort.Address = req.MultiPort.Address
-				s.cfgSrc.MultiPort.BasePort = req.MultiPort.BasePort
-				s.cfgSrc.MultiPort.Username = req.MultiPort.Username
-				s.cfgSrc.MultiPort.Password = req.MultiPort.Password
+			if logCfg.MaxAge > 0 {
+				s.cfgSrc.Log.MaxAge = logCfg.MaxAge
 			}
-			if req.Pool != nil {
-				s.cfgSrc.Pool.Mode = req.Pool.Mode
-				s.cfgSrc.Pool.FailureThreshold = req.Pool.FailureThreshold
-				if req.Pool.BlacklistDuration != "" {
-					if d, err := time.ParseDuration(req.Pool.BlacklistDuration); err == nil {
-						s.cfgSrc.Pool.BlacklistDuration = d
-					}
+			s.cfgSrc.Log.Compress = logCfg.Compress
+		}
+		if req.Mode != "" {
+			s.cfgSrc.Mode = req.Mode
+		}
+		if req.Listener != nil {
+			s.cfgSrc.Listener.Address = req.Listener.Address
+			s.cfgSrc.Listener.Port = req.Listener.Port
+			s.cfgSrc.Listener.Username = req.Listener.Username
+			s.cfgSrc.Listener.Password = req.Listener.Password
+		}
+		if req.MultiPort != nil {
+			s.cfgSrc.MultiPort.Address = req.MultiPort.Address
+			s.cfgSrc.MultiPort.BasePort = req.MultiPort.BasePort
+			s.cfgSrc.MultiPort.Username = req.MultiPort.Username
+			s.cfgSrc.MultiPort.Password = req.MultiPort.Password
+		}
+		if req.Pool != nil {
+			s.cfgSrc.Pool.Mode = req.Pool.Mode
+			s.cfgSrc.Pool.FailureThreshold = req.Pool.FailureThreshold
+			if req.Pool.BlacklistDuration != "" {
+				if d, err := time.ParseDuration(req.Pool.BlacklistDuration); err == nil {
+					s.cfgSrc.Pool.BlacklistDuration = d
 				}
 			}
-			if req.Management != nil {
-				s.cfgSrc.Management.Listen = req.Management.Listen
-				s.cfgSrc.Management.Password = req.Management.Password
-			}
-			if req.GeoIP != nil {
-				s.cfgSrc.GeoIP.DatabasePath = req.GeoIP.DatabasePath
-				s.cfgSrc.GeoIP.Listen = req.GeoIP.Listen
-				s.cfgSrc.GeoIP.Port = req.GeoIP.Port
-				s.cfgSrc.GeoIP.AutoUpdateEnabled = req.GeoIP.AutoUpdateEnabled
-				if req.GeoIP.AutoUpdateInterval != "" {
-					if d, err := time.ParseDuration(req.GeoIP.AutoUpdateInterval); err == nil {
-						s.cfgSrc.GeoIP.AutoUpdateInterval = d
-					}
+		}
+		if req.Management != nil {
+			s.cfgSrc.Management.Listen = req.Management.Listen
+			s.cfgSrc.Management.Password = req.Management.Password
+		}
+		if req.GeoIP != nil {
+			s.cfgSrc.GeoIP.DatabasePath = req.GeoIP.DatabasePath
+			s.cfgSrc.GeoIP.Listen = req.GeoIP.Listen
+			s.cfgSrc.GeoIP.Port = req.GeoIP.Port
+			s.cfgSrc.GeoIP.AutoUpdateEnabled = req.GeoIP.AutoUpdateEnabled
+			if req.GeoIP.AutoUpdateInterval != "" {
+				if d, err := time.ParseDuration(req.GeoIP.AutoUpdateInterval); err == nil {
+					s.cfgSrc.GeoIP.AutoUpdateInterval = d
 				}
 			}
-			_ = s.cfgSrc.SaveSettings()
+		}
+		if req.QualityCheck != nil {
+			s.cfgSrc.QualityCheck = config.QualityCheckConfig{
+				Enabled:            req.QualityCheck.Enabled,
+				Interval:           s.cfgSrc.QualityCheck.Interval,
+				Region:             req.QualityCheck.Region,
+				Count:              req.QualityCheck.Count,
+				IncludeUnavailable: req.QualityCheck.IncludeUnavailable,
+				RetryFailed:        req.QualityCheck.RetryFailed,
+			}
+			if req.QualityCheck.Interval != "" {
+				if d, err := time.ParseDuration(req.QualityCheck.Interval); err == nil {
+					s.cfgSrc.QualityCheck.Interval = d
+				}
+			}
+			s.cfgSrc.QualityCheck = s.cfgSrc.QualityCheck.Normalized()
+		}
+		if s.cfgSrc.Mode == "multi-port" || s.cfgSrc.Mode == "hybrid" {
+			s.cfg.ProxyUsername = s.cfgSrc.MultiPort.Username
+			s.cfg.ProxyPassword = s.cfgSrc.MultiPort.Password
+		} else {
+			s.cfg.ProxyUsername = s.cfgSrc.Listener.Username
+			s.cfg.ProxyPassword = s.cfgSrc.Listener.Password
+		}
+		if err := s.cfgSrc.SaveSettings(); err != nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err)})
+			return
 		}
 		s.cfgMu.Unlock()
+		s.ensureQualityScheduler()
 
 		writeJSON(w, map[string]any{
 			"message":          "设置已保存",

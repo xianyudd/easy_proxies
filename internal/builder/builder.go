@@ -25,6 +25,8 @@ import (
 
 // Build converts high level config into sing-box Options tree.
 func Build(cfg *config.Config) (option.Options, error) {
+	upstreamProxy := strings.TrimSpace(cfg.UpstreamProxy)
+	const upstreamProxyTag = "__upstream_proxy"
 	baseOutbounds := make([]option.Outbound, 0, len(cfg.Nodes))
 	memberTags := make([]string, 0, len(cfg.Nodes))
 	metadata := make(map[string]poolout.MemberMeta)
@@ -82,6 +84,9 @@ func Build(cfg *config.Config) (option.Options, error) {
 			log.Printf("❌ Failed to build node '%s': %v (skipping)", node.Name, err)
 			failedNodes = append(failedNodes, node.Name)
 			continue
+		}
+		if upstreamProxy != "" {
+			applyOutboundDetour(&outbound, upstreamProxyTag)
 		}
 		memberTags = append(memberTags, tag)
 		baseOutbounds = append(baseOutbounds, outbound)
@@ -229,10 +234,18 @@ func Build(cfg *config.Config) (option.Options, error) {
 
 	var (
 		inbounds  []option.Inbound
-		outbounds = make([]option.Outbound, len(baseOutbounds))
+		outbounds = make([]option.Outbound, 0, len(baseOutbounds)+1)
 		route     option.RouteOptions
 	)
-	copy(outbounds, baseOutbounds)
+	if upstreamProxy != "" {
+		proxyOutbound, err := buildNodeOutbound(upstreamProxyTag, upstreamProxy, cfg.SkipCertVerify)
+		if err != nil {
+			return option.Options{}, fmt.Errorf("build upstream_proxy: %w", err)
+		}
+		outbounds = append(outbounds, proxyOutbound)
+		log.Printf("🔗 Upstream proxy detour enabled: %s", upstreamProxyTag)
+	}
+	outbounds = append(outbounds, baseOutbounds...)
 
 	// Determine which components to enable based on mode
 	enablePoolInbound := cfg.Mode == "pool" || cfg.Mode == "hybrid"
@@ -403,6 +416,17 @@ func buildPoolInbound(cfg *config.Config) (option.Inbound, error) {
 		Options: inboundOptions,
 	}
 	return inbound, nil
+}
+
+func applyOutboundDetour(outbound *option.Outbound, detour string) {
+	if outbound == nil || outbound.Options == nil || detour == "" {
+		return
+	}
+	if wrapper, ok := outbound.Options.(option.DialerOptionsWrapper); ok {
+		dialerOptions := wrapper.TakeDialerOptions()
+		dialerOptions.Detour = detour
+		wrapper.ReplaceDialerOptions(dialerOptions)
+	}
 }
 
 func buildNodeOutbound(tag, rawURI string, skipCertVerify bool) (option.Outbound, error) {

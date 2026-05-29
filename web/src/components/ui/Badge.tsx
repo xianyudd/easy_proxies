@@ -1,4 +1,14 @@
+import { Tag } from 'antd'
 import type { ReactNode } from 'react'
-export function Badge({ children, tone = 'neutral' }: {children: ReactNode; tone?: 'neutral'|'good'|'warn'|'bad'|'info'}) {
-  return <span className={`badge badge-${tone}`}>{children}</span>
+
+const colors = {
+  neutral: 'default',
+  good: 'success',
+  warn: 'warning',
+  bad: 'error',
+  info: 'processing',
+} as const
+
+export function Badge({ children, tone = 'neutral' }: {children: ReactNode; tone?: keyof typeof colors}) {
+  return <Tag className="ep-badge" color={colors[tone]}>{children}</Tag>
 }
