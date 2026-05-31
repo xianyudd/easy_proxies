@@ -132,6 +132,7 @@ dns:
   - 会抓取订阅节点并追加到运行节点列表
   - `nodes_file` 作为订阅节点写入路径
   - 启动阶段不再从 `nodes_file` 读取节点
+- `free_proxy_sources` 会在订阅源 / 节点文件 / 内联节点之后追加，按 URI 去重，默认最多激活 500 个免费源节点；可用 `free_proxy_max_nodes`、每个源的 `max_nodes` 和 `max_bytes` 控制规模。
 - `nodes`（内联节点）只要存在就会参与运行。
 
 ## 协议支持注意事项
@@ -209,4 +210,3 @@ go test ./...
 ## 许可证
 
 MIT License
-

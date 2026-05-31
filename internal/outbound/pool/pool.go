@@ -53,6 +53,7 @@ type MemberMeta struct {
 	Port          uint16
 	Region        string // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
 	Country       string // Full country name from GeoIP
+	Source        string // Runtime config source: inline, nodes_file, subscription, free_proxy
 }
 
 // Register wires the pool outbound into the registry.
@@ -127,6 +128,7 @@ func newPool(ctx context.Context, _ adapter.Router, logger singlog.ContextLogger
 				Port:          meta.Port,
 				Region:        meta.Region,
 				Country:       meta.Country,
+				Source:        meta.Source,
 			}
 			entry := monitorMgr.Register(info)
 			if entry != nil {
@@ -226,6 +228,7 @@ func (p *poolOutbound) initializeMembersLocked() error {
 				Port:          meta.Port,
 				Region:        meta.Region,
 				Country:       meta.Country,
+				Source:        meta.Source,
 			}
 			entry := p.monitor.Register(info)
 			if entry != nil {

@@ -1,7 +1,7 @@
 import { Select } from 'antd'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getNodes } from '../api/nodes'
+import { getNodesPage } from '../api/nodes'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { DataTable } from '../components/ui/DataTable'
@@ -15,6 +15,15 @@ const REGION_LABELS: Record<string, string> = {
   sg: '新加坡',
   de: '德国',
   gb: '英国',
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  all: '全部',
+  inline: '配置内置',
+  nodes_file: '节点文件',
+  subscription: '订阅源',
+  free_proxy: '免费源',
+  unknown: '未知',
 }
 
 function levelTone(node: NodeSnapshot) {
@@ -38,54 +47,44 @@ function regionLabel(region?: string) {
 }
 
 export function NodeOverviewPage() {
-  const { data = [], isLoading, refetch } = useQuery({ queryKey: ['nodes'], queryFn: getNodes, refetchInterval: 10000 })
   const [region, setRegion] = useState('all')
+  const [source, setSource] = useState('all')
   const [availability, setAvailability] = useState('all')
   const [latency, setLatency] = useState('all')
-  const [sortKey, setSortKey] = useState<'name'|'latency'|'connections'|'failure'>('latency')
+  const [sortKey, setSortKey] = useState<'name'|'latency'|'latency_desc'|'region'|'source'>('latency')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(100)
+
+  const queryParams = { page, page_size: pageSize, region, source, availability, latency, sort: sortKey }
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['nodes-page', queryParams],
+    queryFn: () => getNodesPage(queryParams),
+    refetchInterval: 10000,
+  })
+
+  const rows = data?.nodes || []
 
   const regions = useMemo(() => {
-    const counts = data.reduce((map, node) => {
-      const key = String(node.region || 'other').toLowerCase()
-      map.set(key, (map.get(key) || 0) + 1)
-      return map
-    }, new Map<string, number>())
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  }, [data])
+    const stats = data?.region_stats || {}
+    return Object.entries(stats).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [data?.region_stats])
 
-  const rows = useMemo(() => {
-    return data
-      .filter(node => region === 'all' || String(node.region || 'other').toLowerCase() === region)
-      .filter(node => {
-        if (availability === 'all') return true
-        if (availability === 'available') return !!node.available && !node.blacklisted
-        if (availability === 'unavailable') return !node.available || !!node.blacklisted
-        if (availability === 'blacklisted') return !!node.blacklisted
-        if (availability === 'unchecked') return !node.initial_check_done
-        return true
-      })
-      .filter(node => {
-        const latencyMs = Number(node.last_latency_ms) || 0
-        if (latency === 'all') return true
-        if (latency === '<500') return latencyMs > 0 && latencyMs < 500
-        if (latency === '500-1000') return latencyMs >= 500 && latencyMs < 1000
-        if (latency === '1000+') return latencyMs >= 1000
-        return true
-      })
-      .sort((a, b) => {
-        if (sortKey === 'name') return String(a.name || a.tag || '').localeCompare(String(b.name || b.tag || ''))
-        if (sortKey === 'connections') return (Number(b.active_connections) || 0) - (Number(a.active_connections) || 0)
-        if (sortKey === 'failure') return (Number(b.failure_count) || 0) - (Number(a.failure_count) || 0)
-        return (Number(a.last_latency_ms) || 0) - (Number(b.last_latency_ms) || 0)
-      })
-  }, [availability, data, latency, region, sortKey])
+  const sources = useMemo(() => {
+    const stats = data?.source_stats || {}
+    return Object.entries(stats).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [data?.source_stats])
 
   const summary = useMemo(() => ({
-    total: data.length,
-    available: data.filter(n => n.available && !n.blacklisted).length,
-    blacklisted: data.filter(n => n.blacklisted).length,
-    unchecked: data.filter(n => !n.initial_check_done).length,
+    total: data?.total_nodes || 0,
+    filtered: data?.total_filtered || 0,
+    available: Object.values(data?.region_healthy || {}).reduce((sum, n) => sum + n, 0),
+    free: data?.source_stats?.free_proxy || 0,
   }), [data])
+
+  const resetPage = <T,>(setter: (value: T) => void) => (value: T) => {
+    setter(value)
+    setPage(1)
+  }
 
   const copyNode = (node: NodeSnapshot) => {
     const text = [
@@ -108,11 +107,11 @@ export function NodeOverviewPage() {
       </div>
     </div>
 
-    <div className="summary-grid overview-summary">
+      <div className="summary-grid overview-summary">
       <div className="metric"><div className="label">总节点</div><div className="value">{summary.total}</div></div>
       <div className="metric"><div className="label">可用节点</div><div className="value success">{summary.available}</div></div>
-      <div className="metric"><div className="label">拉黑节点</div><div className="value error">{summary.blacklisted}</div></div>
-      <div className="metric"><div className="label">未检测</div><div className="value">{summary.unchecked}</div></div>
+      <div className="metric"><div className="label">筛选结果</div><div className="value">{summary.filtered}</div></div>
+      <div className="metric"><div className="label">免费源节点</div><div className="value">{summary.free}</div></div>
     </div>
 
     <div className="card overview-filters">
@@ -125,19 +124,27 @@ export function NodeOverviewPage() {
       <div className="form-grid-3 overview-filter-grid modern-filter-grid">
         <div className="field console-field">
           <label>地区</label>
-          <Select className="console-select" value={region} onChange={setRegion} options={[{ value: 'all', label: '全部' }, ...regions.map(([code]) => ({ value: code, label: regionLabel(code) }))]} />
+          <Select className="console-select" value={region} onChange={resetPage(setRegion)} options={[{ value: 'all', label: '全部' }, ...regions.map(([code, count]) => ({ value: code, label: `${regionLabel(code)} (${count})` }))]} />
+        </div>
+        <div className="field console-field">
+          <label>来源</label>
+          <Select className="console-select" value={source} onChange={resetPage(setSource)} options={[{ value: 'all', label: '全部' }, ...sources.map(([code, count]) => ({ value: code, label: `${SOURCE_LABELS[code] || code} (${count})` }))]} />
         </div>
         <div className="field console-field">
           <label>状态</label>
-          <Select className="console-select" value={availability} onChange={setAvailability} options={[{ value: 'all', label: '全部' }, { value: 'available', label: '可用' }, { value: 'unavailable', label: '不可用' }, { value: 'blacklisted', label: '已拉黑' }, { value: 'unchecked', label: '未检测' }]} />
+          <Select className="console-select" value={availability} onChange={resetPage(setAvailability)} options={[{ value: 'all', label: '全部' }, { value: 'available', label: '可用' }, { value: 'unavailable', label: '不可用' }, { value: 'blacklisted', label: '已拉黑' }, { value: 'unchecked', label: '未检测' }]} />
         </div>
         <div className="field console-field">
           <label>延迟</label>
-          <Select className="console-select" value={latency} onChange={setLatency} options={[{ value: 'all', label: '全部' }, { value: '<500', label: '500ms 以下' }, { value: '500-1000', label: '500-1000ms' }, { value: '1000+', label: '1000ms 以上' }]} />
+          <Select className="console-select" value={latency} onChange={resetPage(setLatency)} options={[{ value: 'all', label: '全部' }, { value: 'fast', label: '800ms 以下' }, { value: 'slow', label: '800ms 以上' }, { value: 'tested', label: '已测速' }, { value: 'untested', label: '未测速' }]} />
         </div>
         <div className="field console-field">
           <label>排序</label>
-          <Select className="console-select" value={sortKey} onChange={value => setSortKey(value)} options={[{ value: 'latency', label: '延迟升序' }, { value: 'connections', label: '连接数降序' }, { value: 'failure', label: '失败次数降序' }, { value: 'name', label: '名称字母序' }]} />
+          <Select className="console-select" value={sortKey} onChange={resetPage(setSortKey)} options={[{ value: 'latency', label: '延迟升序' }, { value: 'latency_desc', label: '延迟降序' }, { value: 'region', label: '地区' }, { value: 'source', label: '来源' }, { value: 'name', label: '名称字母序' }]} />
+        </div>
+        <div className="field console-field">
+          <label>每页</label>
+          <Select className="console-select" value={pageSize} onChange={(value) => { setPageSize(value); setPage(1) }} options={[50, 100, 200, 500].map(value => ({ value, label: `${value} 条` }))} />
         </div>
       </div>
     </div>
@@ -146,16 +153,21 @@ export function NodeOverviewPage() {
       <div className="panel-header">
         <div>
           <div className="panel-title">节点列表</div>
-          <div className="panel-subtitle">共 {rows.length} 条结果。</div>
+          <div className="panel-subtitle">第 {data?.page || page} 页，当前 {rows.length} 条，筛选后共 {data?.total_filtered || 0} 条。</div>
+        </div>
+        <div className="toolbar">
+          <Button disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</Button>
+          <Button disabled={!data?.has_next} onClick={() => setPage(page + 1)}>下一页</Button>
         </div>
       </div>
-      <DataTable headers={['节点', '地区', '端口', '状态', '延迟', '连接', '失败', '操作']} empty={isLoading ? '加载中...' : '暂无节点'}>
+      <DataTable headers={['节点', '来源', '地区', '端口', '状态', '延迟', '连接', '失败', '操作']} empty={isLoading ? '加载中...' : '暂无节点'}>
         {rows.map((node, idx) => (
           <tr key={`${node.tag || node.name || 'node'}-${idx}`}>
             <td>
               <strong>{node.name || node.tag || '-'}</strong><br />
               <span className="muted mono">{node.tag || ''}</span>
             </td>
+            <td>{SOURCE_LABELS[String(node.source || 'unknown')] || String(node.source || '-')}</td>
             <td>{regionLabel(node.region)}</td>
             <td>{node.port || '-'}</td>
             <td><Badge tone={levelTone(node)}>{statusLabel(node)}</Badge></td>

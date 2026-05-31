@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -456,33 +457,211 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	// 只返回初始检查通过的可用节点
-	filtered := s.mgr.SnapshotFiltered(true)
-	allNodes := s.mgr.Snapshot()
-	totalNodes := len(allNodes)
+	q := r.URL.Query()
+	if !nodesPagedMode(q) {
+		// Legacy compatibility: plain /api/nodes and unknown-only query params
+		// keep the original shape and only include available/non-blacklisted
+		// nodes.
+		filtered := s.mgr.SnapshotFiltered(true)
+		allNodes := s.mgr.Snapshot()
+		regionStats, regionHealthy, sourceStats := nodeStats(allNodes)
+		writeJSON(w, map[string]any{
+			"nodes":          filtered,
+			"total_nodes":    len(allNodes),
+			"region_stats":   regionStats,
+			"region_healthy": regionHealthy,
+			"source_stats":   sourceStats,
+		})
+		return
+	}
 
-	// Calculate region statistics
+	allNodes := s.mgr.Snapshot()
+	regionStats, regionHealthy, sourceStats := nodeStats(allNodes)
+	page := parsePositiveInt(q.Get("page"), 1)
+	pageSize := parsePositiveInt(q.Get("page_size"), 100)
+	if pageSize > 500 {
+		pageSize = 500
+	}
+	filtered := filterNodeSnapshots(allNodes, q)
+	sortNodeSnapshots(filtered, q.Get("sort"))
+	totalFiltered := len(filtered)
+	if strings.EqualFold(q.Get("summary_only"), "true") || q.Get("summary_only") == "1" {
+		filtered = nil
+	} else {
+		start := (page - 1) * pageSize
+		if start >= len(filtered) {
+			filtered = []Snapshot{}
+		} else {
+			end := start + pageSize
+			if end > len(filtered) {
+				end = len(filtered)
+			}
+			filtered = filtered[start:end]
+		}
+	}
+	writeJSON(w, map[string]any{
+		"nodes":          filtered,
+		"total_nodes":    len(allNodes),
+		"total_filtered": totalFiltered,
+		"page":           page,
+		"page_size":      pageSize,
+		"has_next":       page*pageSize < totalFiltered,
+		"region_stats":   regionStats,
+		"region_healthy": regionHealthy,
+		"source_stats":   sourceStats,
+	})
+}
+
+func nodesPagedMode(q url.Values) bool {
+	if len(q) == 0 {
+		return false
+	}
+	recognized := map[string]struct{}{
+		"page": {}, "page_size": {}, "region": {}, "availability": {},
+		"latency": {}, "source": {}, "q": {}, "sort": {}, "summary_only": {},
+	}
+	for key := range q {
+		if _, ok := recognized[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeStats(nodes []Snapshot) (map[string]int, map[string]int, map[string]int) {
 	regionStats := make(map[string]int)
 	regionHealthy := make(map[string]int)
-	for _, snap := range allNodes {
-		region := snap.Region
+	sourceStats := make(map[string]int)
+	for _, snap := range nodes {
+		region := strings.TrimSpace(snap.Region)
 		if region == "" {
 			region = "other"
 		}
+		source := strings.TrimSpace(snap.Source)
+		if source == "" {
+			source = "unknown"
+		}
 		regionStats[region]++
-		// Count healthy nodes per region
+		sourceStats[source]++
 		if snap.InitialCheckDone && snap.Available && !snap.Blacklisted {
 			regionHealthy[region]++
 		}
 	}
+	return regionStats, regionHealthy, sourceStats
+}
 
-	payload := map[string]any{
-		"nodes":          filtered,
-		"total_nodes":    totalNodes,
-		"region_stats":   regionStats,
-		"region_healthy": regionHealthy,
+func parsePositiveInt(raw string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return fallback
 	}
-	writeJSON(w, payload)
+	return value
+}
+
+func filterNodeSnapshots(nodes []Snapshot, q url.Values) []Snapshot {
+	region := strings.ToLower(strings.TrimSpace(q.Get("region")))
+	source := strings.ToLower(strings.TrimSpace(q.Get("source")))
+	availability := strings.ToLower(strings.TrimSpace(q.Get("availability")))
+	latency := strings.ToLower(strings.TrimSpace(q.Get("latency")))
+	search := strings.ToLower(strings.TrimSpace(q.Get("q")))
+
+	filtered := make([]Snapshot, 0, len(nodes))
+	for _, snap := range nodes {
+		snapRegion := strings.ToLower(strings.TrimSpace(snap.Region))
+		if snapRegion == "" {
+			snapRegion = "other"
+		}
+		snapSource := strings.ToLower(strings.TrimSpace(snap.Source))
+		if snapSource == "" {
+			snapSource = "unknown"
+		}
+		if region != "" && region != "all" && snapRegion != region {
+			continue
+		}
+		if source != "" && source != "all" && snapSource != source {
+			continue
+		}
+		switch availability {
+		case "", "all":
+		case "available", "healthy":
+			if !(snap.InitialCheckDone && snap.Available && !snap.Blacklisted) {
+				continue
+			}
+		case "unavailable", "failed":
+			if snap.Blacklisted || !snap.InitialCheckDone || snap.Available {
+				continue
+			}
+		case "blacklisted":
+			if !snap.Blacklisted {
+				continue
+			}
+		case "unchecked":
+			if snap.InitialCheckDone {
+				continue
+			}
+		}
+		switch latency {
+		case "", "all":
+		case "tested":
+			if snap.LastLatencyMs < 0 {
+				continue
+			}
+		case "untested":
+			if snap.LastLatencyMs >= 0 {
+				continue
+			}
+		case "fast":
+			if snap.LastLatencyMs < 0 || snap.LastLatencyMs > 800 {
+				continue
+			}
+		case "slow":
+			if snap.LastLatencyMs < 800 {
+				continue
+			}
+		}
+		if search != "" {
+			haystack := strings.ToLower(snap.Name + " " + snap.Tag + " " + snap.URI + " " + snap.Country + " " + snap.Region + " " + snap.Source)
+			if !strings.Contains(haystack, search) {
+				continue
+			}
+		}
+		filtered = append(filtered, snap)
+	}
+	return filtered
+}
+
+func sortNodeSnapshots(nodes []Snapshot, sortBy string) {
+	sortBy = strings.ToLower(strings.TrimSpace(sortBy))
+	sort.SliceStable(nodes, func(i, j int) bool {
+		a, b := nodes[i], nodes[j]
+		switch sortBy {
+		case "name":
+			return a.Name < b.Name
+		case "region":
+			if a.Region == b.Region {
+				return a.Name < b.Name
+			}
+			return a.Region < b.Region
+		case "source":
+			if a.Source == b.Source {
+				return a.Name < b.Name
+			}
+			return a.Source < b.Source
+		case "latency_desc":
+			return a.LastLatencyMs > b.LastLatencyMs
+		default:
+			if a.LastLatencyMs == b.LastLatencyMs {
+				return a.Name < b.Name
+			}
+			if a.LastLatencyMs < 0 {
+				return false
+			}
+			if b.LastLatencyMs < 0 {
+				return true
+			}
+			return a.LastLatencyMs < b.LastLatencyMs
+		}
+	})
 }
 
 func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {

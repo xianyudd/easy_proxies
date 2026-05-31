@@ -35,6 +35,7 @@ type Config struct {
 	Log                 LogConfig                 `yaml:"log"`
 	Nodes               []NodeConfig              `yaml:"nodes"`
 	FreeProxySources    []nodesource.SourceConfig `yaml:"free_proxy_sources"`
+	FreeProxyMaxNodes   int                       `yaml:"free_proxy_max_nodes"`
 	NodesFile           string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
 	Subscriptions       []string                  `yaml:"subscriptions"` // 订阅链接列表
 	ExternalIP          string                    `yaml:"external_ip"`   // 外部 IP 地址，用于导出时替换 0.0.0.0
@@ -98,10 +99,11 @@ type AndroidProxyConfig struct {
 
 // ManagementConfig controls the monitoring HTTP endpoint.
 type ManagementConfig struct {
-	Enabled     *bool  `yaml:"enabled"`
-	Listen      string `yaml:"listen"`
-	ProbeTarget string `yaml:"probe_target"`
-	Password    string `yaml:"password"` // WebUI 访问密码，为空则不需要密码
+	Enabled        *bool  `yaml:"enabled"`
+	Listen         string `yaml:"listen"`
+	ProbeTarget    string `yaml:"probe_target"`
+	Password       string `yaml:"password"`         // WebUI 访问密码，为空则不需要密码
+	ClashAPIListen string `yaml:"clash_api_listen"` // sing-box Clash API 监听地址
 }
 
 // SubscriptionRefreshConfig controls subscription auto-refresh and reload settings.
@@ -210,6 +212,73 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+func hasEnabledFreeProxySource(sources []nodesource.SourceConfig) bool {
+	for _, source := range sources {
+		if source.EnabledValue() {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) appendFreeProxyNodes() error {
+	if c == nil || len(c.FreeProxySources) == 0 || c.FreeProxyMaxNodes == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(c.Nodes))
+	for _, node := range c.Nodes {
+		if key := canonicalNodeURI(node.URI); key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+
+	totalAdded := 0
+	for _, source := range c.FreeProxySources {
+		if c.FreeProxyMaxNodes > 0 && totalAdded >= c.FreeProxyMaxNodes {
+			break
+		}
+		provider := nodesource.NewProvider(source)
+		sourceNodes, err := provider.Load()
+		if err != nil {
+			name := strings.TrimSpace(source.Name)
+			if name == "" {
+				name = firstNonEmptyString(source.File, source.URL, "unnamed")
+			}
+			log.Printf("⚠️ Failed to load free proxy source %q: %v (skipping)", name, err)
+			continue
+		}
+		addedFromSource := 0
+		for _, sourceNode := range sourceNodes {
+			key := canonicalNodeURI(sourceNode.URI)
+			if key == "" {
+				continue
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			if c.FreeProxyMaxNodes > 0 && totalAdded >= c.FreeProxyMaxNodes {
+				break
+			}
+			seen[key] = struct{}{}
+			c.Nodes = append(c.Nodes, NodeConfig{
+				Name:   sourceNode.Name,
+				URI:    strings.TrimSpace(sourceNode.URI),
+				Source: NodeSourceFreeProxy,
+			})
+			totalAdded++
+			addedFromSource++
+		}
+		if addedFromSource > 0 {
+			log.Printf("✅ Loaded %d/%d nodes from free proxy source %q", addedFromSource, len(sourceNodes), source.Name)
+		}
+	}
+	return nil
+}
+
+func canonicalNodeURI(uri string) string {
+	return strings.ToLower(strings.TrimSpace(uri))
+}
+
 // ExtractNodeName extracts a human-readable name from a proxy URI.
 // For standard URIs (vless://, ss://, trojan://), it extracts from the URL fragment (#name).
 // For vmess:// URIs, it base64-decodes the payload and extracts the "ps" field.
@@ -303,6 +372,9 @@ func (c *Config) normalize() error {
 	if c.Management.ProbeTarget == "" {
 		c.Management.ProbeTarget = "www.apple.com:80"
 	}
+	if c.Management.ClashAPIListen == "" {
+		c.Management.ClashAPIListen = "127.0.0.1:9092"
+	}
 	if c.Management.Enabled == nil {
 		defaultEnabled := true
 		c.Management.Enabled = &defaultEnabled
@@ -324,11 +396,23 @@ func (c *Config) normalize() error {
 	if c.SubscriptionRefresh.MinAvailableNodes <= 0 {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
 	}
-
-	// Mark inline nodes with source
-	for idx := range c.Nodes {
-		c.Nodes[idx].Source = NodeSourceInline
+	if c.FreeProxyMaxNodes == 0 && hasEnabledFreeProxySource(c.FreeProxySources) {
+		c.FreeProxyMaxNodes = 500
 	}
+
+	// Drop previously materialized runtime-only free proxy nodes before
+	// recomposing sources. This makes repeated normalize/reload calls idempotent.
+	baseNodes := c.Nodes[:0]
+	for idx := range c.Nodes {
+		if c.Nodes[idx].Source == NodeSourceFreeProxy {
+			continue
+		}
+		if c.Nodes[idx].Source == "" {
+			c.Nodes[idx].Source = NodeSourceInline
+		}
+		baseNodes = append(baseNodes, c.Nodes[idx])
+	}
+	c.Nodes = baseNodes
 
 	// Load nodes from file if specified (but NOT if subscriptions exist - subscription takes priority)
 	if c.NodesFile != "" && len(c.Subscriptions) == 0 {
@@ -340,31 +424,6 @@ func (c *Config) normalize() error {
 			fileNodes[idx].Source = NodeSourceFile
 		}
 		c.Nodes = append(c.Nodes, fileNodes...)
-	}
-
-	// Load nodes from configured free proxy sources. These are runtime-only inputs
-	// and are intentionally not persisted back to nodes.txt or config.yaml.
-	for _, source := range c.FreeProxySources {
-		provider := nodesource.NewProvider(source)
-		sourceNodes, err := provider.Load()
-		if err != nil {
-			name := strings.TrimSpace(source.Name)
-			if name == "" {
-				name = firstNonEmptyString(source.File, source.URL, "unnamed")
-			}
-			log.Printf("⚠️ Failed to load free proxy source %q: %v (skipping)", name, err)
-			continue
-		}
-		for _, sourceNode := range sourceNodes {
-			c.Nodes = append(c.Nodes, NodeConfig{
-				Name:   sourceNode.Name,
-				URI:    sourceNode.URI,
-				Source: NodeSourceFreeProxy,
-			})
-		}
-		if len(sourceNodes) > 0 {
-			log.Printf("✅ Loaded %d nodes from free proxy source %q", len(sourceNodes), source.Name)
-		}
 	}
 
 	// Load nodes from subscriptions (highest priority - writes to nodes.txt)
@@ -404,9 +463,19 @@ func (c *Config) normalize() error {
 			cachedNodes, err := loadNodesFromFile(c.NodesFile)
 			if err == nil && len(cachedNodes) > 0 {
 				log.Printf("⚠️  All subscriptions failed, using %d cached nodes from %s", len(cachedNodes), c.NodesFile)
+				for idx := range cachedNodes {
+					cachedNodes[idx].Source = NodeSourceSubscription
+				}
 				c.Nodes = append(c.Nodes, cachedNodes...)
 			}
 		}
+	}
+
+	// Load nodes from configured free proxy sources after inline/file/subscription
+	// nodes. These are bounded, deduplicated runtime-only inputs and are
+	// intentionally not persisted back to nodes.txt or config.yaml.
+	if err := c.appendFreeProxyNodes(); err != nil {
+		return err
 	}
 
 	if len(c.Nodes) == 0 {

@@ -288,19 +288,24 @@ Supports Base64, plain text, and Clash YAML formats. When subscriptions are conf
 ### Free Proxy Sources
 
 ```yaml
+free_proxy_max_nodes: 500
 free_proxy_sources:
   - name: "local-free-list"
     file: free-proxies.txt
     format: txt
     enabled: true
+    max_nodes: 300
+    max_bytes: 2097152
   - name: "remote-json-list"
     url: "https://example.com/free-proxies.json"
     format: json
     timeout: 15s
     enabled: false
+    max_nodes: 300
+    max_bytes: 2097152
 ```
 
-Free proxy sources are loaded at startup and merged with inline/file/subscription nodes. They are runtime inputs and are **not** written back to `nodes.txt` or `config.yaml` by the settings save path.
+Free proxy sources are loaded after inline/file/subscription nodes, deduplicated by URI, and capped before activation. If any free source is enabled and `free_proxy_max_nodes` is unset, the safe default is `500`; set `-1` only if you explicitly want unlimited activation. They are runtime inputs and are **not** written back to `nodes.txt` or `config.yaml` by the settings save path.
 
 Supported MVP formats:
 

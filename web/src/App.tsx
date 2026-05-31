@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { AppLayout } from './components/layout/AppLayout'
 import { useAppStore } from './store/appStore'
-import { getNodes } from './api/nodes'
+import { getNodesSummary } from './api/nodes'
 import { login } from './api/logs'
 import { ApiError } from './api/client'
 import { Button } from './components/ui/Button'
@@ -46,7 +46,7 @@ export default function App() {
   const authenticated = useAppStore(s => s.authenticated)
   const setAuthenticated = useAppStore(s => s.setAuthenticated)
   const setActiveTab = useAppStore(s => s.setActiveTab)
-  const authProbe = useQuery({ queryKey: ['auth-probe'], queryFn: getNodes, retry: false })
+  const authProbe = useQuery({ queryKey: ['auth-probe'], queryFn: getNodesSummary, retry: false })
   useEffect(() => {
     const syncHash = () => {
       const tab = hashTabMap.get(window.location.hash)

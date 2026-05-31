@@ -80,3 +80,64 @@ func TestProviderLoadsFromFileAndHTTP(t *testing.T) {
 		t.Fatalf("unexpected http nodes: %#v", httpNodes)
 	}
 }
+
+func TestParseFreeProxyContentLimitedCapsTextAndJSON(t *testing.T) {
+	textNodes, err := ParseFreeProxyContentLimited("txt", []byte(`
+1.1.1.1:80
+bad line
+2.2.2.2:80
+3.3.3.3:80
+`), 2)
+	if err != nil {
+		t.Fatalf("parse text failed: %v", err)
+	}
+	if len(textNodes) != 2 {
+		t.Fatalf("expected 2 text nodes, got %d: %#v", len(textNodes), textNodes)
+	}
+
+	jsonNodes, err := ParseFreeProxyContentLimited("json", []byte(`[
+{"ip":"1.1.1.1","port":80},
+{"ip":"2.2.2.2","port":80},
+{"ip":"3.3.3.3","port":80}
+]`), 2)
+	if err != nil {
+		t.Fatalf("parse json failed: %v", err)
+	}
+	if len(jsonNodes) != 2 {
+		t.Fatalf("expected 2 json nodes, got %d: %#v", len(jsonNodes), jsonNodes)
+	}
+}
+
+func TestProviderRejectsOversizedSourceBeforeParse(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "oversized.txt")
+	if err := os.WriteFile(file, []byte("1.1.1.1:80\n2.2.2.2:80\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewProvider(SourceConfig{Name: "small", File: file, MaxBytes: 4}).Load()
+	if err == nil {
+		t.Fatal("expected oversized source error")
+	}
+}
+
+func TestProviderLoadLimitedUsesLowerPositiveLimit(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "proxies.txt")
+	if err := os.WriteFile(file, []byte("1.1.1.1:80\n2.2.2.2:80\n3.3.3.3:80\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := NewProvider(SourceConfig{Name: "local", File: file, MaxNodes: 2}).LoadLimited(10)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected source max_nodes cap, got %d", len(nodes))
+	}
+	nodes, err = NewProvider(SourceConfig{Name: "local", File: file, MaxNodes: 10}).LoadLimited(1)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected caller cap, got %d", len(nodes))
+	}
+}

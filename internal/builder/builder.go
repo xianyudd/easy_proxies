@@ -91,9 +91,10 @@ func Build(cfg *config.Config) (option.Options, error) {
 		memberTags = append(memberTags, tag)
 		baseOutbounds = append(baseOutbounds, outbound)
 		meta := poolout.MemberMeta{
-			Name: node.Name,
-			URI:  node.URI,
-			Mode: cfg.Mode,
+			Name:   node.Name,
+			URI:    node.URI,
+			Mode:   cfg.Mode,
+			Source: string(node.Source),
 		}
 		// For multi-port and hybrid modes, use per-node port
 		if cfg.Mode == "multi-port" || cfg.Mode == "hybrid" {
@@ -386,7 +387,7 @@ func Build(cfg *config.Config) (option.Options, error) {
 		Route:     &route,
 		Experimental: &option.ExperimentalOptions{
 			ClashAPI: &option.ClashAPIOptions{
-				ExternalController: "127.0.0.1:9092",
+				ExternalController: cfg.Management.ClashAPIListen,
 			},
 		},
 	}

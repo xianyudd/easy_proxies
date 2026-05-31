@@ -75,6 +75,7 @@ multi_port:
 management:
   enabled: true                                      # 是否启用管理面板
   listen: 0.0.0.0:9091                               # 监听地址
+  clash_api_listen: 127.0.0.1:9092                   # sing-box Clash API 地址；隔离测试可改高端口
   probe_target: http://cp.cloudflare.com/generate_204  # 健康检查目标
   password: ""                                       # WebUI 访问密码，为空则不需要密码
 
@@ -143,13 +144,17 @@ geoip:
 
 # ───────────────────────────────────────────────────────────────
 # 方式 3: 免费代理源（启动时加载，运行时来源，不写回 nodes.txt）
+# 默认全局最多激活 500 个免费源节点；订阅源/节点文件/内联节点优先。
 # ───────────────────────────────────────────────────────────────
+# free_proxy_max_nodes: 500
 # free_proxy_sources:
 #   # 文本格式：每行一个 host:port 或完整 http/socks URI
 #   - name: "local-free-list"
 #     file: free-proxies.txt
 #     format: txt
 #     enabled: true
+#     max_nodes: 300
+#     max_bytes: 2097152
 #
 #   # 简单 JSON 格式：支持 [{"ip":"1.2.3.4","port":8080,"protocol":"http"}]
 #   - name: "remote-json-list"
@@ -157,6 +162,8 @@ geoip:
 #     format: json
 #     timeout: 15s
 #     enabled: false
+#     max_nodes: 300
+#     max_bytes: 2097152
 
 # ───────────────────────────────────────────────────────────────
 # 方式 4: 直接在配置文件中配置节点
