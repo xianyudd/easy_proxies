@@ -1,4 +1,4 @@
-import { Select } from 'antd'
+import { Pagination, Select } from 'antd'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getNodesPage } from '../api/nodes'
@@ -155,10 +155,7 @@ export function NodeOverviewPage() {
           <div className="panel-title">节点列表</div>
           <div className="panel-subtitle">第 {data?.page || page} 页，当前 {rows.length} 条，筛选后共 {data?.total_filtered || 0} 条。</div>
         </div>
-        <div className="toolbar">
-          <Button disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</Button>
-          <Button disabled={!data?.has_next} onClick={() => setPage(page + 1)}>下一页</Button>
-        </div>
+
       </div>
       <DataTable headers={['节点', '来源', '地区', '端口', '状态', '延迟', '连接', '失败', '操作']} empty={isLoading ? '加载中...' : '暂无节点'}>
         {rows.map((node, idx) => (
@@ -182,6 +179,20 @@ export function NodeOverviewPage() {
           </tr>
         ))}
       </DataTable>
+      <div className="toolbar" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+        <Pagination
+          current={page}
+          pageSize={pageSize}
+          total={data?.total_filtered || 0}
+          showSizeChanger
+          pageSizeOptions={[50, 100, 200, 500]}
+          showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`}
+          onChange={(nextPage, nextPageSize) => {
+            setPage(nextPage)
+            if (nextPageSize !== pageSize) setPageSize(nextPageSize)
+          }}
+        />
+      </div>
     </div>
   </div>
 }
