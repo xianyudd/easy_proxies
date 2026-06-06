@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Iterable
 
 OK_CODES = {"200", "204", "206", "301", "302"}
+MAX_CONCURRENCY = 80
 
 
 @dataclass(frozen=True)
@@ -131,7 +132,15 @@ async def run_probe(proxy: str, probe: Probe, timeout: float, sem: asyncio.Semap
         except asyncio.TimeoutError:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.communicate()
             return {"code": "000", "ok": False, "latency_ms": round((time.perf_counter() - start) * 1000), "error": "timeout"}
+        except asyncio.CancelledError:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                await asyncio.shield(proc.communicate())
+            raise
         text = stdout.decode(errors="replace")
         marker = "\n__EASY_PROXY_META__"
         body = text
@@ -258,6 +267,7 @@ def write_outputs(records: list[dict], out_dir: Path) -> None:
 
 
 async def main_async(args: argparse.Namespace) -> int:
+    args.concurrency = max(1, min(args.concurrency, MAX_CONCURRENCY))
     probes = PROBES
     if args.probes:
         wanted = set(args.probes.split(","))

@@ -16,6 +16,8 @@ type workerConfig struct {
 }
 
 func runTargets(ctx context.Context, cfg workerConfig, targets []Target, emit func(Result) bool, progress func(completed, failed int) bool) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if cfg.workers <= 0 {
 		cfg.workers = 1
 	}
@@ -45,10 +47,12 @@ func runTargets(ctx context.Context, cfg workerConfig, targets []Target, emit fu
 		completed++
 		if emit != nil && !emit(result) {
 			stop = true
+			cancel()
 			return false
 		}
 		if progress != nil && !progress(completed, failed) {
 			stop = true
+			cancel()
 			return false
 		}
 		return true
@@ -60,7 +64,7 @@ func runTargets(ctx context.Context, cfg workerConfig, targets []Target, emit fu
 			defer wg.Done()
 			for {
 				select {
-				case <-ctx.Done():
+				case <-runCtx.Done():
 					return
 				case target, ok := <-jobs:
 					if !ok {
@@ -84,7 +88,7 @@ sendLoop:
 			break sendLoop
 		}
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			break sendLoop
 		case jobs <- target:
 		}

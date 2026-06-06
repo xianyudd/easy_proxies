@@ -99,6 +99,24 @@ func TestServiceWorkerConcurrencyDoesNotExceedLimit(t *testing.T) {
 	}
 }
 
+func TestServiceDefaultWorkerLimitIsCapped(t *testing.T) {
+	runner := &trackingRunner{delay: time.Millisecond}
+	svc := NewService(ServiceOptions{TargetSource: fakeTargetSource{targets: makeTargets(120)}, CloudflareRunner: runner, ReputationRunner: runner})
+	defer svc.Shutdown(context.Background())
+
+	snap, err := svc.CreateJob(context.Background(), JobRequest{Kind: CheckCloudflare, Count: 120})
+	if err != nil {
+		t.Fatalf("CreateJob returned error: %v", err)
+	}
+	got := waitForJobStatus(t, svc, snap.ID, JobCompleted, 2*time.Second)
+	if got.Completed != 120 || got.Failed != 0 {
+		t.Fatalf("unexpected completed snapshot: %#v", got)
+	}
+	if max := atomic.LoadInt32(&runner.max); max > defaultMaxWorkers {
+		t.Fatalf("default max concurrency = %d, want <= %d", max, defaultMaxWorkers)
+	}
+}
+
 func TestServiceRejectsSecondActiveJobUnlessReplace(t *testing.T) {
 	runner := &trackingRunner{delay: 50 * time.Millisecond}
 	svc := NewService(ServiceOptions{TargetSource: fakeTargetSource{targets: makeTargets(20)}, CloudflareRunner: runner, ReputationRunner: runner, MaxWorkers: 1})
@@ -456,4 +474,40 @@ func TestServicePipelineSkipsDeepChecksForQuickFailuresAndScoresRecommendations(
 	if page.Data[1].CF != nil || page.Data[1].Reputation != nil || page.Data[1].Recommend {
 		t.Fatalf("quick-failed target should skip deep checks and not recommend: %#v", page.Data[1])
 	}
+}
+
+func TestRunTargetsStopsWithoutDeadlockWhenEmitRejects(t *testing.T) {
+	runner := &trackingRunner{}
+	done := make(chan error, 1)
+	go func() {
+		done <- runTargets(context.Background(), workerConfig{workers: 1, kind: CheckCloudflare, cf: runner}, makeTargets(10), func(Result) bool {
+			return false
+		}, nil)
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runTargets error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runTargets deadlocked after emit rejected a result")
+	}
+}
+
+func TestServiceCapsActiveJobs(t *testing.T) {
+	runner := &trackingRunner{delay: 50 * time.Millisecond}
+	svc := NewService(ServiceOptions{TargetSource: fakeTargetSource{targets: makeTargets(20)}, CloudflareRunner: runner, ReputationRunner: runner, MaxWorkers: 300, MaxActiveJobs: 10})
+	defer svc.Shutdown(context.Background())
+
+	first, err := svc.CreateJob(context.Background(), JobRequest{Kind: CheckCloudflare, Count: 20})
+	if err != nil {
+		t.Fatalf("first CreateJob returned error: %v", err)
+	}
+	if _, err := svc.CreateJob(context.Background(), JobRequest{Kind: CheckCloudflare, Count: 20}); !errors.Is(err, ErrActiveJob) {
+		t.Fatalf("second CreateJob error = %v, want ErrActiveJob", err)
+	}
+	if max := atomic.LoadInt32(&runner.max); max > defaultMaxWorkers {
+		t.Fatalf("worker fanout = %d, want <= %d", max, defaultMaxWorkers)
+	}
+	_ = svc.CancelJob(first.ID)
 }

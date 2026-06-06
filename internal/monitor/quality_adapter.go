@@ -128,6 +128,7 @@ func (r monitorQualityRunner) CheckQuick(ctx context.Context, target quality.Tar
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = http.ProxyURL(proxyURL)
 	client := &http.Client{Timeout: 2 * time.Second, Transport: transport}
+	defer client.CloseIdleConnections()
 	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, quickCheckURL, nil)

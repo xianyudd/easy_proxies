@@ -55,18 +55,37 @@ func (c *Checker) ClearCache()            { c.cache.Clear() }
 
 func (c *Checker) CheckTargets(ctx context.Context, targets []ProxyTarget) []Result {
 	results := make([]Result, len(targets))
-	sem := make(chan struct{}, c.maxConcurrency)
+	if len(targets) == 0 {
+		return results
+	}
+	workers := c.maxConcurrency
+	if workers <= 0 {
+		workers = 1
+	}
+	if workers > len(targets) {
+		workers = len(targets)
+	}
+	jobs := make(chan int)
 	var wg sync.WaitGroup
-	for i, target := range targets {
-		i, target := i, target
+	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			results[i] = c.CheckTarget(ctx, target)
+			for i := range jobs {
+				results[i] = c.CheckTarget(ctx, targets[i])
+			}
 		}()
 	}
+	for i := range targets {
+		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return results
+		case jobs <- i:
+		}
+	}
+	close(jobs)
 	wg.Wait()
 	return results
 }
@@ -87,6 +106,7 @@ func (c *Checker) CheckTarget(ctx context.Context, target ProxyTarget) Result {
 		return result
 	}
 	client := c.httpClient(proxyURL)
+	defer client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 

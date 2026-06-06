@@ -9,6 +9,9 @@ import (
 
 var ErrActiveJob = errors.New("quality job already running")
 
+const defaultMaxWorkers = 80
+const defaultMaxActiveJobs = 1
+
 // TargetSource lists runtime targets for a quality job.
 type TargetSource interface {
 	ListTargets(ctx context.Context, q TargetQuery) ([]Target, error)
@@ -71,11 +74,17 @@ func NewService(opts ServiceOptions) *Service {
 	}
 	maxWorkers := opts.MaxWorkers
 	if maxWorkers <= 0 {
-		maxWorkers = 20
+		maxWorkers = defaultMaxWorkers
+	}
+	if maxWorkers > defaultMaxWorkers {
+		maxWorkers = defaultMaxWorkers
 	}
 	maxActive := opts.MaxActiveJobs
 	if maxActive <= 0 {
-		maxActive = 1
+		maxActive = defaultMaxActiveJobs
+	}
+	if maxActive > defaultMaxActiveJobs {
+		maxActive = defaultMaxActiveJobs
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Service{

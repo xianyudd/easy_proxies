@@ -98,6 +98,7 @@ func (c *Checker) ExitIPViaProxy(ctx context.Context, proxyURL string) (string, 
 		return "", 0, err
 	}
 	client := &http.Client{Timeout: c.timeout, Transport: &http.Transport{Proxy: http.ProxyURL(parsed)}}
+	defer client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.ipify.org?format=json", nil)
@@ -132,37 +133,59 @@ type ProxyTarget struct {
 }
 
 func (c *Checker) CheckProxies(ctx context.Context, items []ProxyTarget, expectedCountry string) []NodeResult {
-	sem := make(chan struct{}, c.maxConcurrency)
 	results := make([]NodeResult, len(items))
+	if len(items) == 0 {
+		return results
+	}
+	workers := c.maxConcurrency
+	if workers <= 0 {
+		workers = 1
+	}
+	if workers > len(items) {
+		workers = len(items)
+	}
+	jobs := make(chan int)
 	var wg sync.WaitGroup
-	for i, item := range items {
-		i, item := i, item
+	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			results[i] = NodeResult{NodeName: item.NodeName, NodeTag: item.NodeTag, Region: item.Region, Host: item.Host, Port: item.Port, Mode: item.Mode}
-			defer func() { c.setNodeResult(item, results[i]) }()
-			ip, lat, err := c.ExitIPViaProxy(ctx, item.ProxyURL)
-			if err != nil {
-				results[i].Error = err.Error()
-				return
+			for i := range jobs {
+				item := items[i]
+				results[i] = NodeResult{NodeName: item.NodeName, NodeTag: item.NodeTag, Region: item.Region, Host: item.Host, Port: item.Port, Mode: item.Mode}
+				func() {
+					defer func() { c.setNodeResult(item, results[i]) }()
+					ip, lat, err := c.ExitIPViaProxy(ctx, item.ProxyURL)
+					if err != nil {
+						results[i].Error = err.Error()
+						return
+					}
+					res, err := c.LookupIP(ctx, ip)
+					if err != nil {
+						results[i].Error = err.Error()
+						results[i].Result = &Result{IP: ip, RiskScore: 50, RiskLevel: RiskLevel(50), CheckedAt: time.Now(), LatencyMS: lat, Error: err.Error()}
+						return
+					}
+					cp := *res
+					if lat > cp.LatencyMS {
+						cp.LatencyMS = lat
+					}
+					Score(&cp, expectedCountry, false, cp.LatencyMS)
+					results[i].Result = &cp
+				}()
 			}
-			res, err := c.LookupIP(ctx, ip)
-			if err != nil {
-				results[i].Error = err.Error()
-				results[i].Result = &Result{IP: ip, RiskScore: 50, RiskLevel: RiskLevel(50), CheckedAt: time.Now(), LatencyMS: lat, Error: err.Error()}
-				return
-			}
-			cp := *res
-			if lat > cp.LatencyMS {
-				cp.LatencyMS = lat
-			}
-			Score(&cp, expectedCountry, false, cp.LatencyMS)
-			results[i].Result = &cp
 		}()
 	}
+	for i := range items {
+		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return results
+		case jobs <- i:
+		}
+	}
+	close(jobs)
 	wg.Wait()
 	return results
 }

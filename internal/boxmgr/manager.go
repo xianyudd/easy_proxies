@@ -358,6 +358,13 @@ func (m *Manager) Close() error {
 		m.geoRouter.Stop()
 		m.geoRouter = nil
 	}
+	for _, router := range m.androidRouters {
+		if router != nil {
+			_ = router.Stop()
+		}
+	}
+	m.androidRouters = nil
+	pool.ResetSharedStateStore()
 	m.baseCtx = nil
 	return err
 }

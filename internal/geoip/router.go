@@ -33,6 +33,8 @@ type Router struct {
 	global     PoolDialer                     // default pool for requests without region path
 	transports map[PoolDialer]*http.Transport // cached transports per dialer
 	server     *http.Server
+	stopCancel context.CancelFunc
+	stopOnce   sync.Once
 	mu         sync.RWMutex
 	logger     *log.Logger
 }
@@ -70,26 +72,35 @@ func (r *Router) SetGlobalPool(dialer PoolDialer) {
 
 // Start starts the GeoIP router HTTP server
 func (r *Router) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	addr := fmt.Sprintf("%s:%d", r.cfg.Listen, r.cfg.Port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 
-	r.server = &http.Server{
+	runCtx, cancel := context.WithCancel(ctx)
+	server := &http.Server{
 		Handler: r,
 	}
+	r.mu.Lock()
+	r.server = server
+	r.stopCancel = cancel
+	r.stopOnce = sync.Once{}
+	r.mu.Unlock()
 
 	go func() {
 		r.logger.Printf("🌐 GeoIP Router started on %s", addr)
 		r.logger.Printf("   Routes: /%s (default: all nodes)", strings.Join(AllRegions(), ", /"))
-		if err := r.server.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			r.logger.Printf("GeoIP router error: %v", err)
 		}
 	}()
 
 	go func() {
-		<-ctx.Done()
+		<-runCtx.Done()
 		r.Stop()
 	}()
 
@@ -98,12 +109,34 @@ func (r *Router) Start(ctx context.Context) error {
 
 // Stop stops the GeoIP router
 func (r *Router) Stop() error {
-	if r.server != nil {
+	var err error
+	r.stopOnce.Do(func() {
+		r.mu.Lock()
+		server := r.server
+		cancel := r.stopCancel
+		transports := make([]*http.Transport, 0, len(r.transports))
+		for _, transport := range r.transports {
+			transports = append(transports, transport)
+		}
+		r.server = nil
+		r.stopCancel = nil
+		r.transports = make(map[PoolDialer]*http.Transport)
+		r.mu.Unlock()
+
+		if cancel != nil {
+			cancel()
+		}
+		for _, transport := range transports {
+			transport.CloseIdleConnections()
+		}
+		if server == nil {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return r.server.Shutdown(ctx)
-	}
-	return nil
+		err = server.Shutdown(ctx)
+	})
+	return err
 }
 
 // checkProxyAuth validates the Proxy-Authorization header.

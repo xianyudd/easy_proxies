@@ -128,7 +128,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 		repChecker: reputation.NewChecker(),
 		cfChecker:  cloudflarecheck.NewChecker(),
 	}
-	s.qualitySvc = quality.NewService(quality.ServiceOptions{TargetSource: newMonitorQualityTargetSource(s), QuickRunner: monitorQualityRunner{s: s}, CloudflareRunner: monitorQualityRunner{s: s}, ReputationRunner: monitorQualityRunner{s: s}, MaxWorkers: 300})
+	s.qualitySvc = quality.NewService(quality.ServiceOptions{TargetSource: newMonitorQualityTargetSource(s), QuickRunner: monitorQualityRunner{s: s}, CloudflareRunner: monitorQualityRunner{s: s}, ReputationRunner: monitorQualityRunner{s: s}})
 
 	// Start session cleanup goroutine
 	go s.cleanupExpiredSessions()
