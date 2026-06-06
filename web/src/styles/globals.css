@@ -1382,6 +1382,32 @@ html[data-theme="dark"] .ant-message-notice-content {
   line-height: 1.55;
 }
 
+.settings-alert.settings-reload-alert {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  border-left-color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--primary) 9%, var(--panel)), color-mix(in srgb, var(--panel) 88%, transparent));
+}
+
+.settings-alert.settings-reload-alert svg {
+  color: var(--primary);
+}
+
+.settings-alert.settings-reload-alert .ep-button {
+  align-self: center;
+}
+
+@media (max-width: 720px) {
+  .settings-alert.settings-reload-alert {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .settings-alert.settings-reload-alert .ep-button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
 .danger-text {
   color: var(--red);
 }
@@ -2389,5 +2415,69 @@ html[data-theme="light"] .logbox {
   .subscription-item .ep-button {
     grid-column: 2;
     justify-self: start;
+  }
+}
+
+.free-proxy-filter-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.settings-helper-text {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.free-proxy-advanced {
+  margin-top: 0;
+}
+
+.free-proxy-probes {
+  margin-top: 10px;
+}
+
+.free-proxy-cache-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.free-source-list {
+  margin-top: 16px;
+}
+
+.free-source-row {
+  grid-template-columns: 52px minmax(120px, .85fr) minmax(260px, 1.7fr) minmax(96px, .45fr) minmax(88px, .4fr) auto;
+  align-items: start;
+}
+
+.free-source-enable {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-height: 40px;
+}
+
+.free-source-enable label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.free-proxy-warning {
+  color: var(--orange);
+  border-color: color-mix(in srgb, var(--orange) 34%, transparent);
+  background: color-mix(in srgb, var(--orange) 8%, transparent);
+}
+
+@media (max-width: 900px) {
+  .free-source-row {
+    grid-template-columns: 1fr;
+  }
+
+  .free-source-enable {
+    grid-template-columns: auto 1fr;
+    align-items: center;
   }
 }

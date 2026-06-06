@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"easy_proxies/internal/nodesource"
@@ -36,6 +38,8 @@ type Config struct {
 	Nodes               []NodeConfig              `yaml:"nodes"`
 	FreeProxySources    []nodesource.SourceConfig `yaml:"free_proxy_sources"`
 	FreeProxyMaxNodes   int                       `yaml:"free_proxy_max_nodes"`
+	FreeProxyFilter     nodesource.FilterConfig   `yaml:"free_proxy_filter"`
+	FreeProxyCache      FreeProxyCacheConfig      `yaml:"free_proxy_cache"`
 	NodesFile           string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
 	Subscriptions       []string                  `yaml:"subscriptions"` // 订阅链接列表
 	ExternalIP          string                    `yaml:"external_ip"`   // 外部 IP 地址，用于导出时替换 0.0.0.0
@@ -124,6 +128,56 @@ const (
 	MaxQualityCheckCount        = 500
 )
 
+// FreeProxyCacheConfig controls cache-first loading for remote free-proxy sources.
+type FreeProxyCacheConfig struct {
+	Enabled        *bool         `yaml:"enabled" json:"enabled"`
+	Path           string        `yaml:"path" json:"path"`
+	RefreshOnStart *bool         `yaml:"refresh_on_start" json:"refresh_on_start"`
+	AutoReload     *bool         `yaml:"auto_reload" json:"auto_reload"`
+	Workers        int           `yaml:"workers" json:"workers"`
+	MaxAge         time.Duration `yaml:"max_age" json:"max_age"`
+}
+
+func (f FreeProxyCacheConfig) EnabledValue() bool {
+	return f.Enabled == nil || *f.Enabled
+}
+
+func (f FreeProxyCacheConfig) RefreshOnStartValue() bool {
+	return f.RefreshOnStart == nil || *f.RefreshOnStart
+}
+
+func (f FreeProxyCacheConfig) AutoReloadValue() bool {
+	return f.AutoReload == nil || *f.AutoReload
+}
+
+func (f FreeProxyCacheConfig) Normalized(configPath string, hasSources bool) FreeProxyCacheConfig {
+	if f.Enabled == nil {
+		enabled := hasSources
+		f.Enabled = &enabled
+	}
+	if f.RefreshOnStart == nil {
+		refresh := true
+		f.RefreshOnStart = &refresh
+	}
+	if f.AutoReload == nil {
+		autoReload := true
+		f.AutoReload = &autoReload
+	}
+	if f.Workers <= 0 {
+		f.Workers = 4
+	}
+	if f.Workers > 16 {
+		f.Workers = 16
+	}
+	if f.MaxAge <= 0 {
+		f.MaxAge = 6 * time.Hour
+	}
+	if strings.TrimSpace(f.Path) == "" && configPath != "" {
+		f.Path = filepath.Join(filepath.Dir(configPath), ".cache", "free-proxies.txt")
+	}
+	return f
+}
+
 // QualityCheckConfig controls scheduled node quality checks.
 type QualityCheckConfig struct {
 	Enabled            bool          `yaml:"enabled"`             // 是否启用节点质量定时检测
@@ -205,6 +259,9 @@ func Load(path string) (*Config, error) {
 			cfg.FreeProxySources[idx].File = filepath.Join(configDir, cfg.FreeProxySources[idx].File)
 		}
 	}
+	if cfg.FreeProxyCache.Path != "" && !filepath.IsAbs(cfg.FreeProxyCache.Path) {
+		cfg.FreeProxyCache.Path = filepath.Join(configDir, cfg.FreeProxyCache.Path)
+	}
 
 	if err := cfg.normalize(); err != nil {
 		return nil, err
@@ -222,15 +279,43 @@ func hasEnabledFreeProxySource(sources []nodesource.SourceConfig) bool {
 }
 
 func (c *Config) appendFreeProxyNodes() error {
-	if c == nil || len(c.FreeProxySources) == 0 || c.FreeProxyMaxNodes == 0 {
+	if c == nil || len(c.FreeProxySources) == 0 {
 		return nil
 	}
-	seen := make(map[string]struct{}, len(c.Nodes))
-	for _, node := range c.Nodes {
-		if key := canonicalNodeURI(node.URI); key != "" {
-			seen[key] = struct{}{}
-		}
+	if c.FreeProxyCache.EnabledValue() && strings.TrimSpace(c.FreeProxyCache.Path) != "" {
+		return c.appendCachedFreeProxyNodes(c.FreeProxyCache.Path)
 	}
+	return c.appendRemoteFreeProxyNodes()
+}
+
+func (c *Config) appendCachedFreeProxyNodes(path string) error {
+	cacheSource := nodesource.SourceConfig{
+		Name:          "free-proxy-cache",
+		File:          path,
+		Format:        "txt",
+		DefaultScheme: "http",
+		MaxNodes:      c.FreeProxyMaxNodes,
+	}
+	provider := nodesource.NewProvider(cacheSource)
+	sourceNodes, err := provider.LoadLimited(c.FreeProxyMaxNodes)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			log.Printf("ℹ️ Free proxy cache %q does not exist yet; skipping remote free sources during startup", path)
+			return nil
+		}
+		log.Printf("⚠️ Failed to load free proxy cache %q: %v (skipping)", path, err)
+		return nil
+	}
+	added := c.appendFreeProxyNodeCandidates(sourceNodes, c.FreeProxyMaxNodes)
+	if added > 0 {
+		log.Printf("✅ Loaded %d/%d nodes from free proxy cache %q", added, len(sourceNodes), path)
+	}
+	return nil
+}
+
+func (c *Config) appendRemoteFreeProxyNodes() error {
+	filter := c.FreeProxyFilter.Normalized()
+	seen := c.freeProxySeenNodeURIs()
 
 	totalAdded := 0
 	for _, source := range c.FreeProxySources {
@@ -248,7 +333,7 @@ func (c *Config) appendFreeProxyNodes() error {
 			// when earlier inline/subscription nodes are de-duplicated out.
 			remaining += len(seen)
 		}
-		sourceNodes, err := provider.LoadLimited(remaining)
+		sourceNodes, err := provider.LoadLimited(filter.LoadLimit(remaining))
 		if err != nil {
 			name := strings.TrimSpace(source.Name)
 			if name == "" {
@@ -257,32 +342,62 @@ func (c *Config) appendFreeProxyNodes() error {
 			log.Printf("⚠️ Failed to load free proxy source %q: %v (skipping)", name, err)
 			continue
 		}
-		addedFromSource := 0
-		for _, sourceNode := range sourceNodes {
-			key := canonicalNodeURI(sourceNode.URI)
-			if key == "" {
-				continue
+		if filter.Enabled {
+			before := len(sourceNodes)
+			result := nodesource.FilterNodes(sourceNodes, filter)
+			sourceNodes = result.Accepted
+			if before > 0 {
+				log.Printf("🔎 Free proxy source %q prefilter kept %d/%d nodes (min_tier=%s)", source.Name, len(sourceNodes), before, filter.MinTier)
 			}
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			if c.FreeProxyMaxNodes > 0 && totalAdded >= c.FreeProxyMaxNodes {
-				break
-			}
-			seen[key] = struct{}{}
-			c.Nodes = append(c.Nodes, NodeConfig{
-				Name:   sourceNode.Name,
-				URI:    strings.TrimSpace(sourceNode.URI),
-				Source: NodeSourceFreeProxy,
-			})
-			totalAdded++
-			addedFromSource++
 		}
+		addedFromSource := c.appendFreeProxyNodeCandidatesWithSeen(sourceNodes, c.FreeProxyMaxNodes-totalAdded, seen)
+		totalAdded += addedFromSource
 		if addedFromSource > 0 {
 			log.Printf("✅ Loaded %d/%d nodes from free proxy source %q", addedFromSource, len(sourceNodes), source.Name)
 		}
 	}
 	return nil
+}
+
+func (c *Config) freeProxySeenNodeURIs() map[string]struct{} {
+	seen := make(map[string]struct{}, len(c.Nodes))
+	for _, node := range c.Nodes {
+		if key := canonicalNodeURI(node.URI); key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+	return seen
+}
+
+func (c *Config) appendFreeProxyNodeCandidates(sourceNodes []nodesource.Node, limit int) int {
+	return c.appendFreeProxyNodeCandidatesWithSeen(sourceNodes, limit, c.freeProxySeenNodeURIs())
+}
+
+func (c *Config) appendFreeProxyNodeCandidatesWithSeen(sourceNodes []nodesource.Node, limit int, seen map[string]struct{}) int {
+	if limit <= 0 {
+		limit = len(sourceNodes)
+	}
+	added := 0
+	for _, sourceNode := range sourceNodes {
+		key := canonicalNodeURI(sourceNode.URI)
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		if added >= limit {
+			break
+		}
+		seen[key] = struct{}{}
+		c.Nodes = append(c.Nodes, NodeConfig{
+			Name:   sourceNode.Name,
+			URI:    strings.TrimSpace(sourceNode.URI),
+			Source: NodeSourceFreeProxy,
+		})
+		added++
+	}
+	return added
 }
 
 func canonicalNodeURI(uri string) string {
@@ -406,10 +521,8 @@ func (c *Config) normalize() error {
 	if c.SubscriptionRefresh.MinAvailableNodes <= 0 {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
 	}
-	if c.FreeProxyMaxNodes == 0 && hasEnabledFreeProxySource(c.FreeProxySources) {
-		c.FreeProxyMaxNodes = 500
-	}
-
+	c.FreeProxyFilter = c.FreeProxyFilter.Normalized()
+	c.FreeProxyCache = c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
 	// Drop previously materialized runtime-only free proxy nodes before
 	// recomposing sources. This makes repeated normalize/reload calls idempotent.
 	baseNodes := c.Nodes[:0]
@@ -638,6 +751,25 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	}
 	if c.SubscriptionRefresh.MinAvailableNodes <= 0 {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
+	}
+	c.FreeProxyFilter = c.FreeProxyFilter.Normalized()
+	c.FreeProxyCache = c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
+
+	// Drop previously materialized runtime-only free proxy nodes before
+	// recomposing sources. This makes repeated reload calls idempotent.
+	baseNodes := c.Nodes[:0]
+	for idx := range c.Nodes {
+		if c.Nodes[idx].Source == NodeSourceFreeProxy {
+			continue
+		}
+		if c.Nodes[idx].Source == "" {
+			c.Nodes[idx].Source = NodeSourceInline
+		}
+		baseNodes = append(baseNodes, c.Nodes[idx])
+	}
+	c.Nodes = baseNodes
+	if err := c.appendFreeProxyNodes(); err != nil {
+		return err
 	}
 
 	if len(c.Nodes) == 0 {
@@ -1410,6 +1542,10 @@ func (c *Config) SaveSettings() error {
 	saveCfg.Subscriptions = c.Subscriptions
 	saveCfg.SubscriptionRefresh = c.SubscriptionRefresh
 	saveCfg.QualityCheck = c.QualityCheck
+	saveCfg.FreeProxySources = c.FreeProxySources
+	saveCfg.FreeProxyMaxNodes = c.FreeProxyMaxNodes
+	saveCfg.FreeProxyFilter = c.FreeProxyFilter
+	saveCfg.FreeProxyCache = c.FreeProxyCache
 	saveCfg.GeoIP = c.GeoIP
 	saveCfg.Mode = c.Mode
 	saveCfg.Listener = c.Listener
@@ -1465,4 +1601,136 @@ func writeFileWithLock(path string, data []byte, perm os.FileMode) error {
 	}
 
 	return nil
+}
+
+// RefreshFreeProxyCache downloads configured free-proxy sources, applies the
+// optional prefilter, and atomically writes accepted proxy URIs into the cache.
+// Runtime startup/reload can then use the cache without blocking on network IO.
+func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
+	if c == nil {
+		return 0, errors.New("config is nil")
+	}
+	cache := c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
+	if !cache.EnabledValue() || strings.TrimSpace(cache.Path) == "" || len(c.FreeProxySources) == 0 {
+		return 0, nil
+	}
+
+	type sourceResult struct {
+		idx   int
+		name  string
+		nodes []nodesource.Node
+		err   error
+	}
+
+	filter := c.FreeProxyFilter.Normalized()
+	workers := cache.Workers
+	if workers <= 0 {
+		workers = 1
+	}
+	if workers > len(c.FreeProxySources) {
+		workers = len(c.FreeProxySources)
+	}
+	if workers <= 0 {
+		return 0, nil
+	}
+
+	jobs := make(chan int)
+	results := make(chan sourceResult, len(c.FreeProxySources))
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				select {
+				case <-ctx.Done():
+					results <- sourceResult{idx: idx, err: ctx.Err()}
+					continue
+				default:
+				}
+				source := c.FreeProxySources[idx]
+				name := strings.TrimSpace(source.Name)
+				if name == "" {
+					name = firstNonEmptyString(source.File, source.URL, "unnamed")
+				}
+				provider := nodesource.NewProvider(source)
+				// SourceConfig.MaxNodes is an explicit per-source parse cap.
+				// When it is unset/0, load the whole source into the background
+				// candidate pipeline; only the final cache/runtime activation is
+				// bounded by free_proxy_max_nodes.
+				nodes, err := provider.LoadLimited(source.MaxNodes)
+				if err == nil && filter.Enabled {
+					before := len(nodes)
+					filtered := nodesource.FilterNodes(nodes, filter)
+					nodes = filtered.Accepted
+					if before > 0 {
+						log.Printf("🔎 Free proxy source %q background prefilter kept %d/%d nodes (min_tier=%s)", name, len(nodes), before, filter.MinTier)
+					}
+				}
+				results <- sourceResult{idx: idx, name: name, nodes: nodes, err: err}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for idx := range c.FreeProxySources {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- idx:
+			}
+		}
+	}()
+	wg.Wait()
+	close(results)
+
+	byIndex := make(map[int]sourceResult, len(c.FreeProxySources))
+	for result := range results {
+		byIndex[result.idx] = result
+		if result.err != nil && !errors.Is(result.err, context.Canceled) {
+			log.Printf("⚠️ Failed to refresh free proxy source %q: %v", result.name, result.err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	seen := make(map[string]struct{})
+	accepted := make([]string, 0)
+	limit := c.FreeProxyMaxNodes
+	if limit <= 0 {
+		limit = 1 << 30
+	}
+	for idx := range c.FreeProxySources {
+		result := byIndex[idx]
+		for _, node := range result.nodes {
+			key := canonicalNodeURI(node.URI)
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			accepted = append(accepted, strings.TrimSpace(node.URI))
+			if len(accepted) >= limit {
+				break
+			}
+		}
+		if len(accepted) >= limit {
+			break
+		}
+	}
+	if len(accepted) == 0 {
+		return 0, errors.New("no free proxy candidates accepted; cache not updated")
+	}
+	if err := os.MkdirAll(filepath.Dir(cache.Path), 0o755); err != nil {
+		return 0, fmt.Errorf("create free proxy cache dir: %w", err)
+	}
+	content := strings.Join(accepted, "\n") + "\n"
+	if err := writeFileWithLock(cache.Path, []byte(content), 0o644); err != nil {
+		return 0, fmt.Errorf("write free proxy cache: %w", err)
+	}
+	log.Printf("✅ Refreshed free proxy cache %q with %d accepted nodes", cache.Path, len(accepted))
+	return len(accepted), nil
 }

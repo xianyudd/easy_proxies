@@ -132,7 +132,7 @@ dns:
   - 会抓取订阅节点并追加到运行节点列表
   - `nodes_file` 作为订阅节点写入路径
   - 启动阶段不再从 `nodes_file` 读取节点
-- `free_proxy_sources` 会在订阅源 / 节点文件 / 内联节点之后追加，按 URI 去重，默认最多激活 500 个免费源节点；可用 `free_proxy_max_nodes`、每个源的 `max_nodes` 和 `max_bytes` 控制规模。纯 `host:port` 文本源默认按 HTTP 解析；SOCKS5 文本源可设置 `default_scheme: socks5`，避免被误归一化成 HTTP。
+- `free_proxy_sources` 是免费代理候选源，会在订阅源 / 节点文件 / 内联节点之后处理；开启 `free_proxy_filter.enabled=true` 后，系统会先抓取、去重并用有界 worker 自动预筛，只有达到 `min_tier` 的代理才会作为 `source=free_proxy` 运行节点展示。`http_basic` 要求 HTTP 204 探针通过；`simple_web` 还要求 HTTPS example 探针通过。默认每个源会全量下载/解析并进入后台候选处理；`free_proxy_max_nodes: 0` 表示最终运行入池也不额外截断；只有填写正数时才限制最终入池数量；单源 `max_nodes: 0` 表示该源全量解析，可用正数 `max_nodes`/`max_bytes` 做显式保护；也可以在设置页“免费代理源”中添加/启用/删除源。
 - `nodes`（内联节点）只要存在就会参与运行。
 
 ## 协议支持注意事项

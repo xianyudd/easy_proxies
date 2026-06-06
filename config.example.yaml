@@ -144,16 +144,32 @@ geoip:
 
 # ───────────────────────────────────────────────────────────────
 # 方式 3: 免费代理源（启动时加载，运行时来源，不写回 nodes.txt）
-# 默认全局最多激活 500 个免费源节点；订阅源/节点文件/内联节点优先。
+# 默认每个免费源全量下载/解析；0 表示候选和最终入池都不额外截断。
 # ───────────────────────────────────────────────────────────────
-# free_proxy_max_nodes: 500
+# free_proxy_max_nodes: 0     # 0 表示不限制最终入池；正数才限制最终激活数量
+# free_proxy_cache:
+#   enabled: true              # 启动/reload 只读本地缓存，不阻塞 WebUI
+#   path: .cache/free-proxies.txt
+#   refresh_on_start: true     # 启动后后台下载/筛选免费源并更新缓存
+#   auto_reload: true          # 缓存更新后自动 reload，让通过筛选的节点入池
+#   workers: 4                 # 源下载并发，不是代理探针并发
+#   max_age: 6h
+# free_proxy_filter:
+#   enabled: true              # 添加源后先自动筛选，通过后才进入运行节点
+#   min_tier: simple_web       # http_basic 或 simple_web；推荐 simple_web
+#   workers: 200               # 最大 800，会使用有界 worker 队列
+#   timeout: 2s
+#   max_candidates: 0          # 每次最多预筛多少候选；0 表示全量候选
+#   probes:
+#     http: http://cp.cloudflare.com/generate_204
+#     https: https://example.com/
 # free_proxy_sources:
 #   # 文本格式：每行一个 host:port 或完整 http/socks URI
 #   - name: "local-free-list"
 #     file: free-proxies.txt
 #     format: txt
 #     enabled: true
-#     max_nodes: 300
+#     max_nodes: 0              # 0 表示全量解析该源；正数才限制单源数量
 #     max_bytes: 2097152
 #
 #   # 简单 JSON 格式：支持 [{"ip":"1.2.3.4","port":8080,"protocol":"http"}]
@@ -162,7 +178,7 @@ geoip:
 #     format: json
 #     timeout: 15s
 #     enabled: false
-#     max_nodes: 300
+#     max_nodes: 0              # 0 表示全量解析该源；正数才限制单源数量
 #     max_bytes: 2097152
 
 # ───────────────────────────────────────────────────────────────

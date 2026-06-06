@@ -288,25 +288,36 @@ Supports Base64, plain text, and Clash YAML formats. When subscriptions are conf
 ### Free Proxy Sources
 
 ```yaml
-free_proxy_max_nodes: 500
+free_proxy_max_nodes: 0
+free_proxy_filter:
+  enabled: true
+  min_tier: simple_web
+  workers: 200
+  timeout: 2s
+  max_candidates: 0
+  probes:
+    http: http://cp.cloudflare.com/generate_204
+    https: https://example.com/
 free_proxy_sources:
   - name: "local-free-list"
     file: free-proxies.txt
     format: txt
     default_scheme: http
     enabled: true
-    max_nodes: 300
+    # max_nodes: 0 means parse the whole source
+    max_nodes: 0
     max_bytes: 2097152
   - name: "remote-json-list"
     url: "https://example.com/free-proxies.json"
     format: json
     timeout: 15s
     enabled: false
-    max_nodes: 300
+    # max_nodes: 0 means parse the whole source
+    max_nodes: 0
     max_bytes: 2097152
 ```
 
-Free proxy sources are loaded after inline/file/subscription nodes, deduplicated by URI, and capped before activation. If any free source is enabled and `free_proxy_max_nodes` is unset, the safe default is `500`; set `-1` only if you explicitly want unlimited activation. They are runtime inputs and are **not** written back to `nodes.txt` or `config.yaml` by the settings save path.
+Free proxy sources are candidate feeds loaded after inline/file/subscription nodes. When `free_proxy_filter.enabled=true`, candidates are deduplicated and validated with a bounded Go worker queue before activation; only proxies meeting `min_tier` are appended as runtime `source=free_proxy` nodes and shown in the UI. `http_basic` requires the HTTP 204 probe to pass; `simple_web` also requires the HTTPS probe to return the expected example page. Each source is downloaded and parsed in full by default in the background candidate pipeline. `free_proxy_max_nodes: 0` means all accepted proxies may be activated; set a positive value only when you explicitly want a final runtime cap. Free proxy source nodes are runtime inputs and are **not** written back to `nodes.txt`. Sources and filter settings can be managed from Settings → Free Proxy Sources.
 
 Supported MVP formats:
 

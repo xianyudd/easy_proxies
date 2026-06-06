@@ -60,6 +60,8 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		server.SetSubscriptionRefresher(subMgr)
 	}
 
+	startFreeProxyCacheRefresh(ctx, cfg, boxMgr)
+
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -97,4 +99,35 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+func startFreeProxyCacheRefresh(ctx context.Context, cfg *config.Config, boxMgr *boxmgr.Manager) {
+	if cfg == nil || boxMgr == nil {
+		return
+	}
+	cache := cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)
+	if !cache.EnabledValue() || !cache.RefreshOnStartValue() || len(cfg.FreeProxySources) == 0 {
+		return
+	}
+	go func() {
+		fmt.Println("Starting background free proxy cache refresh...")
+		count, err := cfg.RefreshFreeProxyCache(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "background free proxy cache refresh failed: %v\n", err)
+			return
+		}
+		if count == 0 {
+			return
+		}
+		if cache.AutoReloadValue() {
+			reloadedCfg, err := config.Load(cfg.FilePath())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "free proxy cache reload config failed: %v\n", err)
+				return
+			}
+			if err := boxMgr.ReloadWithPortMap(reloadedCfg, cfg.BuildPortMap()); err != nil {
+				fmt.Fprintf(os.Stderr, "free proxy cache auto-reload failed: %v\n", err)
+			}
+		}
+	}()
 }

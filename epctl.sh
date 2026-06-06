@@ -1,72 +1,106 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_FILE="${CONFIG_FILE:-config.yaml}"
-BIN="${BIN:-./easy_proxies_local}"
-LOG_FILE="${LOG_FILE:-/tmp/easy_proxies.run.log}"
-PID_FILE="${PID_FILE:-/tmp/easy_proxies.pid}"
+# Easy Proxies local/isolated service controller.
+# Default profile is production/local. Use EP_PROFILE=isolated or isolated:* aliases
+# for the disposable instance. Stop/restart only touches the active profile.
+
+CONFIG_FILE_WAS_SET="${CONFIG_FILE+x}"
+BIN_WAS_SET="${BIN+x}"
+LOG_FILE_WAS_SET="${LOG_FILE+x}"
+PID_FILE_WAS_SET="${PID_FILE+x}"
+WEBUI_URL_WAS_SET="${WEBUI_URL+x}"
+
+EP_PROFILE="${EP_PROFILE:-prod}"
+case "${1:-}" in
+  isolated:*|service:isolated:*) EP_PROFILE="isolated" ;;
+esac
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "$EP_PROFILE" = "isolated" ]; then
+  [ -n "$CONFIG_FILE_WAS_SET" ] || CONFIG_FILE="/tmp/easy_proxies_isolated.yaml"
+  [ -n "$BIN_WAS_SET" ] || BIN="/tmp/easy_proxies_isolated"
+  [ -n "$LOG_FILE_WAS_SET" ] || LOG_FILE="/tmp/easy_proxies_isolated.log"
+  [ -n "$PID_FILE_WAS_SET" ] || PID_FILE="/tmp/easy_proxies_isolated.pid"
+  [ -n "$WEBUI_URL_WAS_SET" ] || WEBUI_URL="http://127.0.0.1:19091"
+else
+  [ -n "$CONFIG_FILE_WAS_SET" ] || CONFIG_FILE="config.yaml"
+  [ -n "$BIN_WAS_SET" ] || BIN="./easy_proxies_local"
+  [ -n "$LOG_FILE_WAS_SET" ] || LOG_FILE="/tmp/easy_proxies.run.log"
+  [ -n "$PID_FILE_WAS_SET" ] || PID_FILE="/tmp/easy_proxies.pid"
+  [ -n "$WEBUI_URL_WAS_SET" ] || WEBUI_URL="http://127.0.0.1:9091"
+fi
+
+WEBUI_TOKEN="${WEBUI_TOKEN:-}"
+WEBUI_PASSWORD="${WEBUI_PASSWORD:-}"
+
 ADB_SERIAL="${ADB_SERIAL:-192.168.1.118:5555}"
 TEST_URL="${TEST_URL:-http://cp.cloudflare.com/generate_204}"
 TIMEOUT="${TIMEOUT:-10}"
 RETRIES="${RETRIES:-3}"
-WEBUI_URL="${WEBUI_URL:-http://127.0.0.1:9091}"
-WEBUI_TOKEN="${WEBUI_TOKEN:-}"
-WEBUI_PASSWORD="${WEBUI_PASSWORD:-}"
+START_TIMEOUT="${START_TIMEOUT:-20}"
+BUILD_TAGS="${BUILD_TAGS:-with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api}"
 
 usage() {
   cat <<'EOF'
-Easy Proxies local control
+Easy Proxies control
 
 Usage:
   ./epctl.sh <command> [args]
+  EP_PROFILE=isolated ./epctl.sh <command> [args]
 
 Service:
-  service:start              Start local binary in background
-  service:stop               Stop local binary started by this script
-  service:restart            Restart local binary
-  service:status             Show WebUI, ports, nodes, and regions
+  service:start | start                 Start active profile in background
+  service:stop | stop                   Stop only active profile process
+  service:restart | restart             Restart active profile
+  service:status | status               Show process, WebUI, ports, nodes
+  service:build                         Build local binary for active profile
+
+Isolated profile aliases:
+  isolated:config                       Write /tmp/easy_proxies_isolated.yaml
+  isolated:build                        Build /tmp/easy_proxies_isolated
+  isolated:start                        Start isolated instance on WebUI :19091
+  isolated:stop                         Stop isolated instance only
+  isolated:restart                      Restart isolated instance only
+  isolated:status                       Show isolated status
+  isolated:logs [N]                     Tail isolated log
+  isolated:logs-follow                  Follow isolated log
 
 Logs:
-  logs:tail [N]              Show last N log lines, default 120
-  logs:follow                Follow runtime log
+  logs:tail | logs [N]                  Show last N log lines, default 120
+  logs:follow | logs-follow             Follow runtime log
 
 Proxy:
-  proxy:test [region]        Test Android no-auth region port, default jp
-  proxy:regions              Show region to port mapping
+  proxy:test | test [region]            Test region proxy port, default jp
+  proxy:regions | regions               Show configured/default region ports
 
 IP Reputation:
-  reputation:check <region> [count]  Check IP reputation for a region via local WebUI API
-  reputation:cache           Show local WebUI reputation cache summary
+  reputation:check <region> [count]     Check IP reputation via WebUI API
+  reputation:cache                      Show reputation cache summary
 
 Cloudflare Score:
-  cf:check <region> [count]  Check local Cloudflare compatibility score for available nodes
-  cf:check-all [region]      Check all configured nodes, including unavailable nodes
-  cf:cache                   Show local Cloudflare score cache summary
+  cf:check <region> [count]             Check CF score for available nodes
+  cf:check-all [region]                 Check all nodes, including unavailable
+  cf:cache                              Show CF score cache summary
 
 WebUI development:
-  web:dev                    Start Vite dev server for React WebUI
-  web:typecheck              Run TypeScript typecheck
-  web:build                  Build React WebUI into internal/monitor/assets/dist
+  web:dev                               Start Vite dev server
+  web:typecheck                         Run TypeScript typecheck
+  web:build                             Build React WebUI assets
 
 ADB:
-  adb:set [region]           Set adb reverse and Android global proxy, default jp
-  adb:status                 Show adb reverse and proxy settings
-  adb:clear                  Clear Android global proxy settings
-
-Short aliases:
-  start, stop, restart, status, logs, logs-follow, test
-  adb-set, adb-status, adb-clear
-
-Regions:
-  us jp hk sg tw kr in ae ch au de gb ca other
+  adb:set [region]                      Set adb reverse/global proxy
+  adb:status                            Show adb reverse/proxy settings
+  adb:clear                             Clear Android global proxy settings
 
 Environment:
-  CONFIG_FILE=config.yaml
-  BIN=./easy_proxies_local
-  LOG_FILE=/tmp/easy_proxies.run.log
-  ADB_SERIAL=192.168.1.118:5555
-  RETRIES=3
-  WEBUI_URL=http://127.0.0.1:9091
+  EP_PROFILE=prod|isolated              Active profile, default prod
+  CONFIG_FILE=config.yaml               Active config path
+  BIN=./easy_proxies_local              Active binary path
+  LOG_FILE=/tmp/easy_proxies.run.log    Active log path
+  PID_FILE=/tmp/easy_proxies.pid        Active PID path
+  WEBUI_URL=http://127.0.0.1:9091       Active WebUI base URL
   WEBUI_TOKEN=<session token, optional>
   WEBUI_PASSWORD=<WebUI password, optional; never printed>
 EOF
@@ -76,258 +110,434 @@ clean_proxy_env() {
   unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 }
 
+strip_quotes() {
+  sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//'
+}
+
 cfg_value() {
-  local section="$1"
-  local key="$2"
+  local section="$1" key="$2" file="${3:-$CONFIG_FILE}"
+  [ -f "$file" ] || return 0
   awk -v section="$section" -v key="$key" '
     $0 ~ "^" section ":" {in_section=1; next}
-    in_section && $0 ~ "^[^ ]" {in_section=0}
+    in_section && $0 ~ "^[^[:space:]]" {in_section=0}
     in_section && $1 == key":" {
       sub(/^[^:]+:[[:space:]]*/, "", $0)
       gsub(/^"|"$/, "", $0)
       print $0
       exit
     }
+  ' "$file" | strip_quotes
+}
+
+cfg_top_value() {
+  local key="$1" file="${2:-$CONFIG_FILE}"
+  [ -f "$file" ] || return 0
+  awk -v key="$key" '$1 == key":" {sub(/^[^:]+:[[:space:]]*/, "", $0); print; exit}' "$file" | strip_quotes
+}
+
+webui_host_port() {
+  local url="${WEBUI_URL#http://}"
+  url="${url#https://}"
+  url="${url%%/*}"
+  echo "$url"
+}
+
+webui_port() {
+  webui_host_port | awk -F: '{print $NF}'
+}
+
+configured_port() {
+  local section="$1" key="$2" fallback="$3"
+  local val
+  val="$(cfg_value "$section" "$key" || true)"
+  echo "${val:-$fallback}"
+}
+
+configured_region_port() {
+  local region="$1"
+  [ -f "$CONFIG_FILE" ] || return 1
+  awk -v region="$region" '
+    /^android_proxy:/ {in_android=1; next}
+    in_android && /^[^[:space:]]/ {in_android=0}
+    in_android && /^[[:space:]]+region_ports:/ {in_regions=1; next}
+    in_regions && /^[[:space:]]{4}[^[:space:]]+:/ {
+      k=$1; sub(/:/,"",k)
+      if (k==region) {print $2; exit}
+    }
+    in_regions && /^[[:space:]]{2}[^[:space:]]+:/ {in_regions=0}
   ' "$CONFIG_FILE"
 }
 
 region_port() {
-  local region="${1:-jp}"
+  local region="${1:-jp}" base custom offset
   case "$region" in
-    all) echo all ;;
-    us) echo 13001 ;;
-    jp) echo 13002 ;;
-    hk) echo 13003 ;;
-    sg) echo 13004 ;;
-    tw) echo 13005 ;;
-    kr) echo 13006 ;;
-    in) echo 13007 ;;
-    ae) echo 13008 ;;
-    ch) echo 13019 ;;
-    au) echo 13010 ;;
-    other) echo 13011 ;;
-    de) echo 13012 ;;
-    gb) echo 13015 ;;
-    ca) echo 13014 ;;
+    all) echo all; return ;;
+    us) offset=0 ;;
+    jp) offset=1 ;;
+    hk) offset=2 ;;
+    sg) offset=3 ;;
+    tw) offset=4 ;;
+    kr) offset=5 ;;
+    in) offset=6 ;;
+    ae) offset=7 ;;
+    au) offset=9 ;;
+    other) offset=10 ;;
+    de) offset=11 ;;
+    ca) offset=13 ;;
+    gb) offset=14 ;;
+    ch) offset=18 ;;
     *) echo "[ERROR] Unknown region: $region" >&2; exit 2 ;;
   esac
+  custom="$(configured_region_port "$region" || true)"
+  if [ -n "$custom" ]; then
+    echo "$custom"
+    return
+  fi
+  base="$(configured_port android_proxy base_port 13001)"
+  echo $((base + offset))
 }
 
+show_regions() {
+  local r
+  echo "Region ports (${CONFIG_FILE}):"
+  for r in us jp hk sg tw kr in ae au other de ca gb ch; do
+    printf '  %-6s %s\n' "$r" "$(region_port "$r")"
+  done
+}
 
 json_pretty() {
-  if command -v jq >/dev/null 2>&1; then
-    jq .
-  else
-    cat
-  fi
+  if command -v jq >/dev/null 2>&1; then jq .; else cat; fi
 }
 
 webui_api() {
-  local method="$1"
-  local path="$2"
-  local body="${3:-}"
+  local method="$1" path="$2" body="${3:-}"
   local url="${WEBUI_URL%/}${path}"
-  local curl_args=(--max-time "$TIMEOUT" -sS -X "$method" -H 'Accept: application/json')
+  local curl_args=(--noproxy '*' --max-time "$TIMEOUT" -sS -X "$method" -H 'Accept: application/json')
   local cookie_jar=""
-
   clean_proxy_env
-
   if [ -n "$WEBUI_TOKEN" ]; then
     curl_args+=(-H "Authorization: Bearer ${WEBUI_TOKEN}")
   elif [ -n "$WEBUI_PASSWORD" ]; then
     cookie_jar="$(mktemp -t epctl-webui-cookie.XXXXXX)"
-    trap 'rm -f "$cookie_jar"' RETURN
     local auth_code
-    auth_code="$(
-      printf '{"password":"%s"}' "$WEBUI_PASSWORD" | \
-        curl --max-time "$TIMEOUT" -sS -o /dev/null -w '%{http_code}' \
-          -c "$cookie_jar" -H 'Content-Type: application/json' \
-          -X POST --data-binary @- "${WEBUI_URL%/}/api/auth" || true
-    )"
+    auth_code="$(printf '{"password":"%s"}' "$WEBUI_PASSWORD" | curl --noproxy '*' --max-time "$TIMEOUT" -sS -o /dev/null -w '%{http_code}' -c "$cookie_jar" -H 'Content-Type: application/json' -X POST --data-binary @- "${WEBUI_URL%/}/api/auth" || true)"
     if [ "$auth_code" != "200" ]; then
       echo "[ERROR] WebUI authentication failed HTTP=${auth_code:-000}" >&2
       rm -f "$cookie_jar"
-      trap - RETURN
       exit 1
     fi
     curl_args+=(-b "$cookie_jar")
   fi
-
   if [ -n "$body" ]; then
     curl_args+=(-H 'Content-Type: application/json' --data-binary "$body")
   fi
-
   local response_file status
   response_file="$(mktemp -t epctl-webui-response.XXXXXX)"
   status="$(curl "${curl_args[@]}" -o "$response_file" -w '%{http_code}' "$url" || true)"
-
-  if [ -n "$cookie_jar" ]; then
-    rm -f "$cookie_jar"
-    trap - RETURN
-  fi
-
+  [ -z "$cookie_jar" ] || rm -f "$cookie_jar"
   if ! [[ "$status" =~ ^[0-9]+$ ]] || [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
-    echo "[ERROR] WebUI API ${method} ${path} failed HTTP=${status:-000}" >&2
+    echo "[ERROR] WebUI API ${method} ${path} failed HTTP=${status:-000} url=$url" >&2
     cat "$response_file" >&2 || true
     rm -f "$response_file"
     exit 1
   fi
-
   json_pretty <"$response_file"
   rm -f "$response_file"
 }
 
-reputation_check() {
-  local region="${1:-}"
-  if [ -z "$region" ]; then
-    echo "[ERROR] Usage: ./epctl.sh reputation:check <region>" >&2
-    exit 2
+normalize_path() {
+  local path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m "$path"
+  else
+    case "$path" in /*) echo "$path" ;; *) echo "$PWD/$path" ;; esac
   fi
-  region_port "$region" >/dev/null
-  local count="${2:-10}"
-  webui_api GET "/api/reputation/check?region=${region}&mode=multi-port&count=${count}"
 }
 
-reputation_cache() {
-  webui_api GET "/api/reputation/cache"
-}
-
-cf_check() {
-  local region="${1:-}"
-  if [ -z "$region" ]; then
-    echo "[ERROR] Usage: ./epctl.sh cf:check <region> [count]" >&2
-    exit 2
-  fi
-  region_port "$region" >/dev/null
-  local count="${2:-10}"
-  webui_api GET "/api/cloudflare/check?region=${region}&mode=multi-port&count=${count}"
-}
-
-cf_check_all() {
-  local region="${1:-all}"
-  region_port "$region" >/dev/null
-  webui_api GET "/api/cloudflare/check?region=${region}&mode=multi-port&count=500&include_unavailable=true"
-}
-
-cf_cache() {
-  webui_api GET "/api/cloudflare/cache"
-}
-
-show_regions() {
-  cat <<'EOF'
-Region ports:
-  us     13001
-  jp     13002
-  hk     13003
-  sg     13004
-  tw     13005
-  kr     13006
-  in     13007
-  ae     13008
-  au     13010
-  other  13011
-  de     13012
-  gb     13015
-  ca     13014
-  ch     13019
-EOF
+pid_matches_profile() {
+  local pid="$1"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  local cmdline bin_abs cfg_abs
+  cmdline="$(tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline" || true)"
+  [ -n "$cmdline" ] || return 1
+  bin_abs="$(normalize_path "$BIN")"
+  cfg_abs="$(normalize_path "$CONFIG_FILE")"
+  case "$cmdline" in
+    *"$bin_abs"*" --config $cfg_abs"*|*"$BIN"*" --config $CONFIG_FILE"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 is_running() {
   if [ -f "$PID_FILE" ]; then
     local pid
     pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
-    return
+    if pid_matches_profile "$pid"; then return 0; fi
   fi
   return 1
 }
 
-find_service_pid() {
-  pgrep -f "$BIN --config $CONFIG_FILE" 2>/dev/null | head -n 1 || true
+find_service_pids() {
+  local bin_abs cfg_abs
+  bin_abs="$(normalize_path "$BIN")"
+  cfg_abs="$(normalize_path "$CONFIG_FILE")"
+  for f in /proc/[0-9]*/cmdline; do
+    [ -r "$f" ] || continue
+    local pid cmdline
+    pid="${f#/proc/}"; pid="${pid%/cmdline}"
+    cmdline="$(tr '\0' ' ' 2>/dev/null <"$f" || true)"
+    case "$cmdline" in
+      *"$bin_abs"*" --config $cfg_abs"*|*"$BIN"*" --config $CONFIG_FILE"*) echo "$pid" ;;
+    esac
+  done
+}
+
+wait_for_webui() {
+  local deadline=$((SECONDS + START_TIMEOUT)) code
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    code="$(curl --noproxy '*' --max-time 2 -s -o /dev/null -w '%{http_code}' "${WEBUI_URL%/}" || true)"
+    if [ "$code" = "200" ]; then
+      echo "[OK] WebUI ready: $WEBUI_URL"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[WARN] WebUI not ready after ${START_TIMEOUT}s: $WEBUI_URL"
+  return 1
+}
+
+build_service() {
+  local out="$BIN"
+  if [ "$EP_PROFILE" = "prod" ] && [ "$out" = "./easy_proxies_local" ]; then
+    out="$ROOT_DIR/easy_proxies_local"
+  fi
+  echo "[INFO] building $out"
+  (cd "$ROOT_DIR" && GOCACHE="${GOCACHE:-/tmp/easy-proxies-go-build}" go build -tags "$BUILD_TAGS" -o "$out" ./cmd/easy_proxies)
+  echo "[OK] built $out"
+}
+
+write_isolated_config() {
+  local source_config="${SOURCE_CONFIG:-$ROOT_DIR/config.yaml}"
+  local cache_dir="/tmp/.cache/easy-proxies-isolated"
+  mkdir -p "$cache_dir"
+  cat >"$CONFIG_FILE" <<EOF
+mode: hybrid
+listener:
+  address: 127.0.0.1
+  port: 12323
+  username: user
+  password: pass
+multi_port:
+  address: 127.0.0.1
+  base_port: 25000
+  username: user
+  password: pass
+android_proxy:
+  enabled: true
+  listen: 127.0.0.1
+  base_port: 25150
+pool:
+  mode: balance
+  failure_threshold: 3
+  blacklist_duration: 24h0m0s
+management:
+  enabled: true
+  listen: 127.0.0.1:19091
+  clash_api_listen: 127.0.0.1:19092
+  probe_target: http://cp.cloudflare.com/generate_204
+  password: ""
+subscription_refresh:
+  enabled: true
+  interval: 1h0m0s
+  timeout: 30s
+  health_check_timeout: 1m0s
+  drain_timeout: 30s
+  min_available_nodes: 1
+quality_check:
+  enabled: false
+  interval: 1h0m0s
+  region: all
+  count: 500
+  include_unavailable: false
+  retry_failed: true
+geoip:
+  enabled: false
+  database_path: ./GeoLite2-Country.mmdb
+  listen: 127.0.0.1
+  port: 12210
+  auto_update_enabled: false
+  auto_update_interval: 24h0m0s
+log:
+  output: stdout
+  file: /tmp/easy_proxies_isolated-inner.log
+  max_size: 200
+  max_backups: 2
+  max_age: 3
+  compress: false
+nodes: []
+nodes_file: /tmp/easy_proxies_isolated_nodes.txt
+subscriptions:
+$(awk '
+  /^subscriptions:/ {in_sub=1; next}
+  in_sub && /^[^[:space:]]/ {in_sub=0}
+  in_sub && /^[[:space:]]*-/ {print $0}
+' "$source_config" 2>/dev/null || true)
+free_proxy_cache:
+  enabled: true
+  path: $cache_dir/free-proxies.txt
+  refresh_on_start: false
+  auto_reload: true
+  workers: 16
+  max_age: 6h
+free_proxy_max_nodes: 0
+free_proxy_filter:
+  enabled: true
+  min_tier: http_basic
+  workers: 80
+  timeout: 2s
+  max_candidates: 0
+  probes:
+    http: http://cp.cloudflare.com/generate_204
+    https: https://example.com/
+free_proxy_sources:
+$(awk '
+  /^free_proxy_sources:/ {in_src=1; next}
+  in_src && /^[^[:space:]]/ {in_src=0}
+  in_src {print $0}
+' "$source_config" 2>/dev/null || true)
+external_ip: ""
+log_level: info
+skip_cert_verify: false
+upstream_proxy: ""
+EOF
+  if ! grep -q '^[[:space:]]*-' "$CONFIG_FILE"; then
+    echo "[WARN] no subscriptions/free sources copied from $source_config"
+  fi
+  echo "[OK] wrote isolated config: $CONFIG_FILE"
 }
 
 start_service() {
   if is_running; then
-    echo "[OK] already running, pid=$(cat "$PID_FILE")"
+    echo "[OK] already running, profile=$EP_PROFILE pid=$(cat "$PID_FILE")"
     return
+  fi
+  if [ ! -f "$CONFIG_FILE" ] && [ "$EP_PROFILE" = "isolated" ]; then
+    write_isolated_config
   fi
   if [ ! -x "$BIN" ]; then
     echo "[ERROR] binary not executable: $BIN"
-    echo "Build first: go build -tags \"with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api\" -o ./easy_proxies_local ./cmd/easy_proxies"
+    echo "Build first: ./epctl.sh service:build"
     exit 1
   fi
   clean_proxy_env
-  nohup "$BIN" --config "$CONFIG_FILE" >"$LOG_FILE" 2>&1 &
+  mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$PID_FILE")"
+  echo "[INFO] starting profile=$EP_PROFILE bin=$BIN config=$CONFIG_FILE log=$LOG_FILE"
+  setsid "$BIN" --config "$CONFIG_FILE" >"$LOG_FILE" 2>&1 < /dev/null &
   echo $! >"$PID_FILE"
-  sleep 2
+  sleep 1
   if is_running; then
     echo "[OK] started, pid=$(cat "$PID_FILE")"
+    wait_for_webui || true
   else
     echo "[ERROR] failed to start, see $LOG_FILE"
+    tail -n 80 "$LOG_FILE" 2>/dev/null || true
     exit 1
   fi
 }
 
 stop_service() {
-  if ! is_running; then
-    echo "[OK] not running"
+  local pids pid stopped=0
+  pids="$(find_service_pids | sort -u || true)"
+  if [ -z "$pids" ]; then
+    echo "[OK] not running, profile=$EP_PROFILE"
     rm -f "$PID_FILE"
     return
   fi
-  local pid
-  pid="$(cat "$PID_FILE")"
-  kill "$pid" 2>/dev/null || true
+  echo "[INFO] stopping profile=$EP_PROFILE pids=$(echo "$pids" | tr '\n' ' ')"
+  for pid in $pids; do kill "$pid" 2>/dev/null || true; done
   for _ in $(seq 1 15); do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      rm -f "$PID_FILE"
-      echo "[OK] stopped"
-      return
+    local alive=""
+    for pid in $pids; do
+      if kill -0 "$pid" 2>/dev/null; then
+        alive="$alive $pid"
+      fi
+    done
+    if [ -z "$alive" ]; then
+      stopped=1
+      break
     fi
     sleep 1
   done
-  echo "[WARN] still running after graceful stop, pid=$pid"
+  if [ "$stopped" = "1" ]; then
+    rm -f "$PID_FILE"
+    echo "[OK] stopped"
+  else
+    echo "[WARN] still running after graceful stop:$(for pid in $pids; do kill -0 "$pid" 2>/dev/null && printf ' %s' "$pid"; done)"
+  fi
 }
 
 status_service() {
   clean_proxy_env
-  local web
-  web="$(curl --max-time 3 -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9091 || true)"
-  echo "WebUI: ${web:-000} http://localhost:9091"
-  if is_running; then
-    echo "Process: running pid=$(cat "$PID_FILE")"
+  local web node_json settings_json pids listen_re
+  web="$(curl --noproxy '*' --max-time 3 -s -o /dev/null -w '%{http_code}' "${WEBUI_URL%/}" || true)"
+  echo "Profile: $EP_PROFILE"
+  echo "Config:  $CONFIG_FILE"
+  echo "Binary:  $BIN"
+  echo "PIDFile: $PID_FILE"
+  echo "Log:     $LOG_FILE"
+  echo "WebUI:   ${web:-000} ${WEBUI_URL}"
+  pids="$(find_service_pids | sort -u || true)"
+  if [ -n "$pids" ]; then
+    echo "Process: running pid=$(echo "$pids" | tr '\n' ' ')"
+  elif [ "$web" = "200" ]; then
+    echo "Process: running, detected by WebUI only"
   else
-    local found_pid
-    found_pid="$(find_service_pid)"
-    if [ -n "$found_pid" ]; then
-      echo "Process: running pid=$found_pid"
-    elif [ "$web" = "200" ]; then
-      echo "Process: running, detected by WebUI"
-    else
-      echo "Process: not found"
-    fi
+    echo "Process: not found"
   fi
   echo
-  ss -ltnp 2>/dev/null | grep -E ':9091|:2323|:1221|:1300[1-9]|:1301[0-5]|:13019' || true
+  local pool_port android_base multi_base clash_port geo_port web_port
+  pool_port="$(configured_port listener port 2323)"
+  android_base="$(configured_port android_proxy base_port 13001)"
+  multi_base="$(configured_port multi_port base_port 24000)"
+  web_port="$(webui_port)"
+  clash_port="$(cfg_value management clash_api_listen || true)"; clash_port="${clash_port##*:}"
+  geo_port="$(configured_port geoip port 1221)"
+  listen_re=":(${web_port}|${pool_port}|${geo_port}|${multi_base}|${android_base}|${clash_port:-0})"
+  echo "Listening ports (key ports):"
+  ss -ltnp 2>/dev/null | grep -E "$listen_re" || true
   echo
   if [ "$web" = "200" ]; then
-    curl -s http://127.0.0.1:9091/api/nodes | jq '{total_nodes, visible_nodes:(.nodes|length), available:([.nodes[] | select(.available==true)] | length), region_stats}' || true
+    node_json="$(curl --noproxy '*' --max-time "$TIMEOUT" -sS "${WEBUI_URL%/}/api/nodes" || true)"
+    if command -v jq >/dev/null 2>&1 && [ -n "$node_json" ]; then
+      echo "$node_json" | jq '{total_nodes, visible_nodes:(.nodes|length), available:([.nodes[] | select(.available==true)] | length), source_stats, region_stats, port_range: (([.nodes[].port? // empty] | sort) as $p | if ($p|length)>0 then {first:$p[0], last:$p[-1]} else null end)}' || true
+    else
+      echo "$node_json"
+    fi
+    settings_json="$(curl --noproxy '*' --max-time "$TIMEOUT" -sS "${WEBUI_URL%/}/api/settings" || true)"
+    if command -v jq >/dev/null 2>&1 && [ -n "$settings_json" ]; then
+      echo
+      echo "Settings summary:"
+      echo "$settings_json" | jq '{subscriptions:(.subscriptions|length? // 0), free_proxy_sources:(.free_proxy_sources|length? // 0), free_proxy_cache, free_proxy_max_nodes}' 2>/dev/null || true
+    fi
   fi
 }
 
 show_logs() {
   local lines="${1:-120}"
+  if [ ! -f "$LOG_FILE" ]; then
+    echo "[WARN] log file not found: $LOG_FILE"
+    return
+  fi
   tail -n "$lines" "$LOG_FILE"
 }
 
 test_region() {
-  local region="${1:-jp}"
-  local port
+  local region="${1:-jp}" port code
   port="$(region_port "$region")"
   clean_proxy_env
-  local code
   for attempt in $(seq 1 "$RETRIES"); do
-    code="$(curl --max-time "$TIMEOUT" -s -o /dev/null -w '%{http_code}' -x "http://127.0.0.1:${port}" "$TEST_URL" || true)"
+    code="$(curl --noproxy '*' --max-time "$TIMEOUT" -s -o /dev/null -w '%{http_code}' -x "http://127.0.0.1:${port}" "$TEST_URL" || true)"
     if [ "$code" = "204" ] || [ "$code" = "200" ]; then
       echo "[OK] $region :$port HTTP=$code attempt=$attempt"
       return
@@ -339,9 +549,32 @@ test_region() {
   exit 1
 }
 
+reputation_check() {
+  local region="${1:-}" count="${2:-10}"
+  [ -n "$region" ] || { echo "[ERROR] Usage: ./epctl.sh reputation:check <region>" >&2; exit 2; }
+  region_port "$region" >/dev/null
+  webui_api GET "/api/reputation/check?region=${region}&mode=multi-port&count=${count}"
+}
+
+reputation_cache() { webui_api GET "/api/reputation/cache"; }
+
+cf_check() {
+  local region="${1:-}" count="${2:-10}"
+  [ -n "$region" ] || { echo "[ERROR] Usage: ./epctl.sh cf:check <region> [count]" >&2; exit 2; }
+  region_port "$region" >/dev/null
+  webui_api GET "/api/cloudflare/check?region=${region}&mode=multi-port&count=${count}"
+}
+
+cf_check_all() {
+  local region="${1:-all}"
+  region_port "$region" >/dev/null
+  webui_api GET "/api/cloudflare/check?region=${region}&mode=multi-port&count=500&include_unavailable=true"
+}
+
+cf_cache() { webui_api GET "/api/cloudflare/cache"; }
+
 adb_set() {
-  local region="${1:-jp}"
-  local port
+  local region="${1:-jp}" port
   port="$(region_port "$region")"
   adb -s "$ADB_SERIAL" reverse "tcp:${port}" "tcp:${port}"
   adb -s "$ADB_SERIAL" shell settings put global http_proxy "127.0.0.1:${port}"
@@ -364,23 +597,25 @@ adb_status() {
   adb -s "$ADB_SERIAL" shell settings list global | grep -E 'proxy|http_proxy' || true
 }
 
-web_dev() {
-  (cd web && npm run dev)
-}
+web_dev() { (cd web && npm run dev); }
+web_typecheck() { (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run typecheck); }
+web_build() { (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run build); }
 
-web_typecheck() {
-  (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run typecheck)
-}
-
-web_build() {
-  (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run build)
-}
-
-case "${1:-}" in
+cmd="${1:-}"
+case "$cmd" in
   service:start|start) start_service ;;
   service:stop|stop) stop_service ;;
   service:restart|restart) stop_service; start_service ;;
   service:status|status) status_service ;;
+  service:build|build) build_service ;;
+  isolated:config|service:isolated:config) EP_PROFILE=isolated; write_isolated_config ;;
+  isolated:build|service:isolated:build) EP_PROFILE=isolated; build_service ;;
+  isolated:start|service:isolated:start) start_service ;;
+  isolated:stop|service:isolated:stop) stop_service ;;
+  isolated:restart|service:isolated:restart) stop_service; start_service ;;
+  isolated:status|service:isolated:status) status_service ;;
+  isolated:logs) show_logs "${2:-120}" ;;
+  isolated:logs-follow) tail -f "$LOG_FILE" ;;
   logs:tail|logs) show_logs "${2:-120}" ;;
   logs:follow|logs-follow) tail -f "$LOG_FILE" ;;
   proxy:test|test) test_region "${2:-jp}" ;;
@@ -397,5 +632,5 @@ case "${1:-}" in
   adb:clear|adb-clear) adb_clear ;;
   adb:status|adb-status) adb_status ;;
   help|-h|--help|"") usage ;;
-  *) echo "[ERROR] Unknown command: $1"; usage; exit 2 ;;
+  *) echo "[ERROR] Unknown command: $cmd"; usage; exit 2 ;;
 esac

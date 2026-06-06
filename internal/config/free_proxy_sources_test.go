@@ -1,11 +1,14 @@
 package config
 
 import (
+	"fmt"
+
 	"easy_proxies/internal/nodesource"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +22,8 @@ func TestLoadMergesFreeProxySourcesAfterInlineNodes(t *testing.T) {
 nodes:
   - name: inline
     uri: http://9.9.9.9:9000
+free_proxy_cache:
+  enabled: false
 free_proxy_sources:
   - name: local-free
     file: free.txt
@@ -46,6 +51,40 @@ free_proxy_sources:
 	}
 }
 
+func TestLoadDefaultsToUnlimitedFreeProxyRuntimeActivation(t *testing.T) {
+	dir := t.TempDir()
+	lines := make([]string, 0, 3)
+	for i := 1; i <= 3; i++ {
+		lines = append(lines, fmt.Sprintf("http://10.20.0.%d:8080", i))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "free.txt"), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `mode: pool
+free_proxy_cache:
+  enabled: false
+free_proxy_sources:
+  - name: local-free
+    file: free.txt
+    format: txt
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if cfg.FreeProxyMaxNodes != 0 {
+		t.Fatalf("expected unset free_proxy_max_nodes to stay unlimited/0, got %d", cfg.FreeProxyMaxNodes)
+	}
+	if len(cfg.Nodes) != 3 {
+		t.Fatalf("expected all free proxy nodes with default unlimited cap, got %d: %#v", len(cfg.Nodes), cfg.Nodes)
+	}
+}
+
 func TestLoadAppliesFreeProxyCapsAndDedupeAfterSubscription(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "free.txt"), []byte(`
@@ -68,6 +107,8 @@ nodes:
 subscriptions:
   - ` + sub.URL + `
 free_proxy_max_nodes: 2
+free_proxy_cache:
+  enabled: false
 free_proxy_sources:
   - name: local-free
     file: free.txt
@@ -140,6 +181,8 @@ func TestLoadDoesNotRequestLaterFreeProxySourcesAfterGlobalCapFilled(t *testing.
 	cfgPath := filepath.Join(dir, "config.yaml")
 	content := `mode: pool
 free_proxy_max_nodes: 2
+free_proxy_cache:
+  enabled: false
 free_proxy_sources:
   - name: first
     url: ` + first.URL + `
@@ -177,6 +220,8 @@ nodes:
   - name: existing
     uri: http://10.0.0.1:8080
 free_proxy_max_nodes: 2
+free_proxy_cache:
+  enabled: false
 free_proxy_sources:
   - name: local-free
     format: txt
@@ -199,5 +244,99 @@ free_proxy_sources:
 	}
 	if cfg.Nodes[1].URI != "http://10.0.0.2:8080" || cfg.Nodes[2].URI != "http://10.0.0.3:8080" {
 		t.Fatalf("unexpected deduped capped nodes: %#v", cfg.Nodes)
+	}
+}
+
+func TestLoadFiltersFreeProxySourcesBeforeAppending(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/generate_204" {
+			t.Fatalf("unexpected good probe path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer good.Close()
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer bad.Close()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `mode: pool
+free_proxy_max_nodes: 10
+free_proxy_filter:
+  enabled: true
+  min_tier: http_basic
+  workers: 4
+  timeout: 2s
+  probes:
+    http: /generate_204
+free_proxy_cache:
+  enabled: false
+free_proxy_sources:
+  - name: local-free
+    file: free.txt
+    format: txt
+`
+	freeContent := good.URL + "\n" + bad.URL + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "free.txt"), []byte(freeContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if len(cfg.Nodes) != 1 {
+		t.Fatalf("expected only one filtered free node, got %d: %#v", len(cfg.Nodes), cfg.Nodes)
+	}
+	if cfg.Nodes[0].URI != good.URL {
+		t.Fatalf("unexpected accepted proxy: %#v", cfg.Nodes[0])
+	}
+	if cfg.Nodes[0].Source != NodeSourceFreeProxy {
+		t.Fatalf("accepted proxy not marked free_proxy: %#v", cfg.Nodes[0])
+	}
+}
+
+func TestLoadUsesFreeProxyCacheWithoutRequestingRemoteSource(t *testing.T) {
+	remoteRequests := 0
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remoteRequests++
+		_, _ = w.Write([]byte("http://10.10.10.10:8080\n"))
+	}))
+	defer remote.Close()
+
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "free-cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://1.2.3.4:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `mode: pool
+free_proxy_max_nodes: 5
+free_proxy_cache:
+  enabled: true
+  path: free-cache.txt
+free_proxy_sources:
+  - name: remote
+    url: ` + remote.URL + `
+    format: txt
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if len(cfg.Nodes) != 1 || cfg.Nodes[0].URI != "http://1.2.3.4:8080" {
+		t.Fatalf("expected cached free node only, got %#v", cfg.Nodes)
+	}
+	if remoteRequests != 0 {
+		t.Fatalf("expected startup not to request remote source, got %d requests", remoteRequests)
 	}
 }

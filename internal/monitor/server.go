@@ -24,6 +24,7 @@ import (
 	"easy_proxies/internal/cloudflarecheck"
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
+	"easy_proxies/internal/nodesource"
 	"easy_proxies/internal/quality"
 	"easy_proxies/internal/reputation"
 	"golang.org/x/sync/semaphore"
@@ -54,6 +55,108 @@ var (
 	ErrNodeConflict = errors.New("节点名称或端口已存在")
 	ErrInvalidNode  = errors.New("无效的节点配置")
 )
+
+type nodesourceSourceConfigRequest struct {
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	File          string `json:"file"`
+	Format        string `json:"format"`
+	DefaultScheme string `json:"default_scheme"`
+	Enabled       *bool  `json:"enabled"`
+	Timeout       string `json:"timeout"`
+	MaxNodes      int    `json:"max_nodes"`
+	MaxBytes      int64  `json:"max_bytes"`
+}
+
+type freeProxyFilterRequest struct {
+	Enabled       bool   `json:"enabled"`
+	MinTier       string `json:"min_tier"`
+	Workers       int    `json:"workers"`
+	Timeout       string `json:"timeout"`
+	MaxCandidates int    `json:"max_candidates"`
+	Probes        struct {
+		HTTP  string `json:"http"`
+		HTTPS string `json:"https"`
+	} `json:"probes"`
+}
+
+type freeProxyCacheRequest struct {
+	Enabled        *bool  `json:"enabled"`
+	Path           string `json:"path"`
+	RefreshOnStart *bool  `json:"refresh_on_start"`
+	AutoReload     *bool  `json:"auto_reload"`
+	Workers        int    `json:"workers"`
+	MaxAge         string `json:"max_age"`
+}
+
+func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) []nodesource.SourceConfig {
+	out := make([]nodesource.SourceConfig, 0, len(in))
+	for _, item := range in {
+		cfg := nodesource.SourceConfig{
+			Name:          strings.TrimSpace(item.Name),
+			URL:           strings.TrimSpace(item.URL),
+			File:          strings.TrimSpace(item.File),
+			Format:        strings.TrimSpace(item.Format),
+			DefaultScheme: strings.TrimSpace(item.DefaultScheme),
+			Enabled:       item.Enabled,
+			MaxNodes:      item.MaxNodes,
+			MaxBytes:      item.MaxBytes,
+		}
+		if item.Timeout != "" {
+			if d, err := time.ParseDuration(item.Timeout); err == nil {
+				cfg.Timeout = d
+			}
+		}
+		if cfg.Name == "" && cfg.URL == "" && cfg.File == "" {
+			continue
+		}
+		out = append(out, cfg)
+	}
+	return out
+}
+
+func freeProxyFilterFromRequest(req *freeProxyFilterRequest, fallback nodesource.FilterConfig) nodesource.FilterConfig {
+	if req == nil {
+		return fallback
+	}
+	out := nodesource.FilterConfig{
+		Enabled:       req.Enabled,
+		MinTier:       strings.TrimSpace(req.MinTier),
+		Workers:       req.Workers,
+		Timeout:       fallback.Timeout,
+		MaxCandidates: req.MaxCandidates,
+		Probes: nodesource.FilterProbes{
+			HTTP:  strings.TrimSpace(req.Probes.HTTP),
+			HTTPS: strings.TrimSpace(req.Probes.HTTPS),
+		},
+	}
+	if req.Timeout != "" {
+		if d, err := time.ParseDuration(req.Timeout); err == nil {
+			out.Timeout = d
+		}
+	}
+	return out
+}
+
+func freeProxyCacheFromRequest(req *freeProxyCacheRequest, fallback config.FreeProxyCacheConfig) config.FreeProxyCacheConfig {
+	if req == nil {
+		return fallback
+	}
+	out := config.FreeProxyCacheConfig{
+		Enabled:        req.Enabled,
+		Path:           strings.TrimSpace(req.Path),
+		RefreshOnStart: req.RefreshOnStart,
+		AutoReload:     req.AutoReload,
+		Workers:        req.Workers,
+		MaxAge:         fallback.MaxAge,
+	}
+	if req.MaxAge != "" {
+		if d, err := time.ParseDuration(req.MaxAge); err == nil {
+			out.MaxAge = d
+		}
+	}
+	return out
+}
 
 // SubscriptionRefresher interface for subscription manager.
 type SubscriptionRefresher interface {
@@ -2068,6 +2171,27 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"include_unavailable": true,
 				"retry_failed":        false,
 			},
+			"free_proxy_sources":   []any{},
+			"free_proxy_max_nodes": 0,
+			"free_proxy_filter": map[string]any{
+				"enabled":        false,
+				"min_tier":       "http_basic",
+				"workers":        80,
+				"timeout":        "2s",
+				"max_candidates": 0,
+				"probes": map[string]any{
+					"http":  "http://cp.cloudflare.com/generate_204",
+					"https": "https://example.com/",
+				},
+			},
+			"free_proxy_cache": map[string]any{
+				"enabled":          true,
+				"path":             "",
+				"refresh_on_start": true,
+				"auto_reload":      true,
+				"workers":          4,
+				"max_age":          "6h0m0s",
+			},
 		}
 
 		if cfg != nil {
@@ -2111,6 +2235,29 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			resp["subscription_refresh"] = map[string]any{
 				"enabled":  cfg.SubscriptionRefresh.Enabled,
 				"interval": cfg.SubscriptionRefresh.Interval.String(),
+			}
+
+			resp["free_proxy_sources"] = cfg.FreeProxySources
+			resp["free_proxy_max_nodes"] = cfg.FreeProxyMaxNodes
+			resp["free_proxy_filter"] = map[string]any{
+				"enabled":        cfg.FreeProxyFilter.Enabled,
+				"min_tier":       cfg.FreeProxyFilter.MinTier,
+				"workers":        cfg.FreeProxyFilter.Workers,
+				"timeout":        cfg.FreeProxyFilter.Timeout.String(),
+				"max_candidates": cfg.FreeProxyFilter.MaxCandidates,
+				"probes": map[string]any{
+					"http":  cfg.FreeProxyFilter.Probes.HTTP,
+					"https": cfg.FreeProxyFilter.Probes.HTTPS,
+				},
+			}
+			cache := cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)
+			resp["free_proxy_cache"] = map[string]any{
+				"enabled":          cache.EnabledValue(),
+				"path":             cache.Path,
+				"refresh_on_start": cache.RefreshOnStartValue(),
+				"auto_reload":      cache.AutoReloadValue(),
+				"workers":          cache.Workers,
+				"max_age":          cache.MaxAge.String(),
 			}
 
 			q := cfg.QualityCheck.Normalized()
@@ -2174,6 +2321,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				IncludeUnavailable bool   `json:"include_unavailable"`
 				RetryFailed        bool   `json:"retry_failed"`
 			} `json:"quality_check"`
+			FreeProxySources  []nodesourceSourceConfigRequest `json:"free_proxy_sources"`
+			FreeProxyMaxNodes *int                            `json:"free_proxy_max_nodes"`
+			FreeProxyFilter   *freeProxyFilterRequest         `json:"free_proxy_filter"`
+			FreeProxyCache    *freeProxyCacheRequest          `json:"free_proxy_cache"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -2270,6 +2421,18 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 					s.cfgSrc.GeoIP.AutoUpdateInterval = d
 				}
 			}
+		}
+		if req.FreeProxySources != nil {
+			s.cfgSrc.FreeProxySources = sourceConfigsFromRequest(req.FreeProxySources)
+		}
+		if req.FreeProxyMaxNodes != nil {
+			s.cfgSrc.FreeProxyMaxNodes = *req.FreeProxyMaxNodes
+		}
+		if req.FreeProxyFilter != nil {
+			s.cfgSrc.FreeProxyFilter = freeProxyFilterFromRequest(req.FreeProxyFilter, s.cfgSrc.FreeProxyFilter)
+		}
+		if req.FreeProxyCache != nil {
+			s.cfgSrc.FreeProxyCache = freeProxyCacheFromRequest(req.FreeProxyCache, s.cfgSrc.FreeProxyCache)
 		}
 		if req.QualityCheck != nil {
 			s.cfgSrc.QualityCheck = config.QualityCheckConfig{
