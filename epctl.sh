@@ -275,7 +275,46 @@ is_running() {
     pid="$(cat "$PID_FILE" 2>/dev/null || true)"
     if pid_matches_profile "$pid"; then return 0; fi
   fi
-  return 1
+  [ -n "$(find_service_pids | head -n 1)" ]
+}
+
+running_pids() {
+  local pids=""
+  if [ -f "$PID_FILE" ]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if pid_matches_profile "$pid"; then
+      pids="$pid"
+    fi
+  fi
+  {
+    [ -n "$pids" ] && printf '%s\n' "$pids"
+    find_service_pids
+  } | sort -u | sed '/^$/d'
+}
+
+primary_pid() {
+  running_pids | head -n 1
+}
+
+sync_pid_file() {
+  local pid
+  pid="$(primary_pid || true)"
+  if [ -n "$pid" ]; then
+    echo "$pid" >"$PID_FILE"
+  else
+    rm -f "$PID_FILE"
+  fi
+}
+
+display_pid() {
+  local pid
+  pid="$(primary_pid || true)"
+  if [ -n "$pid" ]; then
+    echo "$pid"
+  elif [ -f "$PID_FILE" ]; then
+    cat "$PID_FILE"
+  fi
 }
 
 find_service_pids() {
@@ -419,7 +458,8 @@ EOF
 
 start_service() {
   if is_running; then
-    echo "[OK] already running, profile=$EP_PROFILE pid=$(cat "$PID_FILE")"
+    sync_pid_file
+    echo "[OK] already running, profile=$EP_PROFILE pid=$(display_pid)"
     return
   fi
   if [ ! -f "$CONFIG_FILE" ] && [ "$EP_PROFILE" = "isolated" ]; then
@@ -437,7 +477,8 @@ start_service() {
   echo $! >"$PID_FILE"
   sleep 1
   if is_running; then
-    echo "[OK] started, pid=$(cat "$PID_FILE")"
+    sync_pid_file
+    echo "[OK] started, pid=$(display_pid)"
     wait_for_webui || true
   else
     echo "[ERROR] failed to start, see $LOG_FILE"
