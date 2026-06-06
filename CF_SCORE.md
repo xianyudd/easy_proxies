@@ -99,6 +99,26 @@ CF 评分
 - score / level
 - latency / cache
 
+
+## 大规模后台检测
+
+6000+ 节点不要使用同步全量请求等待所有结果返回。节点质量页的“全量扫描”和“重试失败节点”会创建后台质量任务：
+
+```bash
+curl --noproxy '*' -sS -X POST 'http://127.0.0.1:9091/api/quality/jobs' \
+  -H 'content-type: application/json' \
+  -d '{"kind":"combined","region":"all","mode":"multi-port","count":6000,"include_unavailable":true,"replace":true}'
+```
+
+然后轮询进度并分页读取结果：
+
+```bash
+curl --noproxy '*' -sS 'http://127.0.0.1:9091/api/quality/jobs/<job_id>'
+curl --noproxy '*' -sS 'http://127.0.0.1:9091/api/quality/jobs/<job_id>/results?page=1&page_size=100'
+```
+
+详细接口见 `docs/quality-background-jobs.md`。
+
 ## API 用法
 
 ### 检查节点

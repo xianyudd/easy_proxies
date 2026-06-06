@@ -19,14 +19,15 @@ const DefaultMaxBytes int64 = 2 * 1024 * 1024
 
 // SourceConfig configures one external free-proxy source.
 type SourceConfig struct {
-	Name     string        `yaml:"name" json:"name"`
-	URL      string        `yaml:"url" json:"url"`
-	File     string        `yaml:"file" json:"file"`
-	Format   string        `yaml:"format" json:"format"`
-	Enabled  *bool         `yaml:"enabled" json:"enabled"`
-	Timeout  time.Duration `yaml:"timeout" json:"timeout"`
-	MaxNodes int           `yaml:"max_nodes" json:"max_nodes"`
-	MaxBytes int64         `yaml:"max_bytes" json:"max_bytes"`
+	Name          string        `yaml:"name" json:"name"`
+	URL           string        `yaml:"url" json:"url"`
+	File          string        `yaml:"file" json:"file"`
+	Format        string        `yaml:"format" json:"format"`
+	DefaultScheme string        `yaml:"default_scheme" json:"default_scheme"`
+	Enabled       *bool         `yaml:"enabled" json:"enabled"`
+	Timeout       time.Duration `yaml:"timeout" json:"timeout"`
+	MaxNodes      int           `yaml:"max_nodes" json:"max_nodes"`
+	MaxBytes      int64         `yaml:"max_bytes" json:"max_bytes"`
 }
 
 // EnabledValue reports whether this source should be loaded.
@@ -88,7 +89,7 @@ func (p *Provider) LoadLimited(maxNodes int) ([]Node, error) {
 		return nil, fmt.Errorf("source %q must set file or url", p.cfg.Name)
 	}
 
-	nodes, err := ParseFreeProxyContentLimited(p.cfg.Format, body, effectiveMaxNodes)
+	nodes, err := ParseFreeProxyContentLimitedWithOptions(p.cfg.Format, body, ParseOptions{MaxNodes: effectiveMaxNodes, DefaultScheme: p.cfg.DefaultScheme})
 	if err != nil {
 		return nil, err
 	}
@@ -163,6 +164,18 @@ func ParseFreeProxyContent(format string, data []byte) ([]Node, error) {
 // ParseFreeProxyContentLimited parses a free-proxy source and stops after
 // maxNodes valid entries when maxNodes > 0.
 func ParseFreeProxyContentLimited(format string, data []byte, maxNodes int) ([]Node, error) {
+	return ParseFreeProxyContentLimitedWithOptions(format, data, ParseOptions{MaxNodes: maxNodes})
+}
+
+// ParseOptions controls free-proxy source parsing.
+type ParseOptions struct {
+	MaxNodes      int
+	DefaultScheme string
+}
+
+// ParseFreeProxyContentLimitedWithOptions parses a free-proxy source with
+// caller-supplied limits and normalization defaults.
+func ParseFreeProxyContentLimitedWithOptions(format string, data []byte, opts ParseOptions) ([]Node, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
 	content := strings.TrimSpace(string(data))
 	if format == "" || format == "auto" {
@@ -175,19 +188,19 @@ func ParseFreeProxyContentLimited(format string, data []byte, maxNodes int) ([]N
 
 	switch format {
 	case "txt", "text", "plain":
-		return parseTextLimited(data, maxNodes), nil
+		return parseTextLimited(data, opts.MaxNodes, opts.DefaultScheme), nil
 	case "json":
-		return parseJSONLimited(data, maxNodes)
+		return parseJSONLimited(data, opts.MaxNodes)
 	default:
 		return nil, fmt.Errorf("unsupported free proxy source format %q", format)
 	}
 }
 
 func parseText(content string) []Node {
-	return parseTextLimited([]byte(content), 0)
+	return parseTextLimited([]byte(content), 0, "")
 }
 
-func parseTextLimited(data []byte, maxNodes int) []Node {
+func parseTextLimited(data []byte, maxNodes int, defaultScheme string) []Node {
 	var nodes []Node
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -200,7 +213,7 @@ func parseTextLimited(data []byte, maxNodes int) []Node {
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 			continue
 		}
-		if uri := normalizeProxyURI(line, ""); uri != "" {
+		if uri := normalizeProxyURI(line, defaultScheme); uri != "" {
 			nodes = append(nodes, Node{URI: uri})
 		}
 	}

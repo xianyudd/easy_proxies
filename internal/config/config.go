@@ -238,7 +238,17 @@ func (c *Config) appendFreeProxyNodes() error {
 			break
 		}
 		provider := nodesource.NewProvider(source)
-		sourceNodes, err := provider.Load()
+		remaining := 0
+		if c.FreeProxyMaxNodes > 0 {
+			remaining = c.FreeProxyMaxNodes - totalAdded
+			if remaining <= 0 {
+				break
+			}
+			// Fetch enough source entries to still fill the remaining global cap
+			// when earlier inline/subscription nodes are de-duplicated out.
+			remaining += len(seen)
+		}
+		sourceNodes, err := provider.LoadLimited(remaining)
 		if err != nil {
 			name := strings.TrimSpace(source.Name)
 			if name == "" {

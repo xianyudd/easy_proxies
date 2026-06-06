@@ -123,3 +123,81 @@ func TestNormalizeFreeProxyCompositionIsIdempotent(t *testing.T) {
 		t.Fatalf("expected idempotent free composition, got %#v", cfg.Nodes)
 	}
 }
+
+func TestLoadDoesNotRequestLaterFreeProxySourcesAfterGlobalCapFilled(t *testing.T) {
+	secondRequests := 0
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("http://10.0.0.1:8080\nhttp://10.0.0.2:8080\nhttp://10.0.0.3:8080\n"))
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondRequests++
+		_, _ = w.Write([]byte("http://10.0.1.1:8080\n"))
+	}))
+	defer second.Close()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `mode: pool
+free_proxy_max_nodes: 2
+free_proxy_sources:
+  - name: first
+    url: ` + first.URL + `
+    format: txt
+    max_nodes: 100
+  - name: second
+    url: ` + second.URL + `
+    format: txt
+    max_nodes: 100
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if len(cfg.Nodes) != 2 {
+		t.Fatalf("expected exactly 2 capped free nodes, got %d: %#v", len(cfg.Nodes), cfg.Nodes)
+	}
+	if cfg.Nodes[0].URI != "http://10.0.0.1:8080" || cfg.Nodes[1].URI != "http://10.0.0.2:8080" {
+		t.Fatalf("unexpected capped free node order: %#v", cfg.Nodes)
+	}
+	if secondRequests != 0 {
+		t.Fatalf("expected second source not to be requested after global cap filled, got %d requests", secondRequests)
+	}
+}
+
+func TestLoadLimitedFetchesEnoughFreeProxyRowsToFillCapAfterDedupe(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `mode: pool
+nodes:
+  - name: existing
+    uri: http://10.0.0.1:8080
+free_proxy_max_nodes: 2
+free_proxy_sources:
+  - name: local-free
+    format: txt
+    max_nodes: 100
+    file: free.txt
+`
+	if err := os.WriteFile(filepath.Join(dir, "free.txt"), []byte("http://10.0.0.1:8080\nhttp://10.0.0.2:8080\nhttp://10.0.0.3:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if len(cfg.Nodes) != 3 {
+		t.Fatalf("expected existing + 2 unique free nodes after dedupe, got %d: %#v", len(cfg.Nodes), cfg.Nodes)
+	}
+	if cfg.Nodes[1].URI != "http://10.0.0.2:8080" || cfg.Nodes[2].URI != "http://10.0.0.3:8080" {
+		t.Fatalf("unexpected deduped capped nodes: %#v", cfg.Nodes)
+	}
+}

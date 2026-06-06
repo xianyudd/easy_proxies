@@ -141,3 +141,24 @@ func TestProviderLoadLimitedUsesLowerPositiveLimit(t *testing.T) {
 		t.Fatalf("expected caller cap, got %d", len(nodes))
 	}
 }
+
+func TestProviderAppliesDefaultSchemeForPlainTextSources(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "socks5.txt")
+	if err := os.WriteFile(file, []byte("1.2.3.4:1080\nhttp://5.6.7.8:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := NewProvider(SourceConfig{Name: "socks", File: file, Format: "txt", DefaultScheme: "socks5"}).Load()
+	if err != nil {
+		t.Fatalf("load source failed: %v", err)
+	}
+	want := []string{"socks5://1.2.3.4:1080", "http://5.6.7.8:8080"}
+	if len(nodes) != len(want) {
+		t.Fatalf("expected %d nodes, got %d: %#v", len(want), len(nodes), nodes)
+	}
+	for i := range want {
+		if nodes[i].URI != want[i] {
+			t.Fatalf("node %d uri: want %q got %q", i, want[i], nodes[i].URI)
+		}
+	}
+}

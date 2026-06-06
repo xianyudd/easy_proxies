@@ -293,6 +293,7 @@ free_proxy_sources:
   - name: "local-free-list"
     file: free-proxies.txt
     format: txt
+    default_scheme: http
     enabled: true
     max_nodes: 300
     max_bytes: 2097152
@@ -309,7 +310,7 @@ Free proxy sources are loaded after inline/file/subscription nodes, deduplicated
 
 Supported MVP formats:
 
-- `txt`: one proxy per line, accepting either `host:port` (defaults to `http://`) or a full `http://`, `https://`, `socks5://`, or `socks://` URI.
+- `txt`: one proxy per line, accepting either `host:port` (defaults to `http://`, or `default_scheme` when set) or a full `http://`, `https://`, `socks5://`, or `socks://` URI.
 - `json`: arrays or wrapped objects (`proxies`, `data`, or `items`) with either `uri` / `url` fields, or `ip` / `host` / `address` + `port` + optional `protocol` / `type`.
 
 Relative `file` paths are resolved relative to `config.yaml`.
@@ -322,7 +323,7 @@ Features:
 
 - **Dashboard**: Real-time node status, traffic charts with selectable time windows, region availability, latency monitoring
 - **Node Overview**: Full node table with region/status/latency filters, sorting, refresh, and proxy copy actions
-- **Node Quality**: One-click all-node Cloudflare compatibility and IP reputation scans, cached results, failed-node retry, and composite quality ranking
+- **Node Quality**: Background Cloudflare compatibility and IP reputation jobs for large node lists, cached results, failed-node retry, server-side result pagination, and composite quality ranking
 - **Node Config**: Add/edit/delete inline nodes and subscription URLs
 - **Diagnostics**: Connectivity testing and node state export
 - **Console**: Real-time application logs (last 1000 lines, WebSocket streaming)
@@ -341,9 +342,13 @@ When `management.password` is empty, authentication is bypassed.
 | `/api/nodes/{tag}/blacklist` | POST | Manually blacklist a node |
 | `/api/nodes/{tag}/release` | POST | Release node from blacklist |
 | `/api/nodes/probe-all` | POST | Probe all nodes (SSE stream) |
-| `/api/cloudflare/check` | GET | Run Cloudflare compatibility checks; supports cached all-node scans and failed-node retry |
+| `/api/quality/jobs` | POST | Create a background Cloudflare/reputation/combined quality job |
+| `/api/quality/jobs/{id}` | GET | Read background quality job progress and summary |
+| `/api/quality/jobs/{id}/results` | GET | Page through stable quality job results |
+| `/api/quality/jobs/{id}/cancel` | POST | Cancel an active quality job |
+| `/api/cloudflare/check` | GET | Run Cloudflare compatibility checks; add `background=true` for async jobs |
 | `/api/cloudflare/cache` | GET, POST, DELETE | Read or clear Cloudflare compatibility cache |
-| `/api/reputation/check` | GET | Run IP reputation checks for nodes; supports all-node scans and retry mode |
+| `/api/reputation/check` | GET | Run IP reputation checks for nodes; add `async=true` for async jobs |
 | `/api/reputation/cache` | GET, POST, DELETE | Read or clear IP reputation cache |
 | `/api/reputation/ip` | GET | Check reputation for a single IP address |
 | `/api/export` | GET | Export node configuration |
@@ -425,7 +430,7 @@ MIT License
 
 - `代理提取`：按地区、协议格式和数量提取代理。
 - `节点总览`：展示全部节点，支持地区、可用性、延迟筛选和排序。
-- `节点质量`：自动加载 CF/IP 信誉缓存，可一键扫描全部节点、重试失败节点，并按综合质量排序；也可通过 `quality_check` 配置定时刷新质量缓存。
+- `节点质量`：自动加载 CF/IP 信誉缓存；全量扫描和失败重试通过后台任务执行，结果服务端分页返回，避免 6000+ 节点时阻塞页面；也可通过 `quality_check` 配置定时刷新质量缓存。
 - `运行状态`：展示节点状态、实时流量和可切换时间尺度的带宽图。
 - `系统设置`：维护配置并写回 `config.yaml`。
 - `日志诊断`：查看日志和诊断信息。

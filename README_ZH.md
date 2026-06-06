@@ -132,7 +132,7 @@ dns:
   - 会抓取订阅节点并追加到运行节点列表
   - `nodes_file` 作为订阅节点写入路径
   - 启动阶段不再从 `nodes_file` 读取节点
-- `free_proxy_sources` 会在订阅源 / 节点文件 / 内联节点之后追加，按 URI 去重，默认最多激活 500 个免费源节点；可用 `free_proxy_max_nodes`、每个源的 `max_nodes` 和 `max_bytes` 控制规模。
+- `free_proxy_sources` 会在订阅源 / 节点文件 / 内联节点之后追加，按 URI 去重，默认最多激活 500 个免费源节点；可用 `free_proxy_max_nodes`、每个源的 `max_nodes` 和 `max_bytes` 控制规模。纯 `host:port` 文本源默认按 HTTP 解析；SOCKS5 文本源可设置 `default_scheme: socks5`，避免被误归一化成 HTTP。
 - `nodes`（内联节点）只要存在就会参与运行。
 
 ## 协议支持注意事项
@@ -160,9 +160,13 @@ dns:
 - `POST /api/nodes/{tag}/release`
 - `POST /api/nodes/{tag}/blacklist`
 - `POST /api/nodes/probe-all`（SSE）
-- `GET /api/cloudflare/check`（CF 兼容性检测，支持全量扫描、缓存和失败重试）
+- `POST /api/quality/jobs`（创建后台 CF / IP 信誉 / 组合质量检测任务）
+- `GET /api/quality/jobs/{id}`（查询后台任务进度和汇总）
+- `GET /api/quality/jobs/{id}/results`（分页读取后台任务结果）
+- `POST /api/quality/jobs/{id}/cancel`（取消后台任务）
+- `GET /api/cloudflare/check`（CF 兼容性检测；大规模扫描可加 `background=true`）
 - `GET|POST|DELETE /api/cloudflare/cache`
-- `GET /api/reputation/check`（IP 信誉检测，支持全量扫描和重试模式）
+- `GET /api/reputation/check`（IP 信誉检测；大规模扫描可加 `async=true`）
 - `GET|POST|DELETE /api/reputation/cache`
 - `GET /api/reputation/ip`
 - `GET /api/export`
@@ -188,7 +192,7 @@ dns:
 
 - `代理提取`：按地区、协议格式和数量提取代理，并支持复制。
 - `节点总览`：展示全部节点，支持地区、可用性、延迟筛选和排序。
-- `节点质量`：进入页面自动加载缓存；可一键扫描全部节点，同时写入 CF 评分和 IP 风险缓存；支持重试失败节点，并展示综合质量排名。后端也支持通过 `quality_check` 配置定时刷新质量缓存。
+- `节点质量`：进入页面自动加载缓存；全量扫描和失败重试通过后台任务执行，结果服务端分页返回，避免 6000+ 节点时阻塞页面；展示 CF 评分、IP 风险和综合质量排名。后端也支持通过 `quality_check` 配置定时刷新质量缓存。
 - `运行状态`：展示节点状态、实时流量和可切换时间尺度的带宽图。
 - `系统设置`：维护配置并写回 `config.yaml`。
 - `日志诊断`：查看日志、运行状态和诊断信息。

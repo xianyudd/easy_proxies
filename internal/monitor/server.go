@@ -24,6 +24,7 @@ import (
 	"easy_proxies/internal/cloudflarecheck"
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
+	"easy_proxies/internal/quality"
 	"easy_proxies/internal/reputation"
 	"golang.org/x/sync/semaphore"
 )
@@ -94,6 +95,7 @@ type Server struct {
 	nodeMgr      NodeManager
 	repChecker   *reputation.Checker
 	cfChecker    *cloudflarecheck.Checker
+	qualitySvc   *quality.Service
 
 	qualityMu      sync.Mutex
 	qualityStop    chan struct{}
@@ -126,6 +128,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 		repChecker: reputation.NewChecker(),
 		cfChecker:  cloudflarecheck.NewChecker(),
 	}
+	s.qualitySvc = quality.NewService(quality.ServiceOptions{TargetSource: newMonitorQualityTargetSource(s), QuickRunner: monitorQualityRunner{s: s}, CloudflareRunner: monitorQualityRunner{s: s}, ReputationRunner: monitorQualityRunner{s: s}, MaxWorkers: 300})
 
 	// Start session cleanup goroutine
 	go s.cleanupExpiredSessions()
@@ -147,6 +150,8 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/reputation/cache", s.withAuth(s.handleReputationCache))
 	mux.HandleFunc("/api/cloudflare/check", s.withAuth(s.handleCloudflareCheck))
 	mux.HandleFunc("/api/cloudflare/cache", s.withAuth(s.handleCloudflareCache))
+	mux.HandleFunc("/api/quality/jobs", s.withAuth(s.handleQualityJobs))
+	mux.HandleFunc("/api/quality/jobs/", s.withAuth(s.handleQualityJobItem))
 	mux.HandleFunc("/api/subscription/status", s.withAuth(s.handleSubscriptionStatus))
 	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
 	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
@@ -288,6 +293,9 @@ func (s *Server) Shutdown(ctx context.Context) {
 		return
 	}
 	s.stopQualityScheduler()
+	if s.qualitySvc != nil {
+		_ = s.qualitySvc.Shutdown(ctx)
+	}
 	_ = s.srv.Shutdown(ctx)
 }
 
@@ -1195,17 +1203,20 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
 	retryFailed := r.URL.Query().Get("retry_failed") == "1" || strings.EqualFold(r.URL.Query().Get("retry_failed"), "true")
+	if !isAllowedMonitorRegion(region) {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid region"})
+		return
+	}
+	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckCloudflare, region, mode, count, includeUnavailable, retryFailed); startBackground {
+		return
+	}
 	maxCount := 50
 	if includeUnavailable {
 		maxCount = 500
 	}
 	if count > maxCount {
 		count = maxCount
-	}
-	if !isAllowedMonitorRegion(region) {
-		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "invalid region"})
-		return
 	}
 	if mode != "multi-port" && mode != "multi_port" && mode != "multi" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1408,17 +1419,21 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		count = parsed
 	}
 	retryFailed := r.URL.Query().Get("retry_failed") == "1" || strings.EqualFold(r.URL.Query().Get("retry_failed"), "true")
-	maxCount := 50
-	if retryFailed || strings.EqualFold(r.URL.Query().Get("scope"), "all") || r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") {
-		maxCount = 500
-	}
-	if count > maxCount {
-		count = maxCount
-	}
 	if !isAllowedMonitorRegion(region) {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "invalid region"})
 		return
+	}
+	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
+	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckReputation, region, mode, count, includeUnavailable, retryFailed); startBackground {
+		return
+	}
+	maxCount := 50
+	if retryFailed || strings.EqualFold(r.URL.Query().Get("scope"), "all") || includeUnavailable {
+		maxCount = 500
+	}
+	if count > maxCount {
+		count = maxCount
 	}
 	if mode != "multi-port" && mode != "multi_port" && mode != "multi" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1426,7 +1441,6 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
 	var retryTags map[string]bool
 	if retryFailed {
 		retryTags = failedReputationTags(s.repChecker.NodeResults())
