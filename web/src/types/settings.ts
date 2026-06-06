@@ -52,4 +52,7 @@ export interface SaveSettingsResponse {
   external_ip?: string
   probe_target?: string
   skip_cert_verify?: boolean
+  management_rebound?: boolean
+  management_listen?: string
+  management_url_hint?: string
 }

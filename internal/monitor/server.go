@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log"
 	mathrand "math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -56,16 +57,60 @@ var (
 	ErrInvalidNode  = errors.New("无效的节点配置")
 )
 
+// durationString accepts either Go duration strings ("30s") or the numeric
+// nanosecond representation produced when time.Duration is marshaled as JSON.
+type durationString struct {
+	time.Duration
+}
+
+func (d *durationString) UnmarshalJSON(data []byte) error {
+	text := strings.TrimSpace(string(data))
+	if text == "" || text == "null" {
+		d.Duration = 0
+		return nil
+	}
+	if strings.HasPrefix(text, "\"") {
+		var raw string
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			d.Duration = 0
+			return nil
+		}
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			return err
+		}
+		d.Duration = parsed
+		return nil
+	}
+	var nanos int64
+	if err := json.Unmarshal(data, &nanos); err != nil {
+		return err
+	}
+	d.Duration = time.Duration(nanos)
+	return nil
+}
+
+func (d durationString) String() string {
+	if d.Duration <= 0 {
+		return ""
+	}
+	return d.Duration.String()
+}
+
 type nodesourceSourceConfigRequest struct {
-	Name          string `json:"name"`
-	URL           string `json:"url"`
-	File          string `json:"file"`
-	Format        string `json:"format"`
-	DefaultScheme string `json:"default_scheme"`
-	Enabled       *bool  `json:"enabled"`
-	Timeout       string `json:"timeout"`
-	MaxNodes      int    `json:"max_nodes"`
-	MaxBytes      int64  `json:"max_bytes"`
+	Name          string         `json:"name"`
+	URL           string         `json:"url"`
+	File          string         `json:"file"`
+	Format        string         `json:"format"`
+	DefaultScheme string         `json:"default_scheme"`
+	Enabled       *bool          `json:"enabled"`
+	Timeout       durationString `json:"timeout"`
+	MaxNodes      int            `json:"max_nodes"`
+	MaxBytes      int64          `json:"max_bytes"`
 }
 
 type freeProxyFilterRequest struct {
@@ -102,10 +147,8 @@ func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) []nodesource.S
 			MaxNodes:      item.MaxNodes,
 			MaxBytes:      item.MaxBytes,
 		}
-		if item.Timeout != "" {
-			if d, err := time.ParseDuration(item.Timeout); err == nil {
-				cfg.Timeout = d
-			}
+		if item.Timeout.String() != "" {
+			cfg.Timeout = item.Timeout.Duration
 		}
 		if cfg.Name == "" && cfg.URL == "" && cfg.File == "" {
 			continue
@@ -179,12 +222,14 @@ type SubscriptionStatus struct {
 
 // Server exposes HTTP endpoints for monitoring.
 type Server struct {
-	cfg    Config
-	cfgMu  sync.RWMutex   // 保护动态配置字段
-	cfgSrc *config.Config // 可持久化的配置对象
-	mgr    *Manager
-	srv    *http.Server
-	logger *log.Logger
+	cfg     Config
+	cfgMu   sync.RWMutex   // 保护动态配置字段
+	cfgSrc  *config.Config // 可持久化的配置对象
+	mgr     *Manager
+	srv     *http.Server
+	handler http.Handler
+	serveMu sync.Mutex
+	logger  *log.Logger
 
 	// Session management
 	sessionMu  sync.RWMutex
@@ -261,6 +306,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
 	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
+	s.handler = mux
 	s.srv = &http.Server{Addr: cfg.Listen, Handler: mux}
 	return s
 }
@@ -373,21 +419,85 @@ func (s *Server) Start(ctx context.Context) {
 	if s == nil || s.srv == nil {
 		return
 	}
-	s.logger.Printf("Starting monitor server on %s", s.cfg.Listen)
-	go func() {
-		if err := s.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.logger.Printf("❌ Monitor server error: %v", err)
-		}
-	}()
-	// Give server a moment to start and check for immediate errors
-	time.Sleep(100 * time.Millisecond)
-	s.logger.Printf("✅ Monitor server started on http://%s", s.cfg.Listen)
+	if err := s.startHTTPServer(s.cfg.Listen); err != nil {
+		s.logger.Printf("❌ Monitor server error: %v", err)
+		return
+	}
 	s.ensureQualityScheduler()
 
 	go func() {
 		<-ctx.Done()
 		s.Shutdown(context.Background())
 	}()
+}
+
+func (s *Server) startHTTPServer(addr string) error {
+	if strings.TrimSpace(addr) == "" {
+		return errors.New("monitor listen address is empty")
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	server := &http.Server{Addr: ln.Addr().String(), Handler: s.handler}
+	s.serveMu.Lock()
+	s.srv = server
+	s.cfg.Listen = ln.Addr().String()
+	s.serveMu.Unlock()
+	s.logger.Printf("Starting monitor server on %s", ln.Addr().String())
+	go func() {
+		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
+			s.logger.Printf("❌ Monitor server error: %v", err)
+		}
+	}()
+	s.logger.Printf("✅ Monitor server started on http://%s", ln.Addr().String())
+	return nil
+}
+
+func (s *Server) rebindHTTPServer(addr string) (string, bool, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "", false, errors.New("management listen address is empty")
+	}
+	s.serveMu.Lock()
+	current := ""
+	old := s.srv
+	if old != nil {
+		current = old.Addr
+	}
+	if current == addr {
+		s.serveMu.Unlock()
+		return current, false, nil
+	}
+	s.serveMu.Unlock()
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return current, false, fmt.Errorf("listen %s: %w", addr, err)
+	}
+	server := &http.Server{Addr: ln.Addr().String(), Handler: s.handler}
+
+	s.serveMu.Lock()
+	old = s.srv
+	s.srv = server
+	s.cfg.Listen = ln.Addr().String()
+	s.serveMu.Unlock()
+
+	s.logger.Printf("Rebinding monitor server from %s to %s", current, ln.Addr().String())
+	go func() {
+		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
+			s.logger.Printf("❌ Monitor server error: %v", err)
+		}
+	}()
+	if old != nil {
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = old.Shutdown(ctx)
+		}()
+	}
+	return ln.Addr().String(), true, nil
 }
 
 // Shutdown stops the server gracefully.
@@ -399,7 +509,12 @@ func (s *Server) Shutdown(ctx context.Context) {
 	if s.qualitySvc != nil {
 		_ = s.qualitySvc.Shutdown(ctx)
 	}
-	_ = s.srv.Shutdown(ctx)
+	s.serveMu.Lock()
+	srv := s.srv
+	s.serveMu.Unlock()
+	if srv != nil {
+		_ = srv.Shutdown(ctx)
+	}
 }
 
 func (s *Server) ensureQualityScheduler() {
@@ -2337,6 +2452,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 		logCfg := config.LogConfig{}
 		hasLogCfg := false
+		oldManagementListen := ""
 		if req.Log != nil {
 			logCfg = config.LogConfig{
 				Output:     req.Log.Output,
@@ -2355,6 +2471,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": "配置存储未初始化"})
 			return
 		}
+
+		oldManagementListen = s.cfg.Listen
 
 		s.cfg.ExternalIP = extIP
 		s.cfg.ProbeTarget = probeTarget
@@ -2457,6 +2575,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfg.ProxyUsername = s.cfgSrc.Listener.Username
 			s.cfg.ProxyPassword = s.cfgSrc.Listener.Password
 		}
+		newManagementListen := s.cfgSrc.Management.Listen
 		if err := s.cfgSrc.SaveSettings(); err != nil {
 			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)
@@ -2464,18 +2583,72 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cfgMu.Unlock()
+
+		reboundListen := ""
+		managementRebound := false
+		if oldManagementListen != "" && strings.TrimSpace(newManagementListen) != "" && strings.TrimSpace(newManagementListen) != strings.TrimSpace(oldManagementListen) {
+			listen, changed, err := s.rebindHTTPServer(newManagementListen)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("管理端口热切换失败: %v", err)})
+				return
+			}
+			reboundListen = listen
+			managementRebound = changed
+			s.cfgMu.Lock()
+			if s.cfgSrc != nil {
+				s.cfgSrc.Management.Listen = listen
+				_ = s.cfgSrc.SaveSettings()
+			}
+			s.cfgMu.Unlock()
+		}
 		s.ensureQualityScheduler()
 
 		writeJSON(w, map[string]any{
-			"message":          "设置已保存",
-			"external_ip":      extIP,
-			"probe_target":     probeTarget,
-			"skip_cert_verify": req.SkipCertVerify,
-			"need_reload":      true,
+			"message":             "设置已保存",
+			"external_ip":         extIP,
+			"probe_target":        probeTarget,
+			"skip_cert_verify":    req.SkipCertVerify,
+			"need_reload":         true,
+			"management_rebound":  managementRebound,
+			"management_listen":   reboundListen,
+			"management_url_hint": managementURLHint(r, reboundListen),
 		})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func managementURLHint(r *http.Request, listen string) string {
+	listen = strings.TrimSpace(listen)
+	if listen == "" {
+		return ""
+	}
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return ""
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		requestHost := r.Host
+		if h, _, err := net.SplitHostPort(requestHost); err == nil && h != "" {
+			host = h
+		} else if requestHost != "" {
+			host = strings.Split(requestHost, ":")[0]
+		} else {
+			host = "127.0.0.1"
+		}
+	}
+	return fmt.Sprintf("%s://%s", requestScheme(r), net.JoinHostPort(host, port))
+}
+
+func requestScheme(r *http.Request) string {
+	if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+		return strings.Split(proto, ",")[0]
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
 }
 
 // handleSubscriptionStatus returns the current subscription refresh status.

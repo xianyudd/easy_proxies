@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Checkbox, Input, Select } from 'antd'
 import { AlertCircle, Clock3, Database, Plus, Save, Trash2, Wifi } from 'lucide-react'
-import { getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig, reloadCore } from '../api/settings'
+import { getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig, reloadCoreWithRetry } from '../api/settings'
 import { getCloudflareCache } from '../api/cloudflare'
 import { getReputationCache } from '../api/reputation'
 import { Button } from '../components/ui/Button'
@@ -20,6 +20,7 @@ function shortDate(value: unknown) {
   return new Date(text).toLocaleString()
 }
 function splitLines(value: string) { return value.split('\n').map(s => s.trim()).filter(Boolean) }
+function editableLines(value: string) { return value === '' ? [] : value.split('\n') }
 function isWideOpen(value: unknown) { return String(value || '').trim() === '0.0.0.0' }
 function latestCheckedAt(rows: Array<{ checked_at?: unknown; result?: unknown }>) {
   const latest = rows
@@ -39,7 +40,7 @@ export function SettingsPage() {
   const repCache = useQuery({ queryKey:['rep-cache'], queryFn:getReputationCache })
   const [draft, setDraft] = useState<SettingsResponse>({})
   const [subs, setSubs] = useState('')
-  const [needsReload, setNeedsReload] = useState(false)
+  const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const toast = useToast(s=>s.show)
   useEffect(()=>{ if(settings.data){ setDraft(settings.data); setSubs(listValue(settings.data.subscriptions)) } }, [settings.data])
   useEffect(() => {
@@ -47,9 +48,29 @@ export function SettingsPage() {
     if (!id) return
     window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 0)
   }, [])
-  const save = useMutation({ mutationFn: saveSettings, onSuccess:(res)=>{ toast('设置已保存', 'ok'); setNeedsReload(Boolean(res?.need_reload)); void settings.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'保存失败','error') })
-  const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:()=>{ toast('订阅配置已保存','ok'); setNeedsReload(true); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
-  const reload = useMutation({ mutationFn: reloadCore, onSuccess:()=>{ toast('重载成功', 'ok'); setNeedsReload(false); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'重载失败','error') })
+  const reload = useMutation({ mutationFn: () => reloadCoreWithRetry(), onSuccess:()=>{ toast('设置已自动重载并生效', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>{ setReloadState('failed'); toast(e instanceof Error ? `自动重载失败：${e.message}`:'自动重载失败','error') } })
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('autoReload') !== '1') return
+    params.delete('autoReload')
+    const nextSearch = params.toString()
+    window.history.replaceState(null, '', `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash || '#settings'}`)
+    setReloadState('reloading')
+    reload.mutate()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const save = useMutation({ mutationFn: saveSettings, onSuccess:(res)=>{
+    if (res?.management_rebound && res.management_url_hint) {
+      toast('管理端口已热切换，正在跳转到新地址...', 'ok')
+      const target = new URL(res.management_url_hint)
+      target.searchParams.set('autoReload', res?.need_reload ? '1' : '0')
+      target.hash = 'settings'
+      window.setTimeout(() => { window.location.href = target.toString() }, 300)
+      return
+    }
+    toast('设置已保存，正在自动重载...', 'ok'); void settings.refetch(); if (res?.need_reload) { setReloadState('reloading'); reload.mutate() } else { setReloadState('idle') }
+  }, onError:e=>toast(e instanceof Error ? e.message:'保存失败','error') })
+  const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:()=>{ toast('订阅配置已保存并刷新', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
   const input = (label:string, value:string, onChange:(v:string)=>void, type='text') => <div className="field settings-form-item"><label>{label}</label><Input className="settings-input" type={type} autoComplete={type === 'password' ? 'current-password' : label.includes('用户名') ? 'username' : undefined} value={value} onChange={e=>onChange(e.target.value)} /></div>
   const toggle = (label:string, checked:boolean, onChange:(v:boolean)=>void) => <Checkbox className="settings-checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}>{label}</Checkbox>
   const listener = (draft.listener || {}) as Record<string, unknown>
@@ -65,7 +86,8 @@ export function SettingsPage() {
   const freeCache = (draft.free_proxy_cache || {}) as FreeProxyCache
   const freeFilterProbes = freeFilter.probes || {}
   const status = subStatus.data || {}
-  const subItems = splitLines(subs)
+  const subItems = editableLines(subs)
+  const cleanSubItems = splitLines(subs)
   const cfRows = (cfCache.data?.data || []) as CloudflareResult[]
   const repRows = (repCache.data?.data || []) as ReputationResult[]
   const isPublicAdmin = String(mgmt.listen || '').startsWith('0.0.0.0') && !String(mgmt.password || '').trim()
@@ -79,7 +101,6 @@ export function SettingsPage() {
   const freeSourceIssues = freeSources.map((src, idx) => ({idx, issue: !String(src.url || src.file || '').trim() ? `#${idx + 1} 请填写 URL 或文件路径` : ''})).filter(item => item.issue)
   const updateFreeFilter = (patch: Partial<FreeProxyFilter>) => setDraft({...draft, free_proxy_filter: {...freeFilter, ...patch}})
   const updateFreeCache = (patch: Partial<FreeProxyCache>) => setDraft({...draft, free_proxy_cache: {...freeCache, ...patch}})
-  const reloadAfterSave = () => reload.mutate()
   const saveAllSettings = () => {
     if (freeSourceIssues.length > 0) {
       toast('请先补全免费代理源的 URL 或文件路径', 'error')
@@ -88,7 +109,7 @@ export function SettingsPage() {
     save.mutate(draft)
   }
   const saveSubscriptions = () => saveSub.mutate({
-    subscriptions: subItems,
+    subscriptions: cleanSubItems,
     enabled: subRefresh.enabled !== false,
     interval: String(subRefresh.interval || '1h0m0s'),
   })
@@ -96,7 +117,7 @@ export function SettingsPage() {
   return <div className="page settings-page">
     <div className="page-header settings-hero">
       <div><h1>系统设置</h1><p>集中管理订阅来源、代理入口、地区路由、质量检测和日志策略。</p></div>
-      <div className="toolbar"><Button variant="primary" onClick={saveAllSettings} disabled={save.isPending}><Save size={16} />{save.isPending ? '保存中...' : '保存设置'}</Button></div>
+      <div className="toolbar"><Button variant="primary" onClick={saveAllSettings} disabled={save.isPending || reload.isPending}><Save size={16} />{save.isPending ? '保存中...' : reload.isPending ? '重载中...' : '保存设置'}</Button></div>
     </div>
     {(isPublicAdmin || isPublicProxy) && <div className="settings-alert modern-settings-alert" role="alert">
       <AlertCircle size={18} />
@@ -105,13 +126,12 @@ export function SettingsPage() {
         <span>如果只在本机使用，建议把监听地址改为 127.0.0.1；管理端口建议设置密码后再对局域网开放。</span>
       </div>
     </div>}
-    {needsReload && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status">
+    {reloadState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status">
       <Clock3 size={18} />
       <div>
-        <strong>设置已保存，重载核心后生效</strong>
-        <span>新的免费源和自动筛选策略需要重载后才会抓取、预筛并进入节点总览。</span>
+        <strong>{reloadState === 'reloading' ? '设置已保存，正在自动重载核心' : '自动重载失败'}</strong>
+        <span>{reloadState === 'reloading' ? '新的免费源和自动筛选策略会在重载完成后自动生效。' : '配置已经保存，但核心重载失败；请检查日志后再次保存或使用 epctl 重启隔离实例。'}</span>
       </div>
-      <Button onClick={reloadAfterSave} disabled={reload.isPending}>{reload.isPending ? '重载中...' : '立即重载'}</Button>
     </div>}
     <div className="settings-layout refined-settings-layout">
       <div className="side-nav settings-anchor-nav">
@@ -127,7 +147,7 @@ export function SettingsPage() {
         <section className="card settings-section settings-section-featured" id="subscriptions">
           <div className="panel-header settings-section-header"><div><div className="panel-title">订阅</div><div className="panel-subtitle">每条订阅独立编辑，长 URL 不再挤在一个文本框里。</div></div><div className="toolbar"><Button onClick={addSub}><Plus size={16} />新增订阅</Button><Button variant="primary" onClick={saveSubscriptions} disabled={saveSub.isPending}><Save size={16} />{saveSub.isPending ? '保存中...' : '保存订阅'}</Button></div></div>
           <div className="settings-status-grid">
-            <div className="status-card"><Database size={16} /><span>订阅条目</span><strong>{subItems.length}</strong></div>
+            <div className="status-card"><Database size={16} /><span>订阅条目</span><strong>{cleanSubItems.length}</strong></div>
             <div className="status-card"><Wifi size={16} /><span>刷新状态</span><strong>{boolValue(status.is_refreshing) ? '刷新中' : '空闲'}</strong></div>
             <div className="status-card"><Clock3 size={16} /><span>下次刷新</span><strong>{shortDate(status.next_refresh)}</strong></div>
             <div className="status-card"><Database size={16} /><span>最近节点数</span><strong>{Number(status.node_count || 0)}</strong></div>
