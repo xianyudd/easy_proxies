@@ -212,7 +212,7 @@ export function SettingsPage() {
       <Clock3 size={18} />
       <div>
         <strong>{freeProxyRefreshState === 'refreshing' ? '免费源正在后台扫描' : '免费源扫描失败'}</strong>
-        <span>{freeProxyRefreshState === 'refreshing' ? '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。' : '免费源刷新未产生可入池节点，系统已清理旧缓存并按配置重载；请检查源地址、探针或降低筛选等级。'}</span>
+        <span>{freeProxyRefreshState === 'refreshing' ? '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。' : '免费源刷新未产生可入池节点，系统已保留现有缓存且不会自动重载；请检查源地址、探针或降低筛选等级。'}</span>
         {freeProxyRefreshStatus.data?.sources?.length ? <span>
           源结果：{freeProxyRefreshStatus.data.sources.map(src => `${src.name || 'unnamed'} ${src.accepted || 0}/${src.candidates || 0}${src.error ? ' 失败' : ''}`).join('；')}
         </span> : null}

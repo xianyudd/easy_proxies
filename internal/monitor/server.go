@@ -2992,23 +2992,43 @@ func (s *Server) handleSubscriptionStatus(w http.ResponseWriter, r *http.Request
 
 	if s.subRefresher == nil {
 		writeJSON(w, map[string]any{
-			"enabled": false,
-			"message": "订阅刷新未启用",
+			"enabled":        false,
+			"message":        "订阅刷新未启用",
+			"node_count":     s.runtimeSubscriptionNodeCount(),
+			"is_refreshing":  false,
+			"nodes_modified": false,
 		})
 		return
 	}
 
 	status := s.subRefresher.Status()
+	nodeCount := status.NodeCount
+	if runtimeCount := s.runtimeSubscriptionNodeCount(); runtimeCount > nodeCount {
+		nodeCount = runtimeCount
+	}
 	writeJSON(w, map[string]any{
 		"enabled":        true,
 		"last_refresh":   status.LastRefresh,
 		"next_refresh":   status.NextRefresh,
-		"node_count":     status.NodeCount,
+		"node_count":     nodeCount,
 		"last_error":     status.LastError,
 		"refresh_count":  status.RefreshCount,
 		"is_refreshing":  status.IsRefreshing,
 		"nodes_modified": status.NodesModified,
 	})
+}
+
+func (s *Server) runtimeSubscriptionNodeCount() int {
+	if s == nil || s.mgr == nil {
+		return 0
+	}
+	count := 0
+	for _, snap := range s.mgr.Snapshot() {
+		if strings.EqualFold(strings.TrimSpace(snap.Source), string(config.NodeSourceSubscription)) {
+			count++
+		}
+	}
+	return count
 }
 
 // handleSubscriptionRefresh triggers an immediate subscription refresh.

@@ -705,3 +705,71 @@ func TestHandleSettingsHotRebindsManagementListen(t *testing.T) {
 		t.Fatalf("new listen status = %d", res.StatusCode)
 	}
 }
+
+type fakeSubscriptionRefresher struct {
+	status SubscriptionStatus
+}
+
+func (f fakeSubscriptionRefresher) RefreshNow() error          { return nil }
+func (f fakeSubscriptionRefresher) Status() SubscriptionStatus { return f.status }
+func (f fakeSubscriptionRefresher) UpdateConfig(urls []string, enabled bool, interval time.Duration) {
+}
+func (f fakeSubscriptionRefresher) UpdateConfigAndRefresh(urls []string, enabled bool, interval time.Duration) error {
+	return nil
+}
+
+func TestHandleSubscriptionStatusFallsBackToRuntimeSubscriptionNodes(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	mgr.Register(NodeInfo{Tag: "sub-a", Name: "Sub A", Source: "subscription"})
+	mgr.Register(NodeInfo{Tag: "sub-b", Name: "Sub B", Source: "subscription"})
+	mgr.Register(NodeInfo{Tag: "free-a", Name: "Free A", Source: "free_proxy"})
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	srv.SetSubscriptionRefresher(fakeSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 0}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/subscription/status", nil)
+	rec := httptest.NewRecorder()
+	srv.handleSubscriptionStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NodeCount int `json:"node_count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.NodeCount != 2 {
+		t.Fatalf("node_count=%d, want runtime subscription count 2; body=%s", resp.NodeCount, rec.Body.String())
+	}
+}
+
+func TestHandleSubscriptionStatusWithoutRefresherReportsRuntimeSubscriptionNodes(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	mgr.Register(NodeInfo{Tag: "sub-a", Name: "Sub A", Source: "subscription"})
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/subscription/status", nil)
+	rec := httptest.NewRecorder()
+	srv.handleSubscriptionStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Enabled   bool `json:"enabled"`
+		NodeCount int  `json:"node_count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Enabled || resp.NodeCount != 1 {
+		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
+	}
+}
