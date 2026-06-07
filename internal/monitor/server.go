@@ -1576,8 +1576,9 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 只导出初始检查通过的可用节点
-	snapshots := s.mgr.SnapshotFiltered(true)
+	// 只导出初始检查通过的可用节点。SnapshotFiltered(true) 会保留未检查节点，
+	// 适合前端候选展示，但导出给用户使用时必须避免暴露尚未验证的端口。
+	snapshots := s.mgr.Snapshot()
 	var lines []string
 
 	seen := make(map[string]bool)
@@ -1657,6 +1658,9 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		lines = append(lines, "# Multi-port 独立节点")
 	}
 	for _, snap := range snapshots {
+		if !snap.InitialCheckDone || !snap.Available || snap.Blacklisted {
+			continue
+		}
 		// 只导出有监听地址和端口的节点
 		if snap.ListenAddress == "" || snap.Port == 0 {
 			continue
