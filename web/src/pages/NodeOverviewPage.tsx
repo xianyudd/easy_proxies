@@ -5,6 +5,7 @@ import { getNodesPage } from '../api/nodes'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { DataTable } from '../components/ui/DataTable'
+import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import type { NodeSnapshot } from '../types/node'
 
 const REGION_LABELS: Record<string, string> = {
@@ -56,7 +57,7 @@ export function NodeOverviewPage() {
   const [pageSize, setPageSize] = useState(100)
 
   const queryParams = { page, page_size: pageSize, region, source, availability, latency, sort: sortKey }
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['nodes-page', queryParams],
     queryFn: () => getNodesPage(queryParams),
     refetchInterval: 10000,
@@ -74,12 +75,13 @@ export function NodeOverviewPage() {
     return Object.entries(stats).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
   }, [data?.source_stats])
 
+  const summaryUnavailable = isError && !data
   const summary = useMemo(() => ({
-    total: data?.total_nodes || 0,
-    filtered: data?.total_filtered || 0,
-    available: Object.values(data?.region_healthy || {}).reduce((sum, n) => sum + n, 0),
-    free: data?.source_stats?.free_proxy || 0,
-  }), [data])
+    total: summaryUnavailable ? '-' : data?.total_nodes || 0,
+    filtered: summaryUnavailable ? '-' : data?.total_filtered || 0,
+    available: summaryUnavailable ? '-' : Object.values(data?.region_healthy || {}).reduce((sum, n) => sum + n, 0),
+    free: summaryUnavailable ? '-' : data?.source_stats?.free_proxy || 0,
+  }), [data, summaryUnavailable])
 
   const resetPage = <T,>(setter: (value: T) => void) => (value: T) => {
     setter(value)
@@ -107,7 +109,9 @@ export function NodeOverviewPage() {
       </div>
     </div>
 
-      <div className="summary-grid overview-summary">
+      {isError && <QueryErrorBanner title="节点数据加载失败" error={error} onRetry={() => { void refetch() }} />}
+
+    <div className="summary-grid overview-summary">
       <div className="metric"><div className="label">总节点</div><div className="value">{summary.total}</div></div>
       <div className="metric"><div className="label">可用节点</div><div className="value success">{summary.available}</div></div>
       <div className="metric"><div className="label">筛选结果</div><div className="value">{summary.filtered}</div></div>
@@ -153,11 +157,11 @@ export function NodeOverviewPage() {
       <div className="panel-header">
         <div>
           <div className="panel-title">节点列表</div>
-          <div className="panel-subtitle">第 {data?.page || page} 页，当前 {rows.length} 条，筛选后共 {data?.total_filtered || 0} 条；默认列表为已验证可用节点。</div>
+          <div className="panel-subtitle">{summaryUnavailable ? '节点接口失败，请重试后查看统计。' : `第 ${data?.page || page} 页，当前 ${rows.length} 条，筛选后共 ${data?.total_filtered || 0} 条；默认列表为已验证可用节点。`}</div>
         </div>
 
       </div>
-      <DataTable headers={['节点', '来源', '地区', '端口', '状态', '延迟', '连接', '失败', '操作']} empty={isLoading ? '加载中...' : '暂无节点'}>
+      <DataTable headers={['节点', '来源', '地区', '端口', '状态', '延迟', '连接', '失败', '操作']} empty={isLoading ? '加载中...' : isError ? '接口失败，请先重试。' : '暂无节点'}>
         {rows.map((node, idx) => (
           <tr key={`${node.tag || node.name || 'node'}-${idx}`}>
             <td>

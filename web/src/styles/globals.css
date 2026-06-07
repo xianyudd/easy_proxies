@@ -2481,3 +2481,55 @@ html[data-theme="light"] .logbox {
     align-items: center;
   }
 }
+
+.query-error-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--red) 28%, var(--border));
+  border-left: 4px solid var(--red);
+  border-radius: 16px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--red) 9%, var(--panel)), color-mix(in srgb, var(--panel) 88%, transparent));
+}
+
+.query-error-banner svg {
+  color: var(--red);
+  margin-top: 1px;
+}
+
+.query-error-copy {
+  min-width: 0;
+}
+
+.query-error-copy strong,
+.query-error-copy span {
+  display: block;
+}
+
+.query-error-copy strong {
+  color: var(--text);
+}
+
+.query-error-copy span {
+  margin-top: 2px;
+  color: var(--muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.query-error-banner .ep-button {
+  align-self: center;
+}
+
+@media (max-width: 720px) {
+  .query-error-banner {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .query-error-banner .ep-button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

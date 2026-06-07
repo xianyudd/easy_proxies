@@ -8,6 +8,7 @@ import { getSettings } from '../api/settings'
 import { getReputationCache } from '../api/reputation'
 import { cancelQualityJob, createQualityJob, getQualityJob, getQualityJobResults } from '../api/qualityJobs'
 import { Button } from '../components/ui/Button'
+import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { Badge } from '../components/ui/Badge'
 import { CfDistributionChart, ReputationRiskChart, CfScoreRankChart } from '../components/charts/QualityCharts'
 import { useToast } from '../components/ui/Toast'
@@ -94,9 +95,15 @@ export function QualityPage() {
   const jobQuery = useQuery({ queryKey: ['quality-job', jobId], queryFn: () => getQualityJob(jobId), enabled: !!jobId })
   const jobResults = useQuery({ queryKey: ['quality-job-results', jobId, resultPage, resultPageSize], queryFn: () => getQualityJobResults(jobId, { page: resultPage, page_size: resultPageSize }), enabled: !!jobId })
   const sourceStats = (nodesSummary.data?.source_stats || {}) as Record<string, number>
+  const hasSummaryError = nodesSummary.isError && !nodesSummary.data
+  const hasCacheError = (cfCache.isError && !cfCache.data) || (repCache.isError && !repCache.data)
+  const sourceTotalLabel = hasSummaryError ? '未知' : String(nodesSummary.data?.total_nodes || 0)
+  const sourceCountLabel = (key: string) => hasSummaryError ? '未知' : String(sourceStats[key] || 0)
   const sourceCount = source === 'all' ? (nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0) : Number(sourceStats[source] || 0)
   const scanCount = Math.max(1, count)
   const allCount = Math.max(sourceCount || nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0, source === 'all' ? 500 : 1)
+  const canCreatePipeline = !nodesSummary.isLoading && !hasSummaryError
+  const scanAllLabel = nodesSummary.isLoading ? 'Pipeline 扫描节点（统计加载中）' : hasSummaryError ? 'Pipeline 扫描节点（数量未知）' : `Pipeline 扫描 ${allCount} 个节点`
   const qualitySource = source === 'all' ? undefined : source
   const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { setCfRows(d.data || []); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
   const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true }), onSuccess: job => { setJobId(job.job_id); setResultPage(1); toast('Pipeline 后台扫描任务已创建', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '创建后台扫描失败', 'error') })
@@ -172,8 +179,15 @@ export function QualityPage() {
   ], [jobId, proxyUrl, toast, extract])
   return <div className="page quality-page">
     <div className="page-header"><div><h1>节点质量</h1><p>自动加载缓存，一键全量扫描，并按 CF 评分、IP 风险和综合质量筛选可用节点。</p></div></div>
+    {settings.isError && <QueryErrorBanner title="设置加载失败" error={settings.error} onRetry={() => { void settings.refetch() }} />}
+    {nodesQuery.isError && <QueryErrorBanner title="节点清单加载失败" error={nodesQuery.error} onRetry={() => { void nodesQuery.refetch() }} />}
+    {nodesSummary.isError && <QueryErrorBanner title="节点统计加载失败" error={nodesSummary.error} onRetry={() => { void nodesSummary.refetch() }} />}
+    {cfCache.isError && <QueryErrorBanner title="CF 缓存加载失败" error={cfCache.error} onRetry={() => { void cfCache.refetch() }} />}
+    {repCache.isError && <QueryErrorBanner title="IP 风险缓存加载失败" error={repCache.error} onRetry={() => { void repCache.refetch() }} />}
+    {jobId && jobQuery.isError && <QueryErrorBanner title="后台任务状态加载失败" error={jobQuery.error} onRetry={() => { void jobQuery.refetch() }} />}
+    {jobId && jobResults.isError && <QueryErrorBanner title="后台任务结果加载失败" error={jobResults.error} onRetry={() => { void jobResults.refetch() }} />}
     <div className="card quality-control-card">
-      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={fullScan.isPending || (!!jobId && !isTerminalJob(jobQuery.data))} onClick={() => fullScan.mutate()}>{fullScan.isPending ? '创建中...' : 'Pipeline 扫描全部节点'}</Button><Button disabled={retryScan.isPending || (!!jobId && !isTerminalJob(jobQuery.data))} onClick={() => retryScan.mutate()}>{retryScan.isPending ? '重试中...' : 'Pipeline 重试失败节点'}</Button><Button onClick={loadCache}>刷新缓存</Button><Button onClick={() => cfScan.mutate()}>抽样检测 CF</Button></div></div>
+      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending || (!!jobId && !isTerminalJob(jobQuery.data))} onClick={() => fullScan.mutate()}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canCreatePipeline || retryScan.isPending || (!!jobId && !isTerminalJob(jobQuery.data))} onClick={() => retryScan.mutate()}>{retryScan.isPending ? '重试中...' : 'Pipeline 重试失败节点'}</Button><Button onClick={loadCache}>刷新缓存</Button><Button onClick={() => cfScan.mutate()}>抽样检测 CF</Button></div></div>
       <div className="quality-filter-grid modern-filter-grid">
         <div className="field console-field">
           <label>地区范围</label>
@@ -181,7 +195,7 @@ export function QualityPage() {
         </div>
         <div className="field console-field">
           <label>节点来源</label>
-          <Select className="console-select" aria-label="节点来源" value={source} onChange={setSource} options={[{ value: 'all', label: `全部来源 (${nodesSummary.data?.total_nodes || 0})` }, { value: 'free_proxy', label: `免费源 (${sourceStats.free_proxy || 0})` }, { value: 'subscription', label: `订阅源 (${sourceStats.subscription || 0})` }, { value: 'inline', label: `内联 (${sourceStats.inline || 0})` }, { value: 'nodes_file', label: `节点文件 (${sourceStats.nodes_file || 0})` }]} />
+          <Select className="console-select" aria-label="节点来源" value={source} onChange={setSource} options={[{ value: 'all', label: `全部来源 (${sourceTotalLabel})` }, { value: 'free_proxy', label: `免费源 (${sourceCountLabel('free_proxy')})` }, { value: 'subscription', label: `订阅源 (${sourceCountLabel('subscription')})` }, { value: 'inline', label: `内联 (${sourceCountLabel('inline')})` }, { value: 'nodes_file', label: `节点文件 (${sourceCountLabel('nodes_file')})` }]} />
         </div>
         <div className="field console-field">
           <label>样本数</label>
@@ -205,8 +219,8 @@ export function QualityPage() {
         <Progress percent={Math.round(jobQuery.data?.percent || 0)} status={jobQuery.data?.status === 'failed' ? 'exception' : jobQuery.data?.status === 'completed' ? 'success' : 'active'} />
       </div>}
     </div>
-    <div className="summary-grid quality-summary-grid"><div className="metric"><div className="label">预筛通过</div><div className="value success">{summary?.quick?.ok ?? '-'}</div></div><div className="metric"><div className="label">最终推荐</div><div className="value success">{summary?.final?.recommend ?? rows.filter(r => r.score >= 75).length}</div></div><div className="metric"><div className="label">CF 优秀</div><div className="value success">{summary?.cloudflare?.excellent ?? activeCfRows.filter(r=>r.level==='excellent').length}</div></div><div className="metric"><div className="label">失败/高风险</div><div className="value error">{failedCount}</div></div></div>
+    <div className="summary-grid quality-summary-grid"><div className="metric"><div className="label">预筛通过</div><div className="value success">{summary?.quick?.ok ?? '-'}</div></div><div className="metric"><div className="label">最终推荐</div><div className="value success">{hasCacheError && !jobId ? '-' : summary?.final?.recommend ?? rows.filter(r => r.score >= 75).length}</div></div><div className="metric"><div className="label">CF 优秀</div><div className="value success">{hasCacheError && !jobId ? '-' : summary?.cloudflare?.excellent ?? activeCfRows.filter(r=>r.level==='excellent').length}</div></div><div className="metric"><div className="label">失败/高风险</div><div className="value error">{hasCacheError && !jobId ? '-' : failedCount}</div></div></div>
     <div className="charts-grid quality-charts"><div className="chart-panel"><div className="chart-title">CF 评分分布 <span>{jobId ? 'Current Page' : 'Compatibility'}</span></div><CfDistributionChart rows={activeCfRows} /></div><div className="chart-panel"><div className="chart-title">IP 风险等级 <span>{jobId ? 'Current Page' : 'Reputation'}</span></div><ReputationRiskChart rows={activeRepRows} /></div><div className="chart-panel wide compact-rank-chart"><div className="chart-title">CF 高分节点排行 <span>{jobId ? 'Current Page' : 'Top Scores'}</span></div><CfScoreRankChart rows={rows.slice(0, 10).map(item => item.row)} /></div></div>
-    <div className="card quality-table-card"><div className="panel-header"><div><div className="panel-title">可用节点列表</div><div className="panel-subtitle">{jobId ? `当前页 ${rows.length} 条 / 任务共 ${jobResults.data?.count || 0} 条；后台任务结果由服务端分页返回，不在前端二次筛选排序。` : `共 ${rows.length} 条结果。`}</div></div></div><Table className="quality-table" columns={columns} dataSource={rows} size="middle" scroll={{ x: 1260 }} pagination={jobId ? { current: resultPage, pageSize: resultPageSize, total: jobResults.data?.count || 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (page, pageSize) => { setResultPage(page); setResultPageSize(pageSize) } } : { pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 条` }} locale={{ emptyText: '暂无质量数据，请先检测或查看缓存。' }} /></div>
+    <div className="card quality-table-card"><div className="panel-header"><div><div className="panel-title">可用节点列表</div><div className="panel-subtitle">{jobId ? `当前页 ${rows.length} 条 / 任务共 ${jobResults.data?.count || 0} 条；后台任务结果由服务端分页返回，不在前端二次筛选排序。` : `共 ${rows.length} 条结果。`}</div></div></div><Table className="quality-table" columns={columns} dataSource={rows} size="middle" scroll={{ x: 1260 }} pagination={jobId ? { current: resultPage, pageSize: resultPageSize, total: jobResults.data?.count || 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (page, pageSize) => { setResultPage(page); setResultPageSize(pageSize) } } : { pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 条` }} locale={{ emptyText: jobResults.isError ? '任务结果接口失败，请先重试。' : hasCacheError ? '质量缓存加载失败，请先重试。' : '暂无质量数据，请先检测或查看缓存。' }} /></div>
   </div>
 }

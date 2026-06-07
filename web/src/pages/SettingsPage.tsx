@@ -6,6 +6,7 @@ import { getFreeProxyRefreshStatus, getReloadStatus, getSettings, saveSettings, 
 import { getCloudflareCache } from '../api/cloudflare'
 import { getReputationCache } from '../api/reputation'
 import { Button } from '../components/ui/Button'
+import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { Badge } from '../components/ui/Badge'
 import { useToast } from '../components/ui/Toast'
 import type { FreeProxyCache, FreeProxyFilter, FreeProxySource, SettingsResponse } from '../types/settings'
@@ -134,7 +135,8 @@ export function SettingsPage() {
     if (res?.management_rebound && res.management_url_hint) {
       toast('管理端口已热切换，正在跳转到新地址...', 'ok')
       const target = new URL(res.management_url_hint)
-      target.searchParams.set('autoReload', res?.need_reload ? '1' : '0')
+      if (res?.need_reload) target.searchParams.set('autoReload', '1')
+      else target.searchParams.delete('autoReload')
       target.hash = 'settings'
       window.setTimeout(() => { window.location.href = target.toString() }, 300)
       return
@@ -190,6 +192,10 @@ export function SettingsPage() {
   const cleanSubItems = splitLines(subs)
   const cfRows = (cfCache.data?.data || []) as CloudflareResult[]
   const repRows = (repCache.data?.data || []) as ReputationResult[]
+  const settingsUnavailable = settings.isLoading || (settings.isError && !settings.data)
+  const subStatusUnavailable = subStatus.isError && !subStatus.data
+  const cfCacheUnavailable = cfCache.isError && !cfCache.data
+  const repCacheUnavailable = repCache.isError && !repCache.data
   const isPublicAdmin = String(mgmt.listen || '').startsWith('0.0.0.0') && !String(mgmt.password || '').trim()
   const isPublicProxy = isWideOpen(listener.address) || isWideOpen(mp.address) || isWideOpen(android.listen)
   const updateSub = (idx: number, value: string) => setSubs(subItems.map((item, i) => i === idx ? value : item).join('\n'))
@@ -219,8 +225,14 @@ export function SettingsPage() {
   return <div className="page settings-page">
     <div className="page-header settings-hero">
       <div><h1>系统设置</h1><p>集中管理订阅来源、代理入口、地区路由、质量检测和日志策略。</p></div>
-      <div className="toolbar"><Button variant="primary" onClick={saveAllSettings} disabled={save.isPending}><Save size={16} />{save.isPending ? '保存中...' : '保存设置'}</Button></div>
+      <div className="toolbar"><Button variant="primary" onClick={saveAllSettings} disabled={save.isPending || settingsUnavailable}><Save size={16} />{save.isPending ? '保存中...' : '保存设置'}</Button></div>
     </div>
+    {settings.isError && <QueryErrorBanner title="设置加载失败" error={settings.error} onRetry={() => { void settings.refetch() }} />}
+    {subStatus.isError && <QueryErrorBanner title="订阅状态加载失败" error={subStatus.error} onRetry={() => { void subStatus.refetch() }} />}
+    {cfCache.isError && <QueryErrorBanner title="CF 缓存状态加载失败" error={cfCache.error} onRetry={() => { void cfCache.refetch() }} />}
+    {repCache.isError && <QueryErrorBanner title="IP 风险缓存状态加载失败" error={repCache.error} onRetry={() => { void repCache.refetch() }} />}
+    {reloadStatus.isError && <QueryErrorBanner title="设置生效状态加载失败" error={reloadStatus.error} onRetry={() => { void reloadStatus.refetch() }} />}
+    {freeProxyRefreshStatus.isError && <QueryErrorBanner title="免费源刷新状态加载失败" error={freeProxyRefreshStatus.error} onRetry={() => { void freeProxyRefreshStatus.refetch() }} />}
     {(isPublicAdmin || isPublicProxy) && <div className="settings-alert modern-settings-alert" role="alert">
       <AlertCircle size={18} />
       <div>
@@ -260,9 +272,9 @@ export function SettingsPage() {
           <div className="panel-header settings-section-header"><div><div className="panel-title">订阅</div><div className="panel-subtitle">每条订阅独立编辑，长 URL 不再挤在一个文本框里。</div></div><div className="toolbar"><Button onClick={addSub}><Plus size={16} />新增订阅</Button><Button variant="primary" onClick={saveSubscriptions} disabled={saveSub.isPending}><Save size={16} />{saveSub.isPending ? '保存中...' : '保存订阅'}</Button></div></div>
           <div className="settings-status-grid">
             <div className="status-card"><Database size={16} /><span>订阅条目</span><strong>{cleanSubItems.length}</strong></div>
-            <div className="status-card"><Wifi size={16} /><span>刷新状态</span><strong>{boolValue(status.is_refreshing) ? '刷新中' : '空闲'}</strong></div>
-            <div className="status-card"><Clock3 size={16} /><span>下次刷新</span><strong>{shortDate(status.next_refresh)}</strong></div>
-            <div className="status-card"><Database size={16} /><span>最近节点数</span><strong>{Number(status.node_count || 0)}</strong></div>
+            <div className="status-card"><Wifi size={16} /><span>刷新状态</span><strong>{subStatusUnavailable ? '加载失败' : boolValue(status.is_refreshing) ? '刷新中' : '空闲'}</strong></div>
+            <div className="status-card"><Clock3 size={16} /><span>下次刷新</span><strong>{subStatusUnavailable ? '-' : shortDate(status.next_refresh)}</strong></div>
+            <div className="status-card"><Database size={16} /><span>最近节点数</span><strong>{subStatusUnavailable ? '-' : Number(status.node_count || 0)}</strong></div>
           </div>
           <div className="subscription-controls">
             {toggle('启用订阅刷新', subRefresh.enabled !== false, v=>setDraft({...draft, subscription_refresh:{...subRefresh,enabled:v}}))}
@@ -340,7 +352,7 @@ export function SettingsPage() {
 
         <section className="settings-card-grid">
           <div className="card settings-section" id="routing"><div className="panel-header"><div><div className="panel-title">地区路由 / Android</div><div className="panel-subtitle">GeoIP 路由和移动端代理端口。</div></div></div><div className="form-grid-2 compact-form-grid">{input('GeoIP listen', String(geo.listen || ''), v=>setDraft({...draft, geoip:{...geo,listen:v}}))}{input('GeoIP port', String(geo.port || ''), v=>setDraft({...draft, geoip:{...geo,port:Number(v)||0}}))}{input('Android listen', String(android.listen || ''), v=>setDraft({...draft, android_proxy:{...android,listen:v}}))}{input('Android base port', String(android.base_port || ''), v=>setDraft({...draft, android_proxy:{...android,base_port:Number(v)||0}}))}</div></div>
-          <div className="card settings-section" id="quality-check"><div className="panel-header"><div><div className="panel-title">质量检测定时任务</div><div className="panel-subtitle">自动刷新 CF 评分和 IP 风险缓存。</div></div><div className="toolbar"><Button onClick={() => { void cfCache.refetch(); void repCache.refetch() }}>刷新缓存状态</Button></div></div><div className="settings-status-grid quality-cache-grid"><div className="status-card"><Database size={16} /><span>CF 缓存</span><strong>{cfRows.length}</strong></div><div className="status-card"><Database size={16} /><span>IP 风险缓存</span><strong>{repRows.length}</strong></div><div className="status-card"><Clock3 size={16} /><span>CF 最近检测</span><strong>{latestCheckedAt(cfRows)}</strong></div><div className="status-card"><Clock3 size={16} /><span>IP 最近检测</span><strong>{latestCheckedAt(repRows)}</strong></div></div><div className="quality-toggle-row">{toggle('启用定时检测', boolValue(quality.enabled), v=>setDraft({...draft, quality_check:{...quality,enabled:v}}))}{toggle('包含不可用节点', quality.include_unavailable !== false, v=>setDraft({...draft, quality_check:{...quality,include_unavailable:v}}))}{toggle('优先重试失败节点', boolValue(quality.retry_failed), v=>setDraft({...draft, quality_check:{...quality,retry_failed:v}}))}</div><div className="form-grid-3 compact-form-grid">{input('检测间隔', String(quality.interval || '24h'), v=>setDraft({...draft, quality_check:{...quality,interval:v}}))}{input('地区范围', String(quality.region || 'all'), v=>setDraft({...draft, quality_check:{...quality,region:v}}))}{input('检测数量（1-500）', String(quality.count || 500), v=>setDraft({...draft, quality_check:{...quality,count:clampNumber(v, 500, 1, 500)}}), 'number')}{input('CF 超时', String(quality.cloudflare_timeout || '5s'), v=>setDraft({...draft, quality_check:{...quality,cloudflare_timeout:v}}))}{input('CF 并发', String(quality.cloudflare_concurrency || 24), v=>setDraft({...draft, quality_check:{...quality,cloudflare_concurrency:Number(v)||24}}), 'number')}</div><div className="settings-inline-note">建议间隔不要低于 1 小时；检测数量上限为 500；CF 超时越短扫描越快但失败率可能升高，并发建议 24-32。</div></div>
+          <div className="card settings-section" id="quality-check"><div className="panel-header"><div><div className="panel-title">质量检测定时任务</div><div className="panel-subtitle">自动刷新 CF 评分和 IP 风险缓存。</div></div><div className="toolbar"><Button onClick={() => { void cfCache.refetch(); void repCache.refetch() }}>刷新缓存状态</Button></div></div><div className="settings-status-grid quality-cache-grid"><div className="status-card"><Database size={16} /><span>CF 缓存</span><strong>{cfCacheUnavailable ? '加载失败' : cfRows.length}</strong></div><div className="status-card"><Database size={16} /><span>IP 风险缓存</span><strong>{repCacheUnavailable ? '加载失败' : repRows.length}</strong></div><div className="status-card"><Clock3 size={16} /><span>CF 最近检测</span><strong>{cfCacheUnavailable ? '-' : latestCheckedAt(cfRows)}</strong></div><div className="status-card"><Clock3 size={16} /><span>IP 最近检测</span><strong>{repCacheUnavailable ? '-' : latestCheckedAt(repRows)}</strong></div></div><div className="quality-toggle-row">{toggle('启用定时检测', boolValue(quality.enabled), v=>setDraft({...draft, quality_check:{...quality,enabled:v}}))}{toggle('包含不可用节点', quality.include_unavailable !== false, v=>setDraft({...draft, quality_check:{...quality,include_unavailable:v}}))}{toggle('优先重试失败节点', boolValue(quality.retry_failed), v=>setDraft({...draft, quality_check:{...quality,retry_failed:v}}))}</div><div className="form-grid-3 compact-form-grid">{input('检测间隔', String(quality.interval || '24h'), v=>setDraft({...draft, quality_check:{...quality,interval:v}}))}{input('地区范围', String(quality.region || 'all'), v=>setDraft({...draft, quality_check:{...quality,region:v}}))}{input('检测数量（1-500）', String(quality.count || 500), v=>setDraft({...draft, quality_check:{...quality,count:clampNumber(v, 500, 1, 500)}}), 'number')}{input('CF 超时', String(quality.cloudflare_timeout || '5s'), v=>setDraft({...draft, quality_check:{...quality,cloudflare_timeout:v}}))}{input('CF 并发', String(quality.cloudflare_concurrency || 24), v=>setDraft({...draft, quality_check:{...quality,cloudflare_concurrency:Number(v)||24}}), 'number')}</div><div className="settings-inline-note">建议间隔不要低于 1 小时；检测数量上限为 500；CF 超时越短扫描越快但失败率可能升高，并发建议 24-32。</div></div>
         </section>
 
         <section className="card settings-section" id="management"><div className="panel-header"><div><div className="panel-title">管理与日志</div><div className="panel-subtitle">控制面入口和日志滚动策略。</div></div></div><div className="form-grid-2 compact-form-grid">{input('管理 listen', String(mgmt.listen || ''), v=>setDraft({...draft, management:{...mgmt,listen:v}}))}{input('管理 password', String(mgmt.password||''), v=>setDraft({...draft, management:{...mgmt,password:v}}))}{input('日志 output', String(log.output || ''), v=>setDraft({...draft, log:{...log,output:v}}))}{input('日志 max size', String(log.max_size || ''), v=>setDraft({...draft, log:{...log,max_size:Number(v)||0}}))}</div></section>
