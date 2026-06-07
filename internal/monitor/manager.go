@@ -681,6 +681,14 @@ func (h *EntryHandle) RecordSuccessWithLatency(latency time.Duration) {
 	h.ref.recordSuccessWithLatency(latency)
 }
 
+// Snapshot returns a consistent copy of the current entry state.
+func (h *EntryHandle) Snapshot() Snapshot {
+	if h == nil || h.ref == nil {
+		return Snapshot{}
+	}
+	return h.ref.snapshot()
+}
+
 // Blacklist marks the node unavailable until the given deadline.
 func (h *EntryHandle) Blacklist(until time.Time) {
 	if h == nil || h.ref == nil {
