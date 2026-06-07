@@ -9,7 +9,7 @@ import { Button } from '../components/ui/Button'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { Badge } from '../components/ui/Badge'
 import { useToast } from '../components/ui/Toast'
-import type { FreeProxyCache, FreeProxyFilter, FreeProxySource, SettingsResponse } from '../types/settings'
+import type { FreeProxyCache, FreeProxyFilter, FreeProxyRefreshStatus, FreeProxySource, SettingsResponse } from '../types/settings'
 import type { CloudflareResult } from '../types/cloudflare'
 import type { ReputationResult } from '../types/reputation'
 
@@ -47,6 +47,21 @@ function latestCheckedAt(rows: Array<{ checked_at?: unknown; result?: unknown }>
     .sort()
   return shortDate(latest[latest.length - 1])
 }
+function cacheFreshLabel(value?: boolean) { return value ? '新鲜' : '需刷新' }
+function freeProxyRefreshTitle(state: 'idle' | 'refreshing' | 'failed', status?: FreeProxyRefreshStatus) {
+  if (state === 'failed') return '免费源扫描失败'
+  if (status?.state === 'succeeded' && status.reload_started) return '免费源缓存已更新，正在重载入池'
+  if (status?.state === 'succeeded' && status.cache_updated === false) return status.cache_fresh ? '免费源缓存仍新鲜，已复用本地缓存' : '免费源未产生新缓存，已复用旧缓存'
+  return '免费源正在后台扫描'
+}
+function freeProxyRefreshDescription(state: 'idle' | 'refreshing' | 'failed', status?: FreeProxyRefreshStatus) {
+  if (state === 'failed') return '免费源刷新未产生可入池节点，系统已保留现有缓存且不会自动重载；请检查源地址、探针或降低筛选等级。'
+  if (status?.state === 'succeeded' && status.reload_started) return '候选代理已写入本地缓存；代理核心正在后台重载，完成后新节点才会出现在节点列表和质量检测中。'
+  if (status?.state === 'succeeded' && status.cache_updated === false) {
+    return status.cache_fresh ? '本地免费源缓存未过期，本次跳过远程下载和筛选，也不需要重载代理核心。' : '远程刷新没有产生可替换缓存，系统保留并复用旧缓存，避免清空当前节点池。'
+  }
+  return '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。'
+}
 
 export function SettingsPage() {
   const settings = useQuery({ queryKey:['settings'], queryFn:getSettings })
@@ -58,7 +73,7 @@ export function SettingsPage() {
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const [freeProxyRefreshState, setFreeProxyRefreshState] = useState<'idle' | 'refreshing' | 'failed'>('idle')
   const reloadStatus = useQuery({ queryKey:['reload-status'], queryFn:getReloadStatus, enabled: reloadState === 'reloading', refetchInterval: reloadState === 'reloading' ? 800 : false })
-  const freeProxyRefreshStatus = useQuery({ queryKey:['free-proxy-refresh-status'], queryFn:getFreeProxyRefreshStatus, enabled: freeProxyRefreshState === 'refreshing', refetchInterval: freeProxyRefreshState === 'refreshing' ? 800 : false })
+  const freeProxyRefreshStatus = useQuery({ queryKey:['free-proxy-refresh-status'], queryFn:getFreeProxyRefreshStatus, refetchInterval: freeProxyRefreshState === 'refreshing' ? 800 : false })
   const toast = useToast(s=>s.show)
   useEffect(()=>{ if(settings.data){ setDraft(settings.data); setSubs(listValue(settings.data.subscriptions)) } }, [settings.data])
   useEffect(() => {
@@ -196,6 +211,12 @@ export function SettingsPage() {
   const subStatusUnavailable = subStatus.isError && !subStatus.data
   const cfCacheUnavailable = cfCache.isError && !cfCache.data
   const repCacheUnavailable = repCache.isError && !repCache.data
+  const freeRefresh = freeProxyRefreshStatus.data
+  const freeRefreshCacheNodes = Number(freeRefresh?.cache_node_count || 0)
+  const freeRefreshSources = `${Number(freeRefresh?.enabled_sources ?? freeSources.filter(s => s.enabled !== false).length)}/${Number(freeRefresh?.total_sources ?? freeSources.length)}`
+  const freeRefreshProbeBudget = Number(freeRefresh?.filter_probe_budget ?? freeFilter.max_probe_candidates ?? 0)
+  const freeRefreshAutoReload = freeRefresh?.auto_reload ?? freeCache.auto_reload !== false
+  const freeRefreshFilterEnabled = freeRefresh?.filter_enabled ?? freeFilter.enabled === true
   const isPublicAdmin = String(mgmt.listen || '').startsWith('0.0.0.0') && !String(mgmt.password || '').trim()
   const isPublicProxy = isWideOpen(listener.address) || isWideOpen(mp.address) || isWideOpen(android.listen)
   const updateSub = (idx: number, value: string) => setSubs(subItems.map((item, i) => i === idx ? value : item).join('\n'))
@@ -250,10 +271,12 @@ export function SettingsPage() {
     {freeProxyRefreshState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status">
       <Clock3 size={18} />
       <div>
-        <strong>{freeProxyRefreshState === 'refreshing' ? (freeProxyRefreshStatus.data?.state === 'succeeded' && freeProxyRefreshStatus.data?.reload_started ? '免费源缓存已更新，正在重载入池' : freeProxyRefreshStatus.data?.state === 'succeeded' && freeProxyRefreshStatus.data?.cache_updated === false ? '免费源缓存仍新鲜，正在复用现有节点' : '免费源正在后台扫描') : '免费源扫描失败'}</strong>
-        <span>{freeProxyRefreshState === 'refreshing' ? (freeProxyRefreshStatus.data?.state === 'succeeded' && freeProxyRefreshStatus.data?.reload_started ? '候选代理已写入本地缓存；代理核心正在后台重载，完成后新节点才会出现在节点列表和质量检测中。' : freeProxyRefreshStatus.data?.state === 'succeeded' && freeProxyRefreshStatus.data?.cache_updated === false ? '本地免费源缓存未过期，本次没有重新下载远程源，也不需要重载代理核心。' : '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。') : '免费源刷新未产生可入池节点，系统已保留现有缓存且不会自动重载；请检查源地址、探针或降低筛选等级。'}</span>
-        {freeProxyRefreshStatus.data?.sources?.length ? <span>
-          源结果：{freeProxyRefreshStatus.data.sources.map(src => `${src.name || 'unnamed'} ${src.accepted || 0}/${src.candidates || 0}${src.error ? ' 失败' : ''}`).join('；')}
+        <strong>{freeProxyRefreshTitle(freeProxyRefreshState, freeRefresh)}</strong>
+        <span>{freeProxyRefreshDescription(freeProxyRefreshState, freeRefresh)}</span>
+        <span>缓存：{freeRefresh?.cache_path || String(freeCache.path || '未配置')} · {freeRefreshCacheNodes} 条 · {cacheFreshLabel(freeRefresh?.cache_fresh)} · 最大年龄 {freeRefresh?.cache_max_age || String(freeCache.max_age || '6h0m0s')}</span>
+        <span>策略：启用源 {freeRefreshSources} · 自动重载 {freeRefreshAutoReload ? '开' : '关'} · 筛选 {freeRefreshFilterEnabled ? '开' : '关'} · 最低等级 {freeRefresh?.filter_min_tier || String(freeFilter.min_tier || 'http_basic')} · 探测预算 {freeRefreshProbeBudget > 0 ? freeRefreshProbeBudget : '全量'}</span>
+        {freeRefresh?.sources?.length ? <span>
+          源结果：{freeRefresh.sources.map(src => `${src.name || 'unnamed'} ${src.accepted || 0}/${src.candidates || 0}${src.error ? ` 失败: ${src.error}` : ''}`).join('；')}
         </span> : null}
       </div>
     </div>}
@@ -300,6 +323,8 @@ export function SettingsPage() {
             <div className="status-card"><Wifi size={16} /><span>启用源</span><strong>{freeSources.filter(s => s.enabled !== false).length}</strong></div>
             <div className="status-card"><Database size={16} /><span>入池上限</span><strong>{Number(draft.free_proxy_max_nodes || 0) > 0 ? Number(draft.free_proxy_max_nodes) : '不限'}</strong></div>
             <div className="status-card"><Clock3 size={16} /><span>最低等级</span><strong>{String(freeFilter.min_tier || 'http_basic')}</strong></div>
+            <div className="status-card"><Database size={16} /><span>本地缓存</span><strong>{freeRefresh ? `${freeRefreshCacheNodes} 条` : '未读取'}</strong></div>
+            <div className="status-card"><Clock3 size={16} /><span>缓存状态</span><strong>{freeRefresh ? cacheFreshLabel(freeRefresh.cache_fresh) : '待刷新'}</strong></div>
           </div>
           <div className="free-proxy-filter-panel">
             <div className="quality-toggle-row">

@@ -118,4 +118,18 @@ export interface FreeProxyRefreshStatus {
   reload_started?: boolean
   reload_status?: ReloadStatus
   requested_by?: string
+  cache_path?: string
+  cache_max_age?: string
+  cache_node_count?: number
+  cache_fresh?: boolean
+  cache_checked_at?: string
+  cache_enabled?: boolean
+  refresh_on_start?: boolean
+  auto_reload?: boolean
+  total_sources?: number
+  enabled_sources?: number
+  filter_enabled?: boolean
+  filter_min_tier?: string
+  filter_probe_budget?: number
+  filter_max_candidates?: number
 }

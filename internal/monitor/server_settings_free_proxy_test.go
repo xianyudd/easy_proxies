@@ -798,16 +798,31 @@ free_proxy_sources:
 		}
 	}
 	var resp struct {
-		State         string `json:"state"`
-		Accepted      int    `json:"accepted"`
-		CacheUpdated  bool   `json:"cache_updated"`
-		ReloadStarted bool   `json:"reload_started"`
+		State             string `json:"state"`
+		Accepted          int    `json:"accepted"`
+		CacheUpdated      bool   `json:"cache_updated"`
+		ReloadStarted     bool   `json:"reload_started"`
+		CachePath         string `json:"cache_path"`
+		CacheNodeCount    int    `json:"cache_node_count"`
+		CacheFresh        bool   `json:"cache_fresh"`
+		CacheEnabled      bool   `json:"cache_enabled"`
+		AutoReload        bool   `json:"auto_reload"`
+		TotalSources      int    `json:"total_sources"`
+		EnabledSources    int    `json:"enabled_sources"`
+		FilterMinTier     string `json:"filter_min_tier"`
+		FilterProbeBudget int    `json:"filter_probe_budget"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.State != "succeeded" || resp.Accepted != 1 || resp.CacheUpdated || resp.ReloadStarted {
 		t.Fatalf("unexpected status payload: %#v body=%s", resp, rec.Body.String())
+	}
+	if resp.CachePath != cachePath || resp.CacheNodeCount != 1 || !resp.CacheFresh || !resp.CacheEnabled || !resp.AutoReload {
+		t.Fatalf("missing cache context in status payload: %#v body=%s", resp, rec.Body.String())
+	}
+	if resp.TotalSources != 1 || resp.EnabledSources != 1 || resp.FilterMinTier == "" {
+		t.Fatalf("missing source/filter context in status payload: %#v body=%s", resp, rec.Body.String())
 	}
 }
 

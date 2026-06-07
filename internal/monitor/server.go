@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"runtime"
 	"sort"
 	"strconv"
@@ -60,17 +61,31 @@ type reloadStatus struct {
 }
 
 type freeProxyRefreshStatus struct {
-	State         string                                `json:"state"`
-	StartedAt     time.Time                             `json:"started_at,omitempty"`
-	FinishedAt    time.Time                             `json:"finished_at,omitempty"`
-	DurationMS    int64                                 `json:"duration_ms"`
-	Error         string                                `json:"error,omitempty"`
-	Accepted      int                                   `json:"accepted"`
-	CacheUpdated  bool                                  `json:"cache_updated"`
-	Sources       []config.FreeProxySourceRefreshResult `json:"sources,omitempty"`
-	ReloadStarted bool                                  `json:"reload_started"`
-	ReloadStatus  *reloadStatus                         `json:"reload_status,omitempty"`
-	RequestedBy   string                                `json:"requested_by,omitempty"`
+	State               string                                `json:"state"`
+	StartedAt           time.Time                             `json:"started_at,omitempty"`
+	FinishedAt          time.Time                             `json:"finished_at,omitempty"`
+	DurationMS          int64                                 `json:"duration_ms"`
+	Error               string                                `json:"error,omitempty"`
+	Accepted            int                                   `json:"accepted"`
+	CacheUpdated        bool                                  `json:"cache_updated"`
+	Sources             []config.FreeProxySourceRefreshResult `json:"sources,omitempty"`
+	ReloadStarted       bool                                  `json:"reload_started"`
+	ReloadStatus        *reloadStatus                         `json:"reload_status,omitempty"`
+	RequestedBy         string                                `json:"requested_by,omitempty"`
+	CachePath           string                                `json:"cache_path,omitempty"`
+	CacheMaxAge         string                                `json:"cache_max_age,omitempty"`
+	CacheNodeCount      int                                   `json:"cache_node_count"`
+	CacheFresh          bool                                  `json:"cache_fresh"`
+	CacheCheckedAt      time.Time                             `json:"cache_checked_at,omitempty"`
+	CacheEnabled        bool                                  `json:"cache_enabled"`
+	RefreshOnStart      bool                                  `json:"refresh_on_start"`
+	AutoReload          bool                                  `json:"auto_reload"`
+	TotalSources        int                                   `json:"total_sources"`
+	EnabledSources      int                                   `json:"enabled_sources"`
+	FilterEnabled       bool                                  `json:"filter_enabled"`
+	FilterMinTier       string                                `json:"filter_min_tier,omitempty"`
+	FilterProbeBudget   int                                   `json:"filter_probe_budget"`
+	FilterMaxCandidates int                                   `json:"filter_max_candidates"`
 }
 
 // Sentinel errors for node operations.
@@ -593,6 +608,61 @@ func (s *Server) startAsyncReload(requestedBy string) (reloadStatus, bool, error
 	return status, true, nil
 }
 
+func countFreeProxyCacheFile(path string) (int, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return 0, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count, true
+}
+
+func (s *Server) enrichFreeProxyRefreshStatus(status freeProxyRefreshStatus) freeProxyRefreshStatus {
+	s.cfgMu.RLock()
+	cfg := s.cfgSrc
+	var cache config.FreeProxyCacheConfig
+	if cfg != nil {
+		cache = cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)
+		status.TotalSources = len(cfg.FreeProxySources)
+		for _, src := range cfg.FreeProxySources {
+			if src.Enabled == nil || *src.Enabled {
+				status.EnabledSources++
+			}
+		}
+		filter := cfg.FreeProxyFilter.Normalized()
+		status.FilterEnabled = filter.Enabled
+		status.FilterMinTier = filter.MinTier
+		status.FilterProbeBudget = filter.MaxProbeCandidates
+		status.FilterMaxCandidates = filter.MaxCandidates
+	}
+	s.cfgMu.RUnlock()
+	if cfg == nil {
+		return status
+	}
+	status.CachePath = cache.Path
+	status.CacheMaxAge = cache.MaxAge.String()
+	status.CacheEnabled = cache.EnabledValue()
+	status.RefreshOnStart = cache.RefreshOnStartValue()
+	status.AutoReload = cache.AutoReloadValue()
+	status.CacheCheckedAt = time.Now()
+	if count, ok := countFreeProxyCacheFile(cache.Path); ok {
+		status.CacheNodeCount = count
+		if info, err := os.Stat(cache.Path); err == nil && cache.MaxAge > 0 {
+			status.CacheFresh = time.Since(info.ModTime()) <= cache.MaxAge
+		}
+	}
+	return status
+}
+
 func (s *Server) currentFreeProxyRefreshStatus() freeProxyRefreshStatus {
 	s.freeProxyRefreshMu.Lock()
 	status := s.freeProxyRefreshStatus
@@ -604,7 +674,7 @@ func (s *Server) currentFreeProxyRefreshStatus() freeProxyRefreshStatus {
 		reload := s.currentReloadStatus()
 		status.ReloadStatus = &reload
 	}
-	return status
+	return s.enrichFreeProxyRefreshStatus(status)
 }
 
 func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStatus, bool, error) {
