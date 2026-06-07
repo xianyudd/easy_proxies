@@ -372,38 +372,49 @@ func (p *poolOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 func (p *poolOutbound) pickMember(network string) (*memberState, error) {
 	now := time.Now()
 	candidates := p.getCandidateBuffer()
+	fallbackCandidates := p.getCandidateBuffer()
 
 	p.mu.Lock()
 	if len(p.members) == 0 {
 		if err := p.initializeMembersLocked(); err != nil {
 			p.mu.Unlock()
 			p.putCandidateBuffer(candidates)
+			p.putCandidateBuffer(fallbackCandidates)
 			return nil, err
 		}
 	}
-	candidates = p.availableMembersLocked(now, network, candidates)
+	candidates, fallbackCandidates = p.availableMembersLocked(now, network, candidates, fallbackCandidates)
 	p.mu.Unlock()
 
 	if len(candidates) == 0 {
 		p.mu.Lock()
 		if p.releaseIfAllBlacklistedLocked(now) {
-			candidates = p.availableMembersLocked(now, network, candidates)
+			candidates, fallbackCandidates = p.availableMembersLocked(now, network, candidates, fallbackCandidates)
 		}
 		p.mu.Unlock()
 	}
 
+	if len(candidates) == 0 && len(fallbackCandidates) > 0 {
+		p.logger.Warn("no health-checked proxy available, falling back to checked-unavailable candidates")
+		candidates = fallbackCandidates
+		fallbackCandidates = nil
+	}
+
 	if len(candidates) == 0 {
 		p.putCandidateBuffer(candidates)
+		p.putCandidateBuffer(fallbackCandidates)
 		return nil, E.New("no healthy proxy available")
 	}
 
 	member := p.selectMember(candidates)
 	p.putCandidateBuffer(candidates)
+	p.putCandidateBuffer(fallbackCandidates)
 	return member, nil
 }
 
-func (p *poolOutbound) availableMembersLocked(now time.Time, network string, buf []*memberState) []*memberState {
+func (p *poolOutbound) availableMembersLocked(now time.Time, network string, buf []*memberState, fallbackBuf []*memberState) ([]*memberState, []*memberState) {
 	result := buf[:0]
+	fallback := fallbackBuf[:0]
 	for _, member := range p.members {
 		// Check blacklist via shared state (auto-clears if expired)
 		if member.shared != nil && member.shared.isBlacklisted(now) {
@@ -412,9 +423,21 @@ func (p *poolOutbound) availableMembersLocked(now time.Time, network string, buf
 		if network != "" && !common.Contains(member.outbound.Network(), network) {
 			continue
 		}
+		if member.isCheckedUnavailable() {
+			fallback = append(fallback, member)
+			continue
+		}
 		result = append(result, member)
 	}
-	return result
+	return result, fallback
+}
+
+func (m *memberState) isCheckedUnavailable() bool {
+	if m.entry == nil {
+		return false
+	}
+	snapshot := m.entry.Snapshot()
+	return snapshot.InitialCheckDone && !snapshot.Available
 }
 
 func (p *poolOutbound) releaseIfAllBlacklistedLocked(now time.Time) bool {
