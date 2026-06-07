@@ -2954,8 +2954,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err)})
 			return
 		}
-		needReload := oldCoreSignature != coreReloadSignature(s.cfgSrc)
 		needFreeProxyRefresh := oldFreeProxySignature != freeProxyRefreshSignature(s.cfgSrc)
+		needReload := oldCoreSignature != coreReloadSignature(s.cfgSrc)
+		if needFreeProxyRefresh {
+			// Free-proxy source/filter/cache changes are applied through the
+			// refresh pipeline. That pipeline starts an async reload only when it
+			// actually writes a new cache. Reporting need_reload=true here would
+			// make the UI think an immediate core reload is pending even when a
+			// fresh cache was reused and no runtime change is needed.
+			needReload = false
+		}
 		s.cfgMu.Unlock()
 
 		reboundListen := ""
