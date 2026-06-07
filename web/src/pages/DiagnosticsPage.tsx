@@ -42,11 +42,17 @@ function avgLatency(rows: Record<string, unknown>[]) {
 }
 
 function detectLogLevel(line: string): LogLevel {
-  if (/\b(error|fatal|panic)\b[:\]]?/i.test(line)) return 'error'
-  if (/\b(warn|warning)\b[:\]]?/i.test(line)) return 'warn'
-  if (/\b(debug|trace)\b[:\]]?/i.test(line)) return 'debug'
-  if (/\b(info|success|ready|started|listening)\b[:\]]?/i.test(line)) return 'info'
+  const explicit = line.match(/\b(error|err|fatal|panic|warn|warning|debug|trace|info)\b[:\]]?/i)?.[1]?.toLowerCase()
+  if (explicit) {
+    if (explicit === 'error' || explicit === 'err' || explicit === 'fatal' || explicit === 'panic') return 'error'
+    if (explicit === 'warn' || explicit === 'warning') return 'warn'
+    if (explicit === 'debug' || explicit === 'trace') return 'debug'
+    if (explicit === 'info') return 'info'
+  }
+  if (/\b(fatal|panic)\b[:\]]?/i.test(line)) return 'error'
+  if (/\b(error)\b[:\]]?/i.test(line)) return 'error'
   if (/\b(failed|failure|blacklisted|timeout|deadline exceeded|EOF|tls:|reality verification failed)\b/i.test(line)) return 'warn'
+  if (/\b(success|ready|started|listening)\b[:\]]?/i.test(line)) return 'info'
   return 'neutral'
 }
 
