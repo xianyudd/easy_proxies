@@ -155,6 +155,26 @@ webui_port() {
   webui_host_port | awk -F: '{print $NF}'
 }
 
+configured_host() {
+  local value="$1"
+  value="${value#http://}"
+  value="${value#https://}"
+  value="${value%%/*}"
+  if [[ "$value" == *:* ]]; then
+    echo "${value%:*}"
+  else
+    echo "127.0.0.1"
+  fi
+}
+
+configured_listen_port() {
+  local value="$1"
+  value="${value#http://}"
+  value="${value#https://}"
+  value="${value%%/*}"
+  echo "${value##*:}"
+}
+
 configured_port() {
   local section="$1" key="$2" fallback="$3"
   local val
@@ -365,6 +385,50 @@ wait_for_webui() {
   return 1
 }
 
+tcp_listening() {
+  local host="$1" port="$2"
+  [ -n "$host" ] && [ -n "$port" ] || return 1
+  (echo >"/dev/tcp/${host}/${port}") >/dev/null 2>&1
+}
+
+node_available_count() {
+  local json
+  json="$(curl --noproxy '*' --max-time 3 -sS "${WEBUI_URL%/}/api/nodes?summary_only=true" 2>/dev/null || true)"
+  if command -v jq >/dev/null 2>&1 && [ -n "$json" ]; then
+    echo "$json" | jq -r '(.available // ([.nodes[]? | select(.available==true)] | length) // 0)' 2>/dev/null || echo 0
+  else
+    echo "$json" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("available", 0))' 2>/dev/null || echo 0
+  fi
+}
+
+wait_for_service_ready() {
+  local deadline=$((SECONDS + START_TIMEOUT)) code available min_available
+  local clash_listen clash_host clash_port
+  min_available="${EP_READY_MIN_AVAILABLE:-0}"
+  if [ "$EP_PROFILE" = "isolated" ] && [ -z "${EP_READY_MIN_AVAILABLE+x}" ]; then
+    min_available=1
+  fi
+  clash_listen="$(cfg_value management clash_api_listen || true)"
+  clash_host="$(configured_host "${clash_listen:-127.0.0.1:0}")"
+  clash_port="$(configured_listen_port "${clash_listen:-127.0.0.1:0}")"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    code="$(curl --noproxy '*' --max-time 2 -s -o /dev/null -w '%{http_code}' "${WEBUI_URL%/}" || true)"
+    if [ "$code" = "200" ]; then
+      if [ -z "$clash_listen" ] || tcp_listening "$clash_host" "$clash_port"; then
+        available="$(node_available_count)"
+        if [[ "$available" =~ ^[0-9]+$ ]] && [ "$available" -ge "$min_available" ]; then
+          echo "[OK] service ready: webui=$WEBUI_URL clash=${clash_listen:-n/a} available=$available"
+          return 0
+        fi
+      fi
+    fi
+    sleep 1
+  done
+  available="$(node_available_count)"
+  echo "[WARN] service not fully ready after ${START_TIMEOUT}s: webui=$WEBUI_URL clash=${clash_listen:-n/a} available=${available:-unknown} min_available=$min_available"
+  return 1
+}
+
 build_service() {
   local out="$BIN"
   if [ "$EP_PROFILE" = "prod" ] && [ "$out" = "./easy_proxies_local" ]; then
@@ -555,7 +619,7 @@ start_service() {
   if is_running; then
     sync_pid_file
     echo "[OK] started, pid=$(display_pid)"
-    wait_for_webui || true
+    wait_for_service_ready
   else
     echo "[ERROR] failed to start, see $LOG_FILE"
     tail -n 80 "$LOG_FILE" 2>/dev/null || true
