@@ -1660,8 +1660,8 @@ func writeFileWithLock(path string, data []byte, perm os.FileMode) error {
 // optional prefilter, and atomically writes accepted proxy URIs into the cache.
 // Runtime startup/reload can then use the cache without blocking on network IO.
 func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
-	count, _, err := c.RefreshFreeProxyCacheDetailed(ctx)
-	return count, err
+	summary, err := c.RefreshFreeProxyCacheSummary(ctx)
+	return summary.Count, err
 }
 
 // FreeProxySourceRefreshResult records one source refresh outcome.
@@ -1672,6 +1672,12 @@ type FreeProxySourceRefreshResult struct {
 	Accepted   int    `json:"accepted"`
 	DurationMS int64  `json:"duration_ms"`
 	Error      string `json:"error,omitempty"`
+}
+
+type FreeProxyCacheRefreshSummary struct {
+	Count        int
+	CacheUpdated bool
+	Sources      []FreeProxySourceRefreshResult
 }
 
 type freeProxySourceRefreshInternalResult struct {
@@ -1686,12 +1692,17 @@ type freeProxySourceRefreshInternalResult struct {
 // RefreshFreeProxyCacheDetailed is RefreshFreeProxyCache with per-source
 // telemetry suitable for API/UI status reporting.
 func (c *Config) RefreshFreeProxyCacheDetailed(ctx context.Context) (int, []FreeProxySourceRefreshResult, error) {
+	summary, err := c.RefreshFreeProxyCacheSummary(ctx)
+	return summary.Count, summary.Sources, err
+}
+
+func (c *Config) RefreshFreeProxyCacheSummary(ctx context.Context) (FreeProxyCacheRefreshSummary, error) {
 	if c == nil {
-		return 0, nil, errors.New("config is nil")
+		return FreeProxyCacheRefreshSummary{}, errors.New("config is nil")
 	}
 	cache := c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
 	if !cache.EnabledValue() || strings.TrimSpace(cache.Path) == "" || len(c.FreeProxySources) == 0 {
-		return 0, nil, nil
+		return FreeProxyCacheRefreshSummary{}, nil
 	}
 
 	filter := c.FreeProxyFilter.Normalized()
@@ -1703,7 +1714,7 @@ func (c *Config) RefreshFreeProxyCacheDetailed(ctx context.Context) (int, []Free
 		workers = len(c.FreeProxySources)
 	}
 	if workers <= 0 {
-		return 0, nil, nil
+		return FreeProxyCacheRefreshSummary{}, nil
 	}
 
 	jobs := make(chan int)
@@ -1765,7 +1776,7 @@ func (c *Config) RefreshFreeProxyCacheDetailed(ctx context.Context) (int, []Free
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), err
+		return FreeProxyCacheRefreshSummary{Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, err
 	}
 
 	seen := make(map[string]struct{})
@@ -1795,17 +1806,40 @@ func (c *Config) RefreshFreeProxyCacheDetailed(ctx context.Context) (int, []Free
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(cache.Path), 0o755); err != nil {
-		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), fmt.Errorf("create free proxy cache dir: %w", err)
+		return FreeProxyCacheRefreshSummary{Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, fmt.Errorf("create free proxy cache dir: %w", err)
 	}
 	if len(accepted) == 0 {
-		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), errors.New("no free proxy candidates accepted; existing cache preserved")
+		if count, err := countCachedFreeProxyNodes(cache.Path); err == nil && count > 0 {
+			log.Printf("ℹ️ Free proxy refresh accepted no new candidates; reusing existing cache %q with %d nodes", cache.Path, count)
+			return FreeProxyCacheRefreshSummary{Count: count, CacheUpdated: false, Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, nil
+		}
+		return FreeProxyCacheRefreshSummary{Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, errors.New("no free proxy candidates accepted; existing cache preserved")
 	}
 	content := strings.Join(accepted, "\n") + "\n"
 	if err := writeFileWithLock(cache.Path, []byte(content), 0o644); err != nil {
-		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), fmt.Errorf("write free proxy cache: %w", err)
+		return FreeProxyCacheRefreshSummary{Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, fmt.Errorf("write free proxy cache: %w", err)
 	}
 	log.Printf("✅ Refreshed free proxy cache %q with %d accepted nodes", cache.Path, len(accepted))
-	return len(accepted), sourceRefreshResults(c.FreeProxySources, byIndex), nil
+	return FreeProxyCacheRefreshSummary{Count: len(accepted), CacheUpdated: true, Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, nil
+}
+
+func countCachedFreeProxyNodes(path string) (int, error) {
+	if strings.TrimSpace(path) == "" {
+		return 0, os.ErrNotExist
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		count++
+	}
+	return count, nil
 }
 
 func sourceRefreshResults(sources []nodesource.SourceConfig, byIndex map[int]freeProxySourceRefreshInternalResult) []FreeProxySourceRefreshResult {

@@ -387,7 +387,7 @@ func TestFreeProxyCacheDefaultWorkersCoversAllConfiguredSources(t *testing.T) {
 	}
 }
 
-func TestRefreshFreeProxyCacheDetailedKeepsStaleCacheWhenNoCandidatesAccepted(t *testing.T) {
+func TestRefreshFreeProxyCacheDetailedReusesStaleCacheWhenNoCandidatesAccepted(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "cache.txt")
 	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
@@ -405,12 +405,15 @@ func TestRefreshFreeProxyCacheDetailedKeepsStaleCacheWhenNoCandidatesAccepted(t 
 		FreeProxyFilter: nodesource.FilterConfig{Enabled: false},
 	}
 
-	count, _, err := cfg.RefreshFreeProxyCacheDetailed(context.Background())
-	if err == nil {
-		t.Fatal("expected refresh error for missing source")
+	summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
+	if err != nil {
+		t.Fatalf("stale cache should allow refresh to remain usable, got error: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("count=%d, want 0", count)
+	if summary.Count != 1 || summary.CacheUpdated {
+		t.Fatalf("summary=%#v, want stale count 1 without cache update", summary)
+	}
+	if len(summary.Sources) != 1 || summary.Sources[0].Error == "" {
+		t.Fatalf("expected per-source failure telemetry to be preserved, got %#v", summary.Sources)
 	}
 	content, readErr := os.ReadFile(cachePath)
 	if readErr != nil {

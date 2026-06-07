@@ -66,6 +66,7 @@ type freeProxyRefreshStatus struct {
 	DurationMS    int64                                 `json:"duration_ms,omitempty"`
 	Error         string                                `json:"error,omitempty"`
 	Accepted      int                                   `json:"accepted,omitempty"`
+	CacheUpdated  bool                                  `json:"cache_updated,omitempty"`
 	Sources       []config.FreeProxySourceRefreshResult `json:"sources,omitempty"`
 	ReloadStarted bool                                  `json:"reload_started,omitempty"`
 	ReloadStatus  *reloadStatus                         `json:"reload_status,omitempty"`
@@ -612,11 +613,11 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 	s.freeProxyRefreshMu.Unlock()
 
 	go func(started time.Time) {
-		count, sources, err := cfg.RefreshFreeProxyCacheDetailed(context.Background())
+		summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
 		finished := time.Now()
 		reloadStarted := false
 		var reloadStatusSnapshot *reloadStatus
-		if err == nil && count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
+		if err == nil && summary.CacheUpdated && summary.Count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
 			status, startedReload, reloadErr := s.startAsyncReload("free-proxy-refresh")
 			reloadStarted = startedReload
 			reloadStatusSnapshot = &status
@@ -629,8 +630,9 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 		defer s.freeProxyRefreshMu.Unlock()
 		s.freeProxyRefreshStatus.FinishedAt = finished
 		s.freeProxyRefreshStatus.DurationMS = finished.Sub(started).Milliseconds()
-		s.freeProxyRefreshStatus.Accepted = count
-		s.freeProxyRefreshStatus.Sources = sources
+		s.freeProxyRefreshStatus.Accepted = summary.Count
+		s.freeProxyRefreshStatus.CacheUpdated = summary.CacheUpdated
+		s.freeProxyRefreshStatus.Sources = summary.Sources
 		s.freeProxyRefreshStatus.ReloadStarted = reloadStarted
 		s.freeProxyRefreshStatus.ReloadStatus = reloadStatusSnapshot
 		if err != nil {
@@ -646,7 +648,7 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 		s.freeProxyRefreshStatus.State = "succeeded"
 		s.freeProxyRefreshStatus.Error = ""
 		if s.logger != nil {
-			s.logger.Printf("✅ free proxy refresh completed in %dms, accepted=%d", s.freeProxyRefreshStatus.DurationMS, count)
+			s.logger.Printf("✅ free proxy refresh completed in %dms, accepted=%d", s.freeProxyRefreshStatus.DurationMS, summary.Count)
 		}
 	}(now)
 
@@ -998,6 +1000,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 
 	allNodes := s.mgr.Snapshot()
 	regionStats, regionHealthy, sourceStats := nodeStats(allNodes)
+	visibleNodes, availableNodes, portRange := nodeSummaryCounts(allNodes)
 	page := parsePositiveInt(q.Get("page"), 1)
 	pageSize := parsePositiveInt(q.Get("page_size"), 100)
 	if pageSize > 500 {
@@ -1027,10 +1030,40 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"page":           page,
 		"page_size":      pageSize,
 		"has_next":       page*pageSize < totalFiltered,
+		"visible_nodes":  visibleNodes,
+		"available":      availableNodes,
+		"port_range":     portRange,
 		"region_stats":   regionStats,
 		"region_healthy": regionHealthy,
 		"source_stats":   sourceStats,
 	})
+}
+
+func nodeSummaryCounts(nodes []Snapshot) (visible int, available int, portRange map[string]int) {
+	firstPort := 0
+	lastPort := 0
+	for _, snap := range nodes {
+		if !snap.Blacklisted && (!snap.InitialCheckDone || snap.Available) {
+			visible++
+		}
+		if snap.InitialCheckDone && snap.Available && !snap.Blacklisted {
+			available++
+		}
+		port := int(snap.Port)
+		if port <= 0 {
+			continue
+		}
+		if firstPort == 0 || port < firstPort {
+			firstPort = port
+		}
+		if port > lastPort {
+			lastPort = port
+		}
+	}
+	if firstPort > 0 {
+		portRange = map[string]int{"first": firstPort, "last": lastPort}
+	}
+	return visible, available, portRange
 }
 
 func nodesPagedMode(q url.Values) bool {

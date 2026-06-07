@@ -564,6 +564,67 @@ free_proxy_sources:
 	}
 }
 
+func TestFreeProxyRefreshReusesStaleCacheWithoutReload(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: missing-source
+    file: ` + filepath.Join(tmp, "missing.txt") + `
+    format: txt
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeNodeManager{done: make(chan struct{})}
+	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
+	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
+		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		status := server.currentFreeProxyRefreshStatus()
+		if status.State == "succeeded" {
+			if status.Accepted != 1 || status.CacheUpdated || status.ReloadStarted {
+				t.Fatalf("stale cache refresh should succeed without reload, got %#v", status)
+			}
+			if len(status.Sources) != 1 || status.Sources[0].Error == "" {
+				t.Fatalf("source failure telemetry missing: %#v", status.Sources)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not finish, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	select {
+	case <-fake.done:
+		t.Fatal("auto reload should not run when only stale cache was reused")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if fake.reloadCalls != 0 {
+		t.Fatalf("reloadCalls = %d, want 0", fake.reloadCalls)
+	}
+}
+
 func TestHandleFreeProxyRefreshStartsManualBackgroundRefresh(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
