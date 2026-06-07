@@ -1,5 +1,6 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { getExtractor } from '../api/extractor'
+import { getSettings } from '../api/settings'
 import { Button } from '../components/ui/Button'
 import { useToast } from '../components/ui/Toast'
 import { ExtractorForm } from '../components/extractor/ExtractorForm'
@@ -9,6 +10,7 @@ import { useExtractorStore } from '../store/extractorStore'
 import type { ExtractorParams } from '../types/extractor'
 
 export function ExtractorPage() {
+  const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const params = useExtractorStore(s => s.params)
   const entries = useExtractorStore(s => s.entries)
   const meta = useExtractorStore(s => s.meta)
@@ -17,6 +19,7 @@ export function ExtractorPage() {
   const setResult = useExtractorStore(s => s.setResult)
   const clear = useExtractorStore(s => s.clear)
   const toast = useToast(s => s.show)
+  const geoipEnabled = settings.data ? Boolean((settings.data.geoip as Record<string, unknown> | undefined)?.enabled) : true
   const mutation = useMutation({ mutationFn: getExtractor, onSuccess: (data) => { setResult(data); toast('代理已生成', 'ok') }, onError: (e) => toast(e instanceof Error ? e.message : '提取失败', 'error') })
   const run = (patch?: Partial<ExtractorParams>) => {
     const next = { ...params, ...(patch || {}) }
@@ -39,7 +42,7 @@ export function ExtractorPage() {
       <div className="dashboard-stack">
         <div className="card control-panel">
           <div className="panel-header"><div><div className="panel-title">提取参数</div><div className="panel-subtitle">配置一次后可直接生成或生成并复制。</div></div></div>
-          <ExtractorForm />
+          <ExtractorForm geoipEnabled={geoipEnabled} />
           <div className="control-actions" style={{marginTop: 14}}>
             <Button className="primary-wide" variant="primary" onClick={() => run()} disabled={mutation.isPending}>{mutation.isPending ? '生成中...' : '生成代理'}</Button>
             <div className="action-row"><Button onClick={runAndCopy}>生成并复制</Button><Button variant="danger" onClick={clear}>清空结果</Button></div>
@@ -47,7 +50,7 @@ export function ExtractorPage() {
         </div>
         <div className="card">
           <div className="panel-header"><div><div className="panel-title">快速预设</div><div className="panel-subtitle">适合批量导入、地区池和 Android 调试。</div></div></div>
-          <QuickExtractBar run={run} />
+          <QuickExtractBar run={run} geoipEnabled={geoipEnabled} />
         </div>
       </div>
       <div className="card result-panel">
