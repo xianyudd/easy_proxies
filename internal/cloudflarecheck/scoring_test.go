@@ -37,3 +37,22 @@ func TestScorePenalties(t *testing.T) {
 		t.Fatalf("expected good 60, got %d %s", score, level)
 	}
 }
+
+func TestFinalizeResultClearsNonFatalProbeErrors(t *testing.T) {
+	got := finalizeResultScore(Result{HTTP204OK: true, TraceOK: false, Error: "trace timeout"}, "all")
+	if got.Level == "failed" || got.Error != "" {
+		t.Fatalf("partial probe failure should be represented by booleans/score, not fatal error: %#v", got)
+	}
+
+	got = finalizeResultScore(Result{HTTP204OK: false, TraceOK: true, Error: "204 timeout"}, "all")
+	if got.Level == "failed" || got.Error != "" {
+		t.Fatalf("trace success should clear non-fatal 204 error: %#v", got)
+	}
+}
+
+func TestFinalizeResultKeepsFatalProbeErrors(t *testing.T) {
+	got := finalizeResultScore(Result{HTTP204OK: false, TraceOK: false, Error: "dial timeout"}, "all")
+	if got.Level != "failed" || got.Error == "" || got.Score != 0 {
+		t.Fatalf("fatal probe failure should keep error and failed level: %#v", got)
+	}
+}

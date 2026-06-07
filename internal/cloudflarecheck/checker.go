@@ -146,8 +146,16 @@ func (c *Checker) CheckTarget(ctx context.Context, target ProxyTarget) Result {
 		result.ChallengeStatus = c.checkChallenge(ctx, client)
 	}
 	result.LatencyMS = lat204 + latTrace
-	result.Score, result.Level = Score(ScoreInput{ExpectedRegion: target.Region, CFLoc: result.CFLoc, HTTP204OK: result.HTTP204OK, TraceOK: result.TraceOK, ChallengeStatus: result.ChallengeStatus, LatencyMS: result.LatencyMS, Error: result.Error})
+	result = finalizeResultScore(result, target.Region)
 	c.cache.Set(key, result)
+	return result
+}
+
+func finalizeResultScore(result Result, expectedRegion string) Result {
+	result.Score, result.Level = Score(ScoreInput{ExpectedRegion: expectedRegion, CFLoc: result.CFLoc, HTTP204OK: result.HTTP204OK, TraceOK: result.TraceOK, ChallengeStatus: result.ChallengeStatus, LatencyMS: result.LatencyMS, Error: result.Error})
+	if result.Level != "failed" {
+		result.Error = ""
+	}
 	return result
 }
 
