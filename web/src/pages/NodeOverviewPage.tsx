@@ -49,7 +49,7 @@ function regionLabel(region?: string) {
 export function NodeOverviewPage() {
   const [region, setRegion] = useState('all')
   const [source, setSource] = useState('all')
-  const [availability, setAvailability] = useState('all')
+  const [availability, setAvailability] = useState('available')
   const [latency, setLatency] = useState('all')
   const [sortKey, setSortKey] = useState<'name'|'latency'|'latency_desc'|'region'|'source'>('latency')
   const [page, setPage] = useState(1)
@@ -100,7 +100,7 @@ export function NodeOverviewPage() {
     <div className="page-header">
       <div>
         <h1>节点总览</h1>
-        <p>用一张表查看全部节点，支持地区、可用状态、延迟和排序筛选，方便快速定位可用代理。</p>
+        <p>默认只展示已验证可用节点；如需排查免费源候选、未检测或失败节点，可在状态筛选中切换。</p>
       </div>
       <div className="toolbar">
         <Button onClick={() => refetch()}>刷新</Button>
@@ -132,7 +132,7 @@ export function NodeOverviewPage() {
         </div>
         <div className="field console-field">
           <label>状态</label>
-          <Select className="console-select" value={availability} onChange={resetPage(setAvailability)} options={[{ value: 'all', label: '全部' }, { value: 'available', label: '可用' }, { value: 'unavailable', label: '不可用' }, { value: 'blacklisted', label: '已拉黑' }, { value: 'unchecked', label: '未检测' }]} />
+          <Select className="console-select" value={availability} onChange={resetPage(setAvailability)} options={[{ value: 'available', label: '可用（默认）' }, { value: 'all', label: '全部状态' }, { value: 'unavailable', label: '不可用' }, { value: 'blacklisted', label: '已拉黑' }, { value: 'unchecked', label: '未检测' }]} />
         </div>
         <div className="field console-field">
           <label>延迟</label>
@@ -153,7 +153,7 @@ export function NodeOverviewPage() {
       <div className="panel-header">
         <div>
           <div className="panel-title">节点列表</div>
-          <div className="panel-subtitle">第 {data?.page || page} 页，当前 {rows.length} 条，筛选后共 {data?.total_filtered || 0} 条。</div>
+          <div className="panel-subtitle">第 {data?.page || page} 页，当前 {rows.length} 条，筛选后共 {data?.total_filtered || 0} 条；默认列表为已验证可用节点。</div>
         </div>
 
       </div>
