@@ -371,8 +371,7 @@ func (c *Config) appendRemoteFreeProxyNodes() error {
 		}
 		if filter.Enabled {
 			before := len(sourceNodes)
-			result := nodesource.FilterNodes(sourceNodes, filter)
-			sourceNodes = result.Accepted
+			sourceNodes = filterFreeProxyCandidates(sourceNodes, filter, source.Name, false)
 			if before > 0 {
 				log.Printf("🔎 Free proxy source %q prefilter kept %d/%d nodes (min_tier=%s)", source.Name, len(sourceNodes), before, filter.MinTier)
 			}
@@ -384,6 +383,24 @@ func (c *Config) appendRemoteFreeProxyNodes() error {
 		}
 	}
 	return nil
+}
+
+func filterFreeProxyCandidates(nodes []nodesource.Node, filter nodesource.FilterConfig, sourceName string, background bool) []nodesource.Node {
+	filtered := nodesource.FilterNodes(nodes, filter)
+	if len(filtered.Accepted) > 0 || nodesource.TierRank(filter.MinTier) <= nodesource.TierRank("http_basic") {
+		return filtered.Accepted
+	}
+	fallbackFilter := filter
+	fallbackFilter.MinTier = "http_basic"
+	fallback := nodesource.FilterNodes(nodes, fallbackFilter)
+	if len(fallback.Accepted) > 0 {
+		scope := "runtime"
+		if background {
+			scope = "background"
+		}
+		log.Printf("🔎 Free proxy source %q %s fallback kept %d/%d nodes (min_tier=http_basic, configured_min_tier=%s)", sourceName, scope, len(fallback.Accepted), len(nodes), filter.MinTier)
+	}
+	return fallback.Accepted
 }
 
 func (c *Config) freeProxySeenNodeURIs() map[string]struct{} {
@@ -1709,8 +1726,7 @@ func (c *Config) RefreshFreeProxyCacheDetailed(ctx context.Context) (int, []Free
 				candidates := len(nodes)
 				if err == nil && filter.Enabled {
 					before := len(nodes)
-					filtered := nodesource.FilterNodes(nodes, filter)
-					nodes = filtered.Accepted
+					nodes = filterFreeProxyCandidates(nodes, filter, name, true)
 					if before > 0 {
 						log.Printf("🔎 Free proxy source %q background prefilter kept %d/%d nodes (min_tier=%s)", name, len(nodes), before, filter.MinTier)
 					}

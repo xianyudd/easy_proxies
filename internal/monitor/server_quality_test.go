@@ -131,9 +131,9 @@ func newQualityAPITestServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	a := mgr.Register(NodeInfo{Tag: "node-a", Name: "Node A", URI: "http://1.1.1.1:80", ListenAddress: "127.0.0.1", Port: 13001, Region: "sg", Source: "free_proxy"})
-	a.MarkAvailable(true)
+	a.MarkInitialCheckDone(true)
 	b := mgr.Register(NodeInfo{Tag: "node-b", Name: "Node B", URI: "http://2.2.2.2:80", ListenAddress: "127.0.0.1", Port: 13002, Region: "us", Source: "subscription"})
-	b.MarkAvailable(true)
+	b.MarkInitialCheckDone(true)
 	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
 	if srv == nil || srv.srv == nil {
 		t.Fatal("expected server")
@@ -261,6 +261,62 @@ func TestMonitorQualityRetryFailedFiltersTargets(t *testing.T) {
 	}
 	if !targets[0].Retry {
 		t.Fatalf("retry_failed target should be marked for cache bypass: %#v", targets[0])
+	}
+}
+
+func TestMonitorQualityTargetSourceFiltersSource(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+	srv.mgr.Register(NodeInfo{Tag: "node-free-unchecked", Name: "Free Unchecked", URI: "http://3.3.3.3:80", ListenAddress: "127.0.0.1", Port: 13003, Region: "sg", Source: "free_proxy"})
+
+	targets, err := newMonitorQualityTargetSource(srv).ListTargets(context.Background(), quality.TargetQuery{Region: "all", Source: "free_proxy", IncludeUnavailable: true})
+	if err != nil {
+		t.Fatalf("ListTargets returned error: %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("source filter with include_unavailable should include unchecked free_proxy target, got %#v", targets)
+	}
+	seen := map[string]bool{}
+	for _, target := range targets {
+		if target.Source != "free_proxy" {
+			t.Fatalf("unexpected non-free source-filtered target: %#v", target)
+		}
+		seen[target.NodeTag] = true
+	}
+	if !seen["node-a"] || !seen["node-free-unchecked"] {
+		t.Fatalf("unexpected source-filtered targets: %#v", targets)
+	}
+
+	availableTargets, err := newMonitorQualityTargetSource(srv).ListTargets(context.Background(), quality.TargetQuery{Region: "all", Source: "free_proxy", IncludeUnavailable: false})
+	if err != nil {
+		t.Fatalf("ListTargets returned error: %v", err)
+	}
+	if len(availableTargets) != 1 || availableTargets[0].NodeTag != "node-a" {
+		t.Fatalf("source filter without include_unavailable should select only checked available targets, got %#v", availableTargets)
+	}
+}
+
+func TestLegacyBackgroundQualityCheckAcceptsSourceFilter(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/cloudflare/check?background=true&region=all&source=free_proxy&count=10&include_unavailable=true", nil)
+	rec := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	snap := waitForMonitorQualityJob(t, srv, created.JobID)
+	if snap.Total != 1 || snap.Query.Source != "free_proxy" {
+		t.Fatalf("expected source-filtered job, got %#v", snap)
+	}
+	page := srv.qualitySvc.ListResults(created.JobID, quality.ResultQuery{Page: 1, PageSize: 10})
+	if page.Count != 1 || len(page.Data) != 1 || page.Data[0].Source != "free_proxy" {
+		t.Fatalf("unexpected source-filtered results: %#v", page)
 	}
 }
 

@@ -30,6 +30,7 @@ func (m monitorQualityTargetSource) ListTargets(ctx context.Context, q quality.T
 	if region == "" {
 		region = "all"
 	}
+	source := strings.ToLower(strings.TrimSpace(q.Source))
 	m.s.cfgMu.RLock()
 	username := m.s.cfg.ProxyUsername
 	password := m.s.cfg.ProxyPassword
@@ -46,7 +47,17 @@ func (m monitorQualityTargetSource) ListTargets(ctx context.Context, q quality.T
 		if snap.ListenAddress == "" || snap.Port == 0 {
 			continue
 		}
+		if !q.IncludeUnavailable && (!snap.InitialCheckDone || !snap.Available || snap.Blacklisted) {
+			continue
+		}
 		if region != "all" && !extractorSnapshotMatchesRegion(snap, region) {
+			continue
+		}
+		snapSource := strings.ToLower(strings.TrimSpace(snap.Source))
+		if snapSource == "" {
+			snapSource = "unknown"
+		}
+		if source != "" && source != "all" && snapSource != source {
 			continue
 		}
 		host := m.s.resolveLocalHost(snap.ListenAddress)

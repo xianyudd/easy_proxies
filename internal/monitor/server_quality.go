@@ -109,7 +109,7 @@ func isBackgroundQualityRequest(r *http.Request) bool {
 	return r.URL.Query().Get("background") == "1" || strings.EqualFold(r.URL.Query().Get("background"), "true") || r.URL.Query().Get("async") == "1" || strings.EqualFold(r.URL.Query().Get("async"), "true")
 }
 
-func (s *Server) startBackgroundQualityCheck(w http.ResponseWriter, r *http.Request, kind quality.CheckKind, region, mode string, count int, includeUnavailable, retryFailed bool) bool {
+func (s *Server) startBackgroundQualityCheck(w http.ResponseWriter, r *http.Request, kind quality.CheckKind, region, mode, source string, count int, includeUnavailable, retryFailed bool) bool {
 	if !isBackgroundQualityRequest(r) {
 		return false
 	}
@@ -119,7 +119,7 @@ func (s *Server) startBackgroundQualityCheck(w http.ResponseWriter, r *http.Requ
 	if count > 10000 {
 		count = 10000
 	}
-	req := quality.JobRequest{Kind: kind, Region: region, Mode: mode, Count: count, IncludeUnavailable: includeUnavailable, RetryFailed: retryFailed}
+	req := quality.JobRequest{Kind: kind, Region: region, Mode: mode, Source: source, Count: count, IncludeUnavailable: includeUnavailable, RetryFailed: retryFailed}
 	snap, err := s.qualitySvc.CreateJob(r.Context(), req)
 	if err != nil {
 		if errors.Is(err, quality.ErrActiveJob) {

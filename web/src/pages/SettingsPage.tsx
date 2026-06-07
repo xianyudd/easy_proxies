@@ -144,7 +144,7 @@ export function SettingsPage() {
     void freeProxyRefreshStatus.refetch()
   }, onError:e=>toast(e instanceof Error ? e.message:'免费源刷新启动失败','error') })
   const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:()=>{ toast('订阅配置已保存并刷新', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
-  const input = (label:string, value:string, onChange:(v:string)=>void, type='text') => <div className="field settings-form-item"><label>{label}</label><Input className="settings-input" type={type} autoComplete={type === 'password' ? 'current-password' : label.includes('用户名') ? 'username' : undefined} value={value} onChange={e=>onChange(e.target.value)} /></div>
+  const input = (label:string, value:string, onChange:(v:string)=>void, type='text') => <div className="field settings-form-item"><label>{label}</label><Input className="settings-input" aria-label={label} type={type} autoComplete={type === 'password' ? 'current-password' : label.includes('用户名') ? 'username' : undefined} value={value} onChange={e=>onChange(e.target.value)} /></div>
   const toggle = (label:string, checked:boolean, onChange:(v:boolean)=>void) => <Checkbox className="settings-checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}>{label}</Checkbox>
   const listener = (draft.listener || {}) as Record<string, unknown>
   const mp = (draft.multi_port || {}) as Record<string, unknown>
@@ -260,7 +260,7 @@ export function SettingsPage() {
             <div className="status-card"><Database size={16} /><span>源数量</span><strong>{freeSources.length}</strong></div>
             <div className="status-card"><Wifi size={16} /><span>启用源</span><strong>{freeSources.filter(s => s.enabled !== false).length}</strong></div>
             <div className="status-card"><Database size={16} /><span>入池上限</span><strong>{Number(draft.free_proxy_max_nodes || 0) > 0 ? Number(draft.free_proxy_max_nodes) : '不限'}</strong></div>
-            <div className="status-card"><Clock3 size={16} /><span>最低等级</span><strong>{String(freeFilter.min_tier || 'simple_web')}</strong></div>
+            <div className="status-card"><Clock3 size={16} /><span>最低等级</span><strong>{String(freeFilter.min_tier || 'http_basic')}</strong></div>
           </div>
           <div className="free-proxy-filter-panel">
             <div className="quality-toggle-row">
@@ -268,7 +268,7 @@ export function SettingsPage() {
               <span className="settings-helper-text">开启后，免费源不会直接进入运行池；只有通过预筛的代理会展示。</span>
             </div>
           <div className="form-grid-3 compact-form-grid">
-            <div className="field settings-form-item"><label>最低等级</label><Select className="settings-input" value={String(freeFilter.min_tier || 'simple_web')} onChange={v=>updateFreeFilter({min_tier:v})} options={[{value:'http_basic',label:'HTTP 基础可用'}, {value:'simple_web',label:'普通 Web 可用'}]} /></div>
+            <div className="field settings-form-item"><label>最低等级</label><Select className="settings-input" value={String(freeFilter.min_tier || 'http_basic')} onChange={v=>updateFreeFilter({min_tier:v})} options={[{value:'http_basic',label:'HTTP 基础可用'}, {value:'simple_web',label:'普通 Web 可用'}]} /></div>
             {input('入池上限（0=不限）', String(draft.free_proxy_max_nodes || 0), v=>setDraft({...draft, free_proxy_max_nodes:Number(v)||0}), 'number')}
             {input('候选上限（0=全量）', String(freeFilter.max_candidates || 0), v=>updateFreeFilter({max_candidates:Number(v)||0}), 'number')}
             {input('筛选并发', String(freeFilter.workers || 200), v=>updateFreeFilter({workers:Number(v)||200}), 'number')}
@@ -301,7 +301,7 @@ export function SettingsPage() {
               <Button variant="danger" onClick={()=>removeFreeSource(idx)}><Trash2 size={15} />删除</Button>
             </div>) : <div className="empty-state compact-empty"><strong>暂无免费代理源</strong><span>添加 GitHub raw、远程文本列表或本地文件。保存并重载后，系统会自动筛选，通过后才进入节点总览。</span><Button onClick={addFreeSource}><Plus size={15} />新增源</Button></div>}
           </div>
-          <div className="settings-inline-note"><Badge tone={freeFilter.enabled ? 'good' : 'neutral'}>{freeFilter.enabled ? '自动筛选已启用' : '未启用自动筛选'}</Badge><span>建议最低等级使用 simple_web；默认每个免费源全量进入后台候选处理，候选上限/入池上限填 0 表示不截断。</span></div>
+          <div className="settings-inline-note"><Badge tone={freeFilter.enabled ? 'good' : 'neutral'}>{freeFilter.enabled ? '自动筛选已启用' : '未启用自动筛选'}</Badge><span>建议先使用 HTTP 基础可用入池，再通过 CF/IP 风险检测筛质量；候选上限/入池上限填 0 表示不截断。</span></div>
         </section>
 
 

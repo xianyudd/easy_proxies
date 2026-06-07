@@ -5,6 +5,7 @@ export interface QualityJobRequest {
   kind: QualityJobKind
   region?: string
   mode?: string
+  source?: string
   count?: number
   include_unavailable?: boolean
   retry_failed?: boolean

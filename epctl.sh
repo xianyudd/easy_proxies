@@ -105,6 +105,7 @@ Environment:
   WEBUI_URL=http://127.0.0.1:9091       Active WebUI base URL
   WEBUI_TOKEN=<session token, optional>
   WEBUI_PASSWORD=<WebUI password, optional; never printed>
+  EP_KEEP_PROXY_ENV=1                   Preserve proxy env for service process
 EOF
 }
 
@@ -436,7 +437,7 @@ free_proxy_cache:
 free_proxy_max_nodes: 0
 free_proxy_filter:
   enabled: true
-  min_tier: simple_web
+  min_tier: http_basic
   workers: 200
   timeout: 2s
   max_candidates: 0
@@ -474,7 +475,9 @@ start_service() {
     echo "Build first: ./epctl.sh service:build"
     exit 1
   fi
-  clean_proxy_env
+  if [ "${EP_KEEP_PROXY_ENV:-0}" != "1" ]; then
+    clean_proxy_env
+  fi
   mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$PID_FILE")"
   echo "[INFO] starting profile=$EP_PROFILE bin=$BIN config=$CONFIG_FILE log=$LOG_FILE"
   setsid "$BIN" --config "$CONFIG_FILE" >"$LOG_FILE" 2>&1 < /dev/null &

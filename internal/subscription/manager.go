@@ -575,6 +575,7 @@ func (m *Manager) createNewConfig(nodes []config.NodeConfig) *config.Config {
 	for i := range nodes {
 		nodes[i].Name = strings.TrimSpace(nodes[i].Name)
 		nodes[i].URI = strings.TrimSpace(nodes[i].URI)
+		nodes[i].Source = config.NodeSourceSubscription
 
 		// Auto-extract name from URI if not provided
 		if nodes[i].Name == "" {

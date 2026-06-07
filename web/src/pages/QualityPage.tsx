@@ -73,6 +73,7 @@ type QualityRow = { key: string; row: CloudflareResult; rep?: ReputationResult; 
 
 export function QualityPage() {
   const [region, setRegion] = useState('all')
+  const [source, setSource] = useState('all')
   const [count, setCount] = useState(20)
   const [cfRows, setCfRows] = useState<CloudflareResult[]>([])
   const [repRows, setRepRows] = useState<ReputationResult[]>([])
@@ -92,11 +93,14 @@ export function QualityPage() {
   const repCache = useQuery({ queryKey: ['rep-cache'], queryFn: getReputationCache, enabled: false })
   const jobQuery = useQuery({ queryKey: ['quality-job', jobId], queryFn: () => getQualityJob(jobId), enabled: !!jobId })
   const jobResults = useQuery({ queryKey: ['quality-job-results', jobId, resultPage, resultPageSize], queryFn: () => getQualityJobResults(jobId, { page: resultPage, page_size: resultPageSize }), enabled: !!jobId })
+  const sourceStats = (nodesSummary.data?.source_stats || {}) as Record<string, number>
+  const sourceCount = source === 'all' ? (nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0) : Number(sourceStats[source] || 0)
   const scanCount = Math.max(1, count)
-  const allCount = Math.max(nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0, 500)
-  const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false), onSuccess: d => { setCfRows(d.data || []); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
-  const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', count: allCount, include_unavailable: true }), onSuccess: job => { setJobId(job.job_id); setResultPage(1); toast('Pipeline 后台扫描任务已创建', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '创建后台扫描失败', 'error') })
-  const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', count: allCount, include_unavailable: true, retry_failed: true, replace: true }), onSuccess: job => { setJobId(job.job_id); setResultPage(1); toast('失败节点 Pipeline 重试任务已创建', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '创建重试任务失败', 'error') })
+  const allCount = Math.max(sourceCount || nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0, source === 'all' ? 500 : 1)
+  const qualitySource = source === 'all' ? undefined : source
+  const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { setCfRows(d.data || []); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
+  const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true }), onSuccess: job => { setJobId(job.job_id); setResultPage(1); toast('Pipeline 后台扫描任务已创建', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '创建后台扫描失败', 'error') })
+  const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true, retry_failed: true, replace: true }), onSuccess: job => { setJobId(job.job_id); setResultPage(1); toast('失败节点 Pipeline 重试任务已创建', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '创建重试任务失败', 'error') })
   const cancelScan = useMutation({ mutationFn: () => cancelQualityJob(jobId), onSuccess: () => { void jobQuery.refetch(); void jobResults.refetch(); toast('后台任务已取消', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '取消任务失败', 'error') })
   const loadCache = async () => {
     const [cf, rep] = await Promise.all([cfCache.refetch(), repCache.refetch()])
@@ -168,6 +172,10 @@ export function QualityPage() {
         <div className="field console-field">
           <label>地区范围</label>
           <Select className="console-select" value={region} onChange={setRegion} options={[{ value: 'all', label: '全部' }, { value: 'us', label: '美国' }, { value: 'jp', label: '日本' }, { value: 'hk', label: '香港' }, { value: 'sg', label: '新加坡' }, { value: 'de', label: '德国' }, { value: 'gb', label: '英国' }]} />
+        </div>
+        <div className="field console-field">
+          <label>节点来源</label>
+          <Select className="console-select" value={source} onChange={setSource} options={[{ value: 'all', label: `全部来源 (${nodesSummary.data?.total_nodes || 0})` }, { value: 'free_proxy', label: `免费源 (${sourceStats.free_proxy || 0})` }, { value: 'subscription', label: `订阅源 (${sourceStats.subscription || 0})` }, { value: 'inline', label: `内联 (${sourceStats.inline || 0})` }, { value: 'nodes_file', label: `节点文件 (${sourceStats.nodes_file || 0})` }]} />
         </div>
         <div className="field console-field">
           <label>样本数</label>

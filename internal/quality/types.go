@@ -48,6 +48,7 @@ type TargetQuery struct {
 	Kind               CheckKind `json:"kind,omitempty"`
 	NodeTag            string    `json:"node_tag,omitempty"`
 	Protocol           string    `json:"protocol,omitempty"`
+	Source             string    `json:"source,omitempty"`
 	Region             string    `json:"region,omitempty"`
 	Mode               string    `json:"mode,omitempty"`
 	IncludeUnavailable bool      `json:"include_unavailable,omitempty"`
@@ -61,6 +62,7 @@ type JobRequest struct {
 	Kind               CheckKind   `json:"kind"`
 	Region             string      `json:"region,omitempty"`
 	Mode               string      `json:"mode,omitempty"`
+	Source             string      `json:"source,omitempty"`
 	Count              int         `json:"count,omitempty"`
 	IncludeUnavailable bool        `json:"include_unavailable,omitempty"`
 	RetryFailed        bool        `json:"retry_failed,omitempty"`
@@ -106,35 +108,35 @@ type JobSummary struct {
 
 // Result is one target's quality-check output.
 type Result struct {
-	JobID       string         `json:"job_id"`
-	Kind        CheckKind      `json:"kind"`
-	Target      Target         `json:"-"`
-	TargetIndex int            `json:"target_index"`
-	TargetID    string         `json:"target_id,omitempty"`
-	NodeName    string         `json:"node_name,omitempty"`
-	NodeTag     string         `json:"node_tag,omitempty"`
-	Source      string         `json:"source,omitempty"`
-	ProxyURL    string         `json:"proxy_url,omitempty"`
-	Protocol    string         `json:"protocol,omitempty"`
-	Host        string         `json:"host,omitempty"`
-	Port        int            `json:"port,omitempty"`
-	Region      string         `json:"region,omitempty"`
-	Status      string         `json:"status,omitempty"`
-	Success     bool           `json:"success"`
-	Score       int            `json:"score,omitempty"`
-	FinalScore  int            `json:"final_score,omitempty"`
-	Tier        string         `json:"tier,omitempty"`
-	TierScore   int            `json:"tier_score,omitempty"`
-	Pool        string         `json:"pool,omitempty"`
-	Capabilities []string      `json:"capabilities,omitempty"`
-	TierReasons []string       `json:"tier_reasons,omitempty"`
-	Recommend   bool           `json:"recommend,omitempty"`
-	LatencyMS   int64          `json:"latency_ms,omitempty"`
-	Quick       map[string]any `json:"quick,omitempty"`
-	CF          map[string]any `json:"cf,omitempty"`
-	Reputation  map[string]any `json:"reputation,omitempty"`
-	Error       string         `json:"error,omitempty"`
-	CheckedAt   time.Time      `json:"checked_at,omitempty"`
+	JobID        string         `json:"job_id"`
+	Kind         CheckKind      `json:"kind"`
+	Target       Target         `json:"-"`
+	TargetIndex  int            `json:"target_index"`
+	TargetID     string         `json:"target_id,omitempty"`
+	NodeName     string         `json:"node_name,omitempty"`
+	NodeTag      string         `json:"node_tag,omitempty"`
+	Source       string         `json:"source,omitempty"`
+	ProxyURL     string         `json:"proxy_url,omitempty"`
+	Protocol     string         `json:"protocol,omitempty"`
+	Host         string         `json:"host,omitempty"`
+	Port         int            `json:"port,omitempty"`
+	Region       string         `json:"region,omitempty"`
+	Status       string         `json:"status,omitempty"`
+	Success      bool           `json:"success"`
+	Score        int            `json:"score,omitempty"`
+	FinalScore   int            `json:"final_score,omitempty"`
+	Tier         string         `json:"tier,omitempty"`
+	TierScore    int            `json:"tier_score,omitempty"`
+	Pool         string         `json:"pool,omitempty"`
+	Capabilities []string       `json:"capabilities,omitempty"`
+	TierReasons  []string       `json:"tier_reasons,omitempty"`
+	Recommend    bool           `json:"recommend,omitempty"`
+	LatencyMS    int64          `json:"latency_ms,omitempty"`
+	Quick        map[string]any `json:"quick,omitempty"`
+	CF           map[string]any `json:"cf,omitempty"`
+	Reputation   map[string]any `json:"reputation,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	CheckedAt    time.Time      `json:"checked_at,omitempty"`
 }
 
 // ResultQuery controls paginated result listing.

@@ -880,7 +880,7 @@ func (s *Server) runScheduledQualityCheck(q config.QualityCheckConfig) {
 			retryTags = nil
 		}
 	}
-	cfTargets, err := s.buildCloudflareTargets(region, count, q.IncludeUnavailable, retryTags)
+	cfTargets, err := s.buildCloudflareTargets(region, "", count, q.IncludeUnavailable, retryTags)
 	if err != nil {
 		s.logger.Printf("⚠️ scheduled CF check skipped: %v", err)
 	} else {
@@ -904,7 +904,7 @@ func (s *Server) runScheduledQualityCheck(q config.QualityCheckConfig) {
 			repRetryTags = nil
 		}
 	}
-	repTargets, err := s.buildReputationTargets(region, count, q.IncludeUnavailable, repRetryTags)
+	repTargets, err := s.buildReputationTargets(region, "", count, q.IncludeUnavailable, repRetryTags)
 	if err != nil {
 		s.logger.Printf("⚠️ scheduled reputation check skipped: %v", err)
 		return
@@ -1694,6 +1694,7 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = "multi-port"
 	}
+	source := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("source")))
 	count := 10
 	if raw := strings.TrimSpace(r.URL.Query().Get("count")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -1711,7 +1712,7 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "invalid region"})
 		return
 	}
-	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckCloudflare, region, mode, count, includeUnavailable, retryFailed); startBackground {
+	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckCloudflare, region, mode, source, count, includeUnavailable, retryFailed); startBackground {
 		return
 	}
 	maxCount := 50
@@ -1743,7 +1744,7 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	targets, err := s.buildCloudflareTargets(region, count, includeUnavailable, retryTags)
+	targets, err := s.buildCloudflareTargets(region, source, count, includeUnavailable, retryTags)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": err.Error()})
@@ -1772,7 +1773,7 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) buildCloudflareTargets(region string, count int, includeUnavailable bool, targetTags map[string]bool) ([]cloudflarecheck.ProxyTarget, error) {
+func (s *Server) buildCloudflareTargets(region, source string, count int, includeUnavailable bool, targetTags map[string]bool) ([]cloudflarecheck.ProxyTarget, error) {
 	s.cfgMu.RLock()
 	username := s.cfg.ProxyUsername
 	password := s.cfg.ProxyPassword
@@ -1780,11 +1781,22 @@ func (s *Server) buildCloudflareTargets(region string, count int, includeUnavail
 
 	snaps := s.mgr.SnapshotFiltered(!includeUnavailable)
 	targets := make([]cloudflarecheck.ProxyTarget, 0, count)
+	source = strings.ToLower(strings.TrimSpace(source))
 	for _, snap := range snaps {
 		if snap.ListenAddress == "" || snap.Port == 0 {
 			continue
 		}
+		if !includeUnavailable && (!snap.InitialCheckDone || !snap.Available || snap.Blacklisted) {
+			continue
+		}
 		if region != "all" && !extractorSnapshotMatchesRegion(snap, region) {
+			continue
+		}
+		snapSource := strings.ToLower(strings.TrimSpace(snap.Source))
+		if snapSource == "" {
+			snapSource = "unknown"
+		}
+		if source != "" && source != "all" && snapSource != source {
 			continue
 		}
 		if targetTags != nil && !targetTags[snap.Tag] {
@@ -1911,6 +1923,7 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = "multi-port"
 	}
+	source := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("source")))
 	count := 10
 	if raw := strings.TrimSpace(r.URL.Query().Get("count")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -1928,7 +1941,7 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
-	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckReputation, region, mode, count, includeUnavailable, retryFailed); startBackground {
+	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckReputation, region, mode, source, count, includeUnavailable, retryFailed); startBackground {
 		return
 	}
 	maxCount := 50
@@ -1962,7 +1975,7 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	targets, err := s.buildReputationTargets(region, count, includeUnavailable, retryTags)
+	targets, err := s.buildReputationTargets(region, source, count, includeUnavailable, retryTags)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": err.Error()})
@@ -1982,7 +1995,7 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) buildReputationTargets(region string, count int, includeUnavailable bool, targetTags map[string]bool) ([]reputation.ProxyTarget, error) {
+func (s *Server) buildReputationTargets(region, source string, count int, includeUnavailable bool, targetTags map[string]bool) ([]reputation.ProxyTarget, error) {
 	s.cfgMu.RLock()
 	username := s.cfg.ProxyUsername
 	password := s.cfg.ProxyPassword
@@ -1990,11 +2003,22 @@ func (s *Server) buildReputationTargets(region string, count int, includeUnavail
 
 	snaps := s.mgr.SnapshotFiltered(!includeUnavailable)
 	targets := make([]reputation.ProxyTarget, 0, count)
+	source = strings.ToLower(strings.TrimSpace(source))
 	for _, snap := range snaps {
 		if snap.ListenAddress == "" || snap.Port == 0 {
 			continue
 		}
+		if !includeUnavailable && (!snap.InitialCheckDone || !snap.Available || snap.Blacklisted) {
+			continue
+		}
 		if region != "all" && !extractorSnapshotMatchesRegion(snap, region) {
+			continue
+		}
+		snapSource := strings.ToLower(strings.TrimSpace(snap.Source))
+		if snapSource == "" {
+			snapSource = "unknown"
+		}
+		if source != "" && source != "all" && snapSource != source {
 			continue
 		}
 		host := s.resolveLocalHost(snap.ListenAddress)

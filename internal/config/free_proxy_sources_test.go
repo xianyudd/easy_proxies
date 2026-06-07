@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"easy_proxies/internal/nodesource"
 	"net/http"
@@ -417,5 +418,61 @@ func TestRefreshFreeProxyCacheDetailedKeepsStaleCacheWhenNoCandidatesAccepted(t 
 	}
 	if got, want := string(content), "http://9.9.9.9:8080\n"; got != want {
 		t.Fatalf("stale cache should be preserved, got %q want %q", got, want)
+	}
+}
+
+func TestRefreshFreeProxyCacheDetailedFallsBackToHTTPBasicWhenSimpleWebRejectsAll(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "cache.txt")
+	sourcePath := filepath.Join(dir, "free.txt")
+
+	httpOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/generate_204":
+			w.WriteHeader(http.StatusNoContent)
+		case "/https":
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer httpOnly.Close()
+
+	if err := os.WriteFile(sourcePath, []byte(httpOnly.URL+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{
+		filePath:          filepath.Join(dir, "config.yaml"),
+		FreeProxyMaxNodes: 0,
+		FreeProxySources: []nodesource.SourceConfig{
+			{Name: "http-only", File: sourcePath, Format: "txt"},
+		},
+		FreeProxyCache: FreeProxyCacheConfig{Path: cachePath},
+		FreeProxyFilter: nodesource.FilterConfig{
+			Enabled: true,
+			MinTier: "simple_web",
+			Workers: 1,
+			Timeout: 2 * time.Second,
+			Probes:  nodesource.FilterProbes{HTTP: "/generate_204", HTTPS: "/https"},
+		},
+	}
+
+	count, details, err := cfg.RefreshFreeProxyCacheDetailed(context.Background())
+	if err != nil {
+		t.Fatalf("refresh should fall back to http_basic instead of failing: %v details=%#v", err, details)
+	}
+	if count != 1 {
+		t.Fatalf("count=%d, want 1 details=%#v", count, details)
+	}
+	content, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), httpOnly.URL+"\n"; got != want {
+		t.Fatalf("cache=%q, want %q", got, want)
+	}
+	if len(details) != 1 || details[0].Accepted != 1 {
+		t.Fatalf("details should report fallback accepted node: %#v", details)
 	}
 }

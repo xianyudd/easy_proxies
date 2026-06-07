@@ -330,6 +330,9 @@ func targetQueryFromRequest(req JobRequest) TargetQuery {
 	if req.Mode != "" {
 		q.Mode = req.Mode
 	}
+	if req.Source != "" {
+		q.Source = req.Source
+	}
 	if req.IncludeUnavailable {
 		q.IncludeUnavailable = true
 	}
