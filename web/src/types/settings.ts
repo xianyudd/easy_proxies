@@ -58,6 +58,7 @@ export interface SaveSettingsResponse {
     duration_ms?: number
     error?: string
     requested_by?: string
+    reload_pending?: boolean
   }
   reload_error?: string
   free_proxy_refresh_needed?: boolean
@@ -97,6 +98,7 @@ export interface ReloadStatus {
   duration_ms?: number
   error?: string
   requested_by?: string
+  reload_pending?: boolean
 }
 
 export interface FreeProxyRefreshStatus {

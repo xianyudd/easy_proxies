@@ -174,7 +174,7 @@ export function SettingsPage() {
         toast(`设置已保存，但后台生效启动失败：${res.reload_error}`, 'error')
         return
       }
-      toast(res.reload_started ? '设置已保存，后台正在生效...' : '设置已保存，已有后台生效任务在运行...', 'ok')
+      toast(res.reload_status?.reload_pending ? '设置已保存，已排队等待当前后台生效完成后继续生效...' : res.reload_started ? '设置已保存，后台正在生效...' : '设置已保存，已有后台生效任务在运行...', 'ok')
       setReloadState('reloading')
       void reloadStatus.refetch()
     } else {

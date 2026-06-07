@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,10 +18,13 @@ import (
 )
 
 type fakeNodeManager struct {
+	mu          sync.Mutex
 	delay       time.Duration
 	err         error
 	reloadCalls int
 	done        chan struct{}
+	doneOnce    sync.Once
+	reloadCh    chan int
 }
 
 func freeLocalListen(t *testing.T) string {
@@ -53,9 +57,19 @@ func (f *fakeNodeManager) DeleteNode(ctx context.Context, name string) error {
 }
 
 func (f *fakeNodeManager) TriggerReload(ctx context.Context) error {
+	f.mu.Lock()
 	f.reloadCalls++
+	call := f.reloadCalls
+	ch := f.reloadCh
+	f.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- call:
+		default:
+		}
+	}
 	if f.done != nil {
-		defer close(f.done)
+		defer f.doneOnce.Do(func() { close(f.done) })
 	}
 	if f.delay > 0 {
 		select {
@@ -65,6 +79,12 @@ func (f *fakeNodeManager) TriggerReload(ctx context.Context) error {
 		}
 	}
 	return f.err
+}
+
+func (f *fakeNodeManager) ReloadCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reloadCalls
 }
 
 func TestHandleSettingsPersistsFreeProxyConfig(t *testing.T) {
@@ -339,8 +359,8 @@ log:
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.NeedReload || resp.ReloadStarted || fake.reloadCalls != 0 {
-		t.Fatalf("control-plane-only settings should not reload: resp=%#v calls=%d", resp, fake.reloadCalls)
+	if resp.NeedReload || resp.ReloadStarted || fake.ReloadCalls() != 0 {
+		t.Fatalf("control-plane-only settings should not reload: resp=%#v calls=%d", resp, fake.ReloadCalls())
 	}
 }
 
@@ -416,8 +436,156 @@ management:
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if fake.reloadCalls != 1 {
-		t.Fatalf("reloadCalls = %d, want 1", fake.reloadCalls)
+	if fake.ReloadCalls() != 1 {
+		t.Fatalf("reloadCalls = %d, want 1", fake.ReloadCalls())
+	}
+}
+
+func TestHandleSettingsQueuesReloadWhenSaveArrivesDuringReload(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+mode: hybrid
+listener:
+  address: 127.0.0.1
+  port: 18080
+multi_port:
+  address: 127.0.0.1
+  base_port: 25000
+management:
+  listen: ` + listen + `
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeNodeManager{delay: 120 * time.Millisecond, reloadCh: make(chan int, 4)}
+	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
+
+	body1 := []byte(`{
+		"mode": "hybrid",
+		"listener": {"address":"127.0.0.1","port":18081,"username":"u1","password":""},
+		"multi_port": {"address":"127.0.0.1","base_port":25000,"username":"","password":""},
+		"management": {"listen":"` + listen + `","password":""}
+	}`)
+	req1 := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body1))
+	rec1 := httptest.NewRecorder()
+	server.handleSettings(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body = %s", rec1.Code, rec1.Body.String())
+	}
+	select {
+	case <-fake.reloadCh:
+	case <-time.After(time.Second):
+		t.Fatal("first reload did not start")
+	}
+
+	body2 := []byte(`{
+		"mode": "hybrid",
+		"listener": {"address":"127.0.0.1","port":18082,"username":"u2","password":""},
+		"multi_port": {"address":"127.0.0.1","base_port":25000,"username":"","password":""},
+		"management": {"listen":"` + listen + `","password":""}
+	}`)
+	req2 := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body2))
+	rec2 := httptest.NewRecorder()
+	server.handleSettings(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second status = %d, body = %s", rec2.Code, rec2.Body.String())
+	}
+	var resp struct {
+		NeedReload    bool `json:"need_reload"`
+		ReloadStarted bool `json:"reload_started"`
+		ReloadStatus  struct {
+			State   string `json:"state"`
+			Pending bool   `json:"reload_pending"`
+		} `json:"reload_status"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.NeedReload || resp.ReloadStarted || resp.ReloadStatus.State != "running" || !resp.ReloadStatus.Pending {
+		t.Fatalf("expected queued reload response, got %#v body=%s", resp, rec2.Body.String())
+	}
+	select {
+	case <-fake.reloadCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued reload did not start")
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		status := server.currentReloadStatus()
+		if status.State == "succeeded" {
+			break
+		}
+		if status.State == "failed" {
+			t.Fatalf("reload failed: %#v", status)
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("queued reload did not finish, status=%#v calls=%d", status, fake.ReloadCalls())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if fake.ReloadCalls() != 2 {
+		t.Fatalf("reloadCalls = %d, want 2", fake.ReloadCalls())
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Listener.Port != 18082 || reloaded.Listener.Username != "u2" {
+		t.Fatalf("latest settings not persisted: %#v", reloaded.Listener)
+	}
+}
+
+func TestHandleSettingsReportsReloadErrorWhenNodeManagerMissing(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+management:
+  listen: ` + listen + `
+listener:
+  address: 127.0.0.1
+  port: 18080
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+
+	body := []byte(`{
+		"listener": {"address":"127.0.0.1","port":18081,"username":"","password":""},
+		"management": {"listen":"` + listen + `","password":""}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedReload    bool   `json:"need_reload"`
+		ReloadStarted bool   `json:"reload_started"`
+		ReloadError   string `json:"reload_error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.NeedReload || resp.ReloadStarted || resp.ReloadError == "" {
+		t.Fatalf("expected explicit reload error, got %#v body=%s", resp, rec.Body.String())
 	}
 }
 
@@ -498,8 +666,8 @@ free_proxy_filter:
 	case <-time.After(2 * time.Second):
 		t.Fatal("auto reload did not run after free proxy refresh")
 	}
-	if fake.reloadCalls != 1 {
-		t.Fatalf("reloadCalls = %d, want 1", fake.reloadCalls)
+	if fake.ReloadCalls() != 1 {
+		t.Fatalf("reloadCalls = %d, want 1", fake.ReloadCalls())
 	}
 	status := server.currentFreeProxyRefreshStatus()
 	if status.ReloadStatus == nil || status.ReloadStatus.State != "succeeded" {
@@ -580,8 +748,8 @@ free_proxy_sources:
 		t.Fatal("auto reload should not run after failed refresh; stale cache must be preserved")
 	case <-time.After(100 * time.Millisecond):
 	}
-	if fake.reloadCalls != 0 {
-		t.Fatalf("reloadCalls = %d, want 0", fake.reloadCalls)
+	if fake.ReloadCalls() != 0 {
+		t.Fatalf("reloadCalls = %d, want 0", fake.ReloadCalls())
 	}
 }
 
@@ -951,8 +1119,8 @@ free_proxy_sources:
 		t.Fatal("auto reload should not run when only stale cache was reused")
 	case <-time.After(100 * time.Millisecond):
 	}
-	if fake.reloadCalls != 0 {
-		t.Fatalf("reloadCalls = %d, want 0", fake.reloadCalls)
+	if fake.ReloadCalls() != 0 {
+		t.Fatalf("reloadCalls = %d, want 0", fake.ReloadCalls())
 	}
 }
 

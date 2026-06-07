@@ -58,6 +58,7 @@ type reloadStatus struct {
 	DurationMS  int64     `json:"duration_ms,omitempty"`
 	Error       string    `json:"error,omitempty"`
 	RequestedBy string    `json:"requested_by,omitempty"`
+	Pending     bool      `json:"reload_pending,omitempty"`
 }
 
 type freeProxyRefreshStatus struct {
@@ -288,6 +289,8 @@ type Server struct {
 	reloadMu     sync.Mutex
 	reloadState  string
 	reloadStatus reloadStatus
+	reloadPending bool
+	reloadPendingBy string
 
 	freeProxyRefreshMu     sync.Mutex
 	freeProxyRefreshState  string
@@ -558,6 +561,7 @@ func (s *Server) currentReloadStatus() reloadStatus {
 	if status.State == "" {
 		status.State = "idle"
 	}
+	status.Pending = s.reloadPending
 	return status
 }
 
@@ -568,11 +572,16 @@ func (s *Server) startAsyncReload(requestedBy string) (reloadStatus, bool, error
 	now := time.Now()
 	s.reloadMu.Lock()
 	if s.reloadState == "running" {
+		s.reloadPending = true
+		s.reloadPendingBy = requestedBy
 		status := s.reloadStatus
+		status.Pending = true
 		s.reloadMu.Unlock()
 		return status, false, nil
 	}
 	s.reloadState = "running"
+	s.reloadPending = false
+	s.reloadPendingBy = ""
 	s.reloadStatus = reloadStatus{
 		State:       "running",
 		StartedAt:   now,
@@ -581,31 +590,60 @@ func (s *Server) startAsyncReload(requestedBy string) (reloadStatus, bool, error
 	status := s.reloadStatus
 	s.reloadMu.Unlock()
 
-	go func(started time.Time) {
-		err := s.nodeMgr.TriggerReload(context.Background())
-		finished := time.Now()
-		s.reloadMu.Lock()
-		defer s.reloadMu.Unlock()
-		s.reloadStatus.FinishedAt = finished
-		s.reloadStatus.DurationMS = finished.Sub(started).Milliseconds()
-		if err != nil {
-			s.reloadState = "failed"
-			s.reloadStatus.State = "failed"
-			s.reloadStatus.Error = err.Error()
-			if s.logger != nil {
-				s.logger.Printf("❌ async reload failed: %v", err)
-			}
-			return
-		}
-		s.reloadState = "succeeded"
-		s.reloadStatus.State = "succeeded"
-		s.reloadStatus.Error = ""
-		if s.logger != nil {
-			s.logger.Printf("✅ async reload completed in %dms", s.reloadStatus.DurationMS)
-		}
-	}(now)
+	go s.runAsyncReload(now)
 
 	return status, true, nil
+}
+
+func (s *Server) runAsyncReload(started time.Time) {
+	err := s.nodeMgr.TriggerReload(context.Background())
+	finished := time.Now()
+	var nextRequestedBy string
+	s.reloadMu.Lock()
+	s.reloadStatus.FinishedAt = finished
+	s.reloadStatus.DurationMS = finished.Sub(started).Milliseconds()
+	if err != nil {
+		s.reloadState = "failed"
+		s.reloadStatus.State = "failed"
+		s.reloadStatus.Error = err.Error()
+		s.reloadPending = false
+		s.reloadPendingBy = ""
+		s.reloadStatus.Pending = false
+		s.reloadMu.Unlock()
+		if s.logger != nil {
+			s.logger.Printf("❌ async reload failed: %v", err)
+		}
+		return
+	}
+	if s.reloadPending {
+		nextRequestedBy = s.reloadPendingBy
+		if strings.TrimSpace(nextRequestedBy) == "" {
+			nextRequestedBy = s.reloadStatus.RequestedBy
+		}
+		now := time.Now()
+		s.reloadPending = false
+		s.reloadPendingBy = ""
+		s.reloadState = "running"
+		s.reloadStatus = reloadStatus{
+			State:       "running",
+			StartedAt:   now,
+			RequestedBy: nextRequestedBy,
+		}
+		s.reloadMu.Unlock()
+		if s.logger != nil {
+			s.logger.Printf("async reload completed in %dms; running queued reload requested_by=%s", finished.Sub(started).Milliseconds(), nextRequestedBy)
+		}
+		go s.runAsyncReload(now)
+		return
+	}
+	s.reloadState = "succeeded"
+	s.reloadStatus.State = "succeeded"
+	s.reloadStatus.Error = ""
+	s.reloadStatus.Pending = false
+	s.reloadMu.Unlock()
+	if s.logger != nil {
+		s.logger.Printf("✅ async reload completed in %dms", finished.Sub(started).Milliseconds())
+	}
 }
 
 func countFreeProxyCacheFile(path string) (int, bool) {
@@ -3104,6 +3142,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				reloadError = err.Error()
 			}
+		} else if needReload {
+			reloadError = "节点管理未启用"
 		}
 
 		writeJSON(w, map[string]any{
