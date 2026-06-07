@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Checkbox, Input, Select } from 'antd'
 import { AlertCircle, Clock3, Database, Plus, Save, Trash2, Wifi } from 'lucide-react'
-import { getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig, reloadCoreWithRetry } from '../api/settings'
+import { getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig } from '../api/settings'
 import { getCloudflareCache } from '../api/cloudflare'
 import { getReputationCache } from '../api/reputation'
 import { Button } from '../components/ui/Button'
@@ -41,6 +41,7 @@ export function SettingsPage() {
   const [draft, setDraft] = useState<SettingsResponse>({})
   const [subs, setSubs] = useState('')
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
+  const reloadStatus = useQuery({ queryKey:['reload-status'], queryFn:getReloadStatus, enabled: reloadState === 'reloading', refetchInterval: reloadState === 'reloading' ? 800 : false })
   const toast = useToast(s=>s.show)
   useEffect(()=>{ if(settings.data){ setDraft(settings.data); setSubs(listValue(settings.data.subscriptions)) } }, [settings.data])
   useEffect(() => {
@@ -48,7 +49,20 @@ export function SettingsPage() {
     if (!id) return
     window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 0)
   }, [])
-  const reload = useMutation({ mutationFn: () => reloadCoreWithRetry(), onSuccess:()=>{ toast('设置已自动重载并生效', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>{ setReloadState('failed'); toast(e instanceof Error ? `自动重载失败：${e.message}`:'自动重载失败','error') } })
+  useEffect(() => {
+    const state = String(reloadStatus.data?.state || '')
+    if (state === 'succeeded') {
+      const duration = Number(reloadStatus.data?.duration_ms || 0)
+      toast(duration > 0 ? `设置已在后台生效（${duration}ms）` : '设置已在后台生效', 'ok')
+      setReloadState('idle')
+      void settings.refetch()
+      void subStatus.refetch()
+    } else if (state === 'failed') {
+      setReloadState('failed')
+      toast(reloadStatus.data?.error ? `后台生效失败：${reloadStatus.data.error}` : '后台生效失败', 'error')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadStatus.data?.state, reloadStatus.data?.duration_ms, reloadStatus.data?.error])
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('autoReload') !== '1') return
@@ -56,7 +70,7 @@ export function SettingsPage() {
     const nextSearch = params.toString()
     window.history.replaceState(null, '', `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash || '#settings'}`)
     setReloadState('reloading')
-    reload.mutate()
+    void reloadStatus.refetch()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const save = useMutation({ mutationFn: saveSettings, onSuccess:(res)=>{
@@ -68,7 +82,20 @@ export function SettingsPage() {
       window.setTimeout(() => { window.location.href = target.toString() }, 300)
       return
     }
-    toast('设置已保存，正在自动重载...', 'ok'); void settings.refetch(); if (res?.need_reload) { setReloadState('reloading'); reload.mutate() } else { setReloadState('idle') }
+    void settings.refetch()
+    if (res?.need_reload) {
+      if (res.reload_error) {
+        setReloadState('failed')
+        toast(`设置已保存，但后台生效启动失败：${res.reload_error}`, 'error')
+        return
+      }
+      toast(res.reload_started ? '设置已保存，后台正在生效...' : '设置已保存，已有后台生效任务在运行...', 'ok')
+      setReloadState('reloading')
+      void reloadStatus.refetch()
+    } else {
+      toast('设置已保存，已立即生效', 'ok')
+      setReloadState('idle')
+    }
   }, onError:e=>toast(e instanceof Error ? e.message:'保存失败','error') })
   const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:()=>{ toast('订阅配置已保存并刷新', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
   const input = (label:string, value:string, onChange:(v:string)=>void, type='text') => <div className="field settings-form-item"><label>{label}</label><Input className="settings-input" type={type} autoComplete={type === 'password' ? 'current-password' : label.includes('用户名') ? 'username' : undefined} value={value} onChange={e=>onChange(e.target.value)} /></div>
@@ -117,7 +144,7 @@ export function SettingsPage() {
   return <div className="page settings-page">
     <div className="page-header settings-hero">
       <div><h1>系统设置</h1><p>集中管理订阅来源、代理入口、地区路由、质量检测和日志策略。</p></div>
-      <div className="toolbar"><Button variant="primary" onClick={saveAllSettings} disabled={save.isPending || reload.isPending}><Save size={16} />{save.isPending ? '保存中...' : reload.isPending ? '重载中...' : '保存设置'}</Button></div>
+      <div className="toolbar"><Button variant="primary" onClick={saveAllSettings} disabled={save.isPending}><Save size={16} />{save.isPending ? '保存中...' : '保存设置'}</Button></div>
     </div>
     {(isPublicAdmin || isPublicProxy) && <div className="settings-alert modern-settings-alert" role="alert">
       <AlertCircle size={18} />
@@ -129,8 +156,8 @@ export function SettingsPage() {
     {reloadState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status">
       <Clock3 size={18} />
       <div>
-        <strong>{reloadState === 'reloading' ? '设置已保存，正在自动重载核心' : '自动重载失败'}</strong>
-        <span>{reloadState === 'reloading' ? '新的免费源和自动筛选策略会在重载完成后自动生效。' : '配置已经保存，但核心重载失败；请检查日志后再次保存或使用 epctl 重启隔离实例。'}</span>
+        <strong>{reloadState === 'reloading' ? '设置已保存，后台正在生效' : '后台生效失败'}</strong>
+        <span>{reloadState === 'reloading' ? '页面无需等待；代理核心会在后台完成重载，完成后自动刷新状态。' : '配置已经保存，但核心重载失败；请检查日志后再次保存或使用 epctl 重启隔离实例。'}</span>
       </div>
     </div>}
     <div className="settings-layout refined-settings-layout">

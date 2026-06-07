@@ -1,9 +1,10 @@
 import { api } from './client'
-import type { SaveSettingsResponse, SettingsResponse } from '../types/settings'
+import type { ReloadStatus, SaveSettingsResponse, SettingsResponse } from '../types/settings'
 
 export function getSettings() { return api.get<SettingsResponse>('/api/settings') }
 export function saveSettings(payload: SettingsResponse) { return api.put<SaveSettingsResponse>('/api/settings', payload) }
 export function reloadCore() { return api.post<{ message?: string }>('/api/reload') }
+export function getReloadStatus() { return api.get<ReloadStatus>('/api/reload/status') }
 
 function sleep(ms: number) { return new Promise(resolve => window.setTimeout(resolve, ms)) }
 

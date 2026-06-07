@@ -49,10 +49,29 @@ export interface SettingsResponse {
 export interface SaveSettingsResponse {
   message?: string
   need_reload?: boolean
+  reload_started?: boolean
+  reload_status?: {
+    state?: string
+    started_at?: string
+    finished_at?: string
+    duration_ms?: number
+    error?: string
+    requested_by?: string
+  }
+  reload_error?: string
   external_ip?: string
   probe_target?: string
   skip_cert_verify?: boolean
   management_rebound?: boolean
   management_listen?: string
   management_url_hint?: string
+}
+
+export interface ReloadStatus {
+  state?: string
+  started_at?: string
+  finished_at?: string
+  duration_ms?: number
+  error?: string
+  requested_by?: string
 }

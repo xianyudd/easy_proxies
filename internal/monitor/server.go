@@ -50,6 +50,15 @@ type NodeManager interface {
 	TriggerReload(ctx context.Context) error
 }
 
+type reloadStatus struct {
+	State       string    `json:"state"`
+	StartedAt   time.Time `json:"started_at,omitempty"`
+	FinishedAt  time.Time `json:"finished_at,omitempty"`
+	DurationMS  int64     `json:"duration_ms,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	RequestedBy string    `json:"requested_by,omitempty"`
+}
+
 // Sentinel errors for node operations.
 var (
 	ErrNodeNotFound = errors.New("节点不存在")
@@ -245,6 +254,10 @@ type Server struct {
 	cfChecker    *cloudflarecheck.Checker
 	qualitySvc   *quality.Service
 
+	reloadMu     sync.Mutex
+	reloadState  string
+	reloadStatus reloadStatus
+
 	qualityMu      sync.Mutex
 	qualityStop    chan struct{}
 	qualityRunning bool
@@ -304,6 +317,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
 	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
 	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
+	mux.HandleFunc("/api/reload/status", s.withAuth(s.handleReloadStatus))
 	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
 	s.handler = mux
@@ -356,6 +370,138 @@ func (s *Server) SetConfig(cfg *config.Config) {
 		}
 	}
 	go s.ensureQualityScheduler()
+}
+
+func copySourceConfigs(in []nodesource.SourceConfig) []nodesource.SourceConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]nodesource.SourceConfig, len(in))
+	copy(out, in)
+	return out
+}
+
+func copyStringSlice(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+func coreReloadSignature(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	type signature struct {
+		Mode                string
+		Listener            config.ListenerConfig
+		MultiPort           config.MultiPortConfig
+		AndroidProxy        config.AndroidProxyConfig
+		Pool                config.PoolConfig
+		GeoIP               config.GeoIPConfig
+		Nodes               []config.NodeConfig
+		FreeProxySources    []nodesource.SourceConfig
+		FreeProxyMaxNodes   int
+		FreeProxyFilter     nodesource.FilterConfig
+		FreeProxyCache      config.FreeProxyCacheConfig
+		NodesFile           string
+		Subscriptions       []string
+		SkipCertVerify      bool
+		UpstreamProxy       string
+		ClashAPIListen      string
+		SubscriptionRefresh config.SubscriptionRefreshConfig
+		LogLevel            string
+	}
+	sig := signature{
+		Mode:                cfg.Mode,
+		Listener:            cfg.Listener,
+		MultiPort:           cfg.MultiPort,
+		AndroidProxy:        cfg.AndroidProxy,
+		Pool:                cfg.Pool,
+		GeoIP:               cfg.GeoIP,
+		Nodes:               cloneConfigNodes(cfg.Nodes),
+		FreeProxySources:    copySourceConfigs(cfg.FreeProxySources),
+		FreeProxyMaxNodes:   cfg.FreeProxyMaxNodes,
+		FreeProxyFilter:     cfg.FreeProxyFilter,
+		FreeProxyCache:      cfg.FreeProxyCache,
+		NodesFile:           cfg.NodesFile,
+		Subscriptions:       copyStringSlice(cfg.Subscriptions),
+		SkipCertVerify:      cfg.SkipCertVerify,
+		UpstreamProxy:       cfg.UpstreamProxy,
+		ClashAPIListen:      cfg.Management.ClashAPIListen,
+		SubscriptionRefresh: cfg.SubscriptionRefresh,
+		LogLevel:            cfg.LogLevel,
+	}
+	data, _ := json.Marshal(sig)
+	return string(data)
+}
+
+func cloneConfigNodes(in []config.NodeConfig) []config.NodeConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]config.NodeConfig, len(in))
+	copy(out, in)
+	return out
+}
+
+func (s *Server) currentReloadStatus() reloadStatus {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	status := s.reloadStatus
+	if status.State == "" {
+		status.State = "idle"
+	}
+	return status
+}
+
+func (s *Server) startAsyncReload(requestedBy string) (reloadStatus, bool, error) {
+	if s.nodeMgr == nil {
+		return reloadStatus{}, false, errors.New("节点管理未启用")
+	}
+	now := time.Now()
+	s.reloadMu.Lock()
+	if s.reloadState == "running" {
+		status := s.reloadStatus
+		s.reloadMu.Unlock()
+		return status, false, nil
+	}
+	s.reloadState = "running"
+	s.reloadStatus = reloadStatus{
+		State:       "running",
+		StartedAt:   now,
+		RequestedBy: requestedBy,
+	}
+	status := s.reloadStatus
+	s.reloadMu.Unlock()
+
+	go func(started time.Time) {
+		err := s.nodeMgr.TriggerReload(context.Background())
+		finished := time.Now()
+		s.reloadMu.Lock()
+		defer s.reloadMu.Unlock()
+		s.reloadStatus.FinishedAt = finished
+		s.reloadStatus.DurationMS = finished.Sub(started).Milliseconds()
+		if err != nil {
+			s.reloadState = "failed"
+			s.reloadStatus.State = "failed"
+			s.reloadStatus.Error = err.Error()
+			if s.logger != nil {
+				s.logger.Printf("❌ async reload failed: %v", err)
+			}
+			return
+		}
+		s.reloadState = "succeeded"
+		s.reloadStatus.State = "succeeded"
+		s.reloadStatus.Error = ""
+		if s.logger != nil {
+			s.logger.Printf("✅ async reload completed in %dms", s.reloadStatus.DurationMS)
+		}
+	}(now)
+
+	return status, true, nil
 }
 
 // getSettings returns current dynamic settings (thread-safe).
@@ -2473,6 +2619,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		oldManagementListen = s.cfg.Listen
+		oldCoreSignature := coreReloadSignature(s.cfgSrc)
 
 		s.cfg.ExternalIP = extIP
 		s.cfg.ProbeTarget = probeTarget
@@ -2582,6 +2729,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err)})
 			return
 		}
+		needReload := oldCoreSignature != coreReloadSignature(s.cfgSrc)
 		s.cfgMu.Unlock()
 
 		reboundListen := ""
@@ -2604,12 +2752,27 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		s.ensureQualityScheduler()
 
+		reloadStarted := false
+		reloadStatus := s.currentReloadStatus()
+		reloadError := ""
+		if needReload && s.nodeMgr != nil {
+			status, started, err := s.startAsyncReload("settings")
+			reloadStarted = started
+			reloadStatus = status
+			if err != nil {
+				reloadError = err.Error()
+			}
+		}
+
 		writeJSON(w, map[string]any{
 			"message":             "设置已保存",
 			"external_ip":         extIP,
 			"probe_target":        probeTarget,
 			"skip_cert_verify":    req.SkipCertVerify,
-			"need_reload":         true,
+			"need_reload":         needReload,
+			"reload_started":      reloadStarted,
+			"reload_status":       reloadStatus,
+			"reload_error":        reloadError,
 			"management_rebound":  managementRebound,
 			"management_listen":   reboundListen,
 			"management_url_hint": managementURLHint(r, reboundListen),
@@ -2904,6 +3067,14 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"message": "重载成功，现有连接已被中断",
 	})
+}
+
+func (s *Server) handleReloadStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, s.currentReloadStatus())
 }
 
 func (s *Server) ensureNodeManager(w http.ResponseWriter) bool {
