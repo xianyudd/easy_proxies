@@ -160,6 +160,9 @@ func TestServiceCancelStopsQueuedWorkAndKeepsCancelledStatus(t *testing.T) {
 	if after.Status != JobCancelled {
 		t.Fatalf("status changed after cancellation: before=%#v after=%#v", got, after)
 	}
+	if after.Cancelled == 0 || after.Queued != 0 {
+		t.Fatalf("cancelled job counters should describe skipped work, got %#v", after)
+	}
 }
 
 func TestServiceShutdownCancelsActiveJobs(t *testing.T) {

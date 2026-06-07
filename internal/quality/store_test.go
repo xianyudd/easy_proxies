@@ -92,12 +92,15 @@ func TestStoreProgressUpdatesAreConcurrencySafe(t *testing.T) {
 
 func TestStoreCancelJobRecordsFinishedTime(t *testing.T) {
 	store := NewStore()
-	snapshot, err := store.CreateJob(JobRequest{Kind: CheckReputation, Targets: []Target{{ID: "node-1"}}})
+	snapshot, err := store.CreateJob(JobRequest{Kind: CheckReputation, Targets: []Target{{ID: "node-1"}, {ID: "node-2"}, {ID: "node-3"}}})
 	if err != nil {
 		t.Fatalf("CreateJob returned error: %v", err)
 	}
 	if err := store.StartJob(snapshot.ID); err != nil {
 		t.Fatalf("StartJob returned error: %v", err)
+	}
+	if err := store.UpdateProgress(snapshot.ID, 1, 0, "processed one"); err != nil {
+		t.Fatalf("UpdateProgress returned error: %v", err)
 	}
 
 	if err := store.CancelJob(snapshot.ID, "user requested"); err != nil {
@@ -116,6 +119,12 @@ func TestStoreCancelJobRecordsFinishedTime(t *testing.T) {
 	}
 	if got.Message != "user requested" {
 		t.Fatalf("message = %q, want user requested", got.Message)
+	}
+	if got.Completed != 1 || got.Cancelled != 2 || got.Queued != 0 {
+		t.Fatalf("cancel counters = completed:%d cancelled:%d queued:%d, want 1/2/0", got.Completed, got.Cancelled, got.Queued)
+	}
+	if got.Percent != 100 {
+		t.Fatalf("cancelled job percent = %f, want 100", got.Percent)
 	}
 }
 
@@ -218,6 +227,9 @@ func TestStoreCancelledJobCannotBecomeCompletedOrAcceptLateResults(t *testing.T)
 	}
 	if got.Status != JobCancelled {
 		t.Fatalf("status = %q, want %q", got.Status, JobCancelled)
+	}
+	if got.Cancelled != 1 || got.Queued != 0 {
+		t.Fatalf("cancelled counters = cancelled:%d queued:%d, want 1/0", got.Cancelled, got.Queued)
 	}
 	page := store.ListResults(snapshot.ID, ResultQuery{Page: 1, PageSize: 10})
 	if page.Count != 0 || len(page.Data) != 0 {

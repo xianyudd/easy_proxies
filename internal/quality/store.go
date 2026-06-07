@@ -104,7 +104,43 @@ func (s *Store) FailJob(id, message string) error {
 
 // CancelJob marks a job cancelled and records its finish time.
 func (s *Store) CancelJob(id, message string) error {
-	return s.setStatus(id, JobCancelled, message)
+	if s == nil {
+		return errors.New("nil quality store")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[id]
+	if !ok {
+		return ErrJobNotFound
+	}
+	if isTerminalStatus(job.snapshot.Status) {
+		if job.snapshot.Status == JobCancelled {
+			return nil
+		}
+		return ErrJobTerminal
+	}
+	now := s.now()
+	job.snapshot.Status = JobCancelled
+	job.snapshot.Message = message
+	job.snapshot.UpdatedAt = now
+	if job.snapshot.FinishedAt.IsZero() {
+		job.snapshot.FinishedAt = now
+	}
+	if job.snapshot.Completed > job.snapshot.Total {
+		job.snapshot.Completed = job.snapshot.Total
+	}
+	pending := job.snapshot.Total - job.snapshot.Completed
+	if pending < 0 {
+		pending = 0
+	}
+	job.snapshot.Cancelled = pending
+	job.snapshot.Queued = 0
+	if job.snapshot.Total > 0 {
+		job.snapshot.Percent = 100
+	}
+	s.jobs[id] = job
+	s.pruneTerminalJobsLocked(now)
+	return nil
 }
 
 // UpdateProgress updates a job's counters and optional message.
