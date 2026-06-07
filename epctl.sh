@@ -320,6 +320,16 @@ display_pid() {
   fi
 }
 
+pid_file_value() {
+  if [ -f "$PID_FILE" ]; then
+    cat "$PID_FILE" 2>/dev/null || true
+  fi
+}
+
+webui_http_code() {
+  curl --noproxy '*' --max-time 3 -s -o /dev/null -w '%{http_code}' "${WEBUI_URL%/}" || true
+}
+
 find_service_pids() {
   local bin_abs cfg_abs
   bin_abs="$(normalize_path "$BIN")"
@@ -522,6 +532,14 @@ stop_service() {
   local pids alive
   pids="$(find_service_pids | sort -u || true)"
   if [ -z "$pids" ]; then
+    local web pid_file
+    web="$(webui_http_code)"
+    pid_file="$(pid_file_value)"
+    if [ "$web" = "200" ]; then
+      echo "[ERROR] WebUI is still reachable but no matching process is visible from this environment, profile=$EP_PROFILE" >&2
+      [ -z "$pid_file" ] || echo "[ERROR] PID file still points to pid=$pid_file; retry outside the sandbox or with elevated permissions" >&2
+      return 1
+    fi
     echo "[OK] not running, profile=$EP_PROFILE"
     rm -f "$PID_FILE"
     return
@@ -550,7 +568,7 @@ stop_service() {
 status_service() {
   clean_proxy_env
   local web node_json settings_json pids listen_re
-  web="$(curl --noproxy '*' --max-time 3 -s -o /dev/null -w '%{http_code}' "${WEBUI_URL%/}" || true)"
+  web="$(webui_http_code)"
   echo "Profile: $EP_PROFILE"
   echo "Config:  $CONFIG_FILE"
   echo "Binary:  $BIN"
@@ -561,7 +579,13 @@ status_service() {
   if [ -n "$pids" ]; then
     echo "Process: running pid=$(echo "$pids" | tr '\n' ' ')"
   elif [ "$web" = "200" ]; then
-    echo "Process: running, detected by WebUI only"
+    local pid_file
+    pid_file="$(pid_file_value)"
+    if [ -n "$pid_file" ]; then
+      echo "Process: running via WebUI, pid file=$pid_file (process not visible from this environment)"
+    else
+      echo "Process: running, detected by WebUI only"
+    fi
   else
     echo "Process: not found"
   fi
