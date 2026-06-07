@@ -121,6 +121,11 @@ type SubscriptionRefreshConfig struct {
 }
 
 const (
+	DefaultFreeProxyCacheWorkers = 8
+	MaxFreeProxyCacheWorkers     = 32
+)
+
+const (
 	DefaultQualityCheckInterval = 24 * time.Hour
 	MinQualityCheckInterval     = time.Hour
 	DefaultQualityCheckRegion   = "all"
@@ -164,10 +169,10 @@ func (f FreeProxyCacheConfig) Normalized(configPath string, hasSources bool) Fre
 		f.AutoReload = &autoReload
 	}
 	if f.Workers <= 0 {
-		f.Workers = 4
+		f.Workers = DefaultFreeProxyCacheWorkers
 	}
-	if f.Workers > 16 {
-		f.Workers = 16
+	if f.Workers > MaxFreeProxyCacheWorkers {
+		f.Workers = MaxFreeProxyCacheWorkers
 	}
 	if f.MaxAge <= 0 {
 		f.MaxAge = 6 * time.Hour
@@ -1607,19 +1612,38 @@ func writeFileWithLock(path string, data []byte, perm os.FileMode) error {
 // optional prefilter, and atomically writes accepted proxy URIs into the cache.
 // Runtime startup/reload can then use the cache without blocking on network IO.
 func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
+	count, _, err := c.RefreshFreeProxyCacheDetailed(ctx)
+	return count, err
+}
+
+// FreeProxySourceRefreshResult records one source refresh outcome.
+type FreeProxySourceRefreshResult struct {
+	Name       string `json:"name"`
+	Enabled    bool   `json:"enabled"`
+	Candidates int    `json:"candidates"`
+	Accepted   int    `json:"accepted"`
+	DurationMS int64  `json:"duration_ms"`
+	Error      string `json:"error,omitempty"`
+}
+
+type freeProxySourceRefreshInternalResult struct {
+	idx        int
+	name       string
+	candidates int
+	nodes      []nodesource.Node
+	durationMS int64
+	err        error
+}
+
+// RefreshFreeProxyCacheDetailed is RefreshFreeProxyCache with per-source
+// telemetry suitable for API/UI status reporting.
+func (c *Config) RefreshFreeProxyCacheDetailed(ctx context.Context) (int, []FreeProxySourceRefreshResult, error) {
 	if c == nil {
-		return 0, errors.New("config is nil")
+		return 0, nil, errors.New("config is nil")
 	}
 	cache := c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
 	if !cache.EnabledValue() || strings.TrimSpace(cache.Path) == "" || len(c.FreeProxySources) == 0 {
-		return 0, nil
-	}
-
-	type sourceResult struct {
-		idx   int
-		name  string
-		nodes []nodesource.Node
-		err   error
+		return 0, nil, nil
 	}
 
 	filter := c.FreeProxyFilter.Normalized()
@@ -1631,11 +1655,11 @@ func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
 		workers = len(c.FreeProxySources)
 	}
 	if workers <= 0 {
-		return 0, nil
+		return 0, nil, nil
 	}
 
 	jobs := make(chan int)
-	results := make(chan sourceResult, len(c.FreeProxySources))
+	results := make(chan freeProxySourceRefreshInternalResult, len(c.FreeProxySources))
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -1644,11 +1668,12 @@ func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
 			for idx := range jobs {
 				select {
 				case <-ctx.Done():
-					results <- sourceResult{idx: idx, err: ctx.Err()}
+					results <- freeProxySourceRefreshInternalResult{idx: idx, err: ctx.Err()}
 					continue
 				default:
 				}
 				source := c.FreeProxySources[idx]
+				started := time.Now()
 				name := strings.TrimSpace(source.Name)
 				if name == "" {
 					name = firstNonEmptyString(source.File, source.URL, "unnamed")
@@ -1659,6 +1684,7 @@ func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
 				// candidate pipeline; only the final cache/runtime activation is
 				// bounded by free_proxy_max_nodes.
 				nodes, err := provider.LoadLimited(source.MaxNodes)
+				candidates := len(nodes)
 				if err == nil && filter.Enabled {
 					before := len(nodes)
 					filtered := nodesource.FilterNodes(nodes, filter)
@@ -1667,7 +1693,7 @@ func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
 						log.Printf("🔎 Free proxy source %q background prefilter kept %d/%d nodes (min_tier=%s)", name, len(nodes), before, filter.MinTier)
 					}
 				}
-				results <- sourceResult{idx: idx, name: name, nodes: nodes, err: err}
+				results <- freeProxySourceRefreshInternalResult{idx: idx, name: name, candidates: candidates, nodes: nodes, durationMS: time.Since(started).Milliseconds(), err: err}
 			}
 		}()
 	}
@@ -1684,7 +1710,7 @@ func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
 	wg.Wait()
 	close(results)
 
-	byIndex := make(map[int]sourceResult, len(c.FreeProxySources))
+	byIndex := make(map[int]freeProxySourceRefreshInternalResult, len(c.FreeProxySources))
 	for result := range results {
 		byIndex[result.idx] = result
 		if result.err != nil && !errors.Is(result.err, context.Canceled) {
@@ -1692,7 +1718,7 @@ func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), err
 	}
 
 	seen := make(map[string]struct{})
@@ -1721,16 +1747,41 @@ func (c *Config) RefreshFreeProxyCache(ctx context.Context) (int, error) {
 			break
 		}
 	}
-	if len(accepted) == 0 {
-		return 0, errors.New("no free proxy candidates accepted; cache not updated")
-	}
 	if err := os.MkdirAll(filepath.Dir(cache.Path), 0o755); err != nil {
-		return 0, fmt.Errorf("create free proxy cache dir: %w", err)
+		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), fmt.Errorf("create free proxy cache dir: %w", err)
+	}
+	if len(accepted) == 0 {
+		if err := writeFileWithLock(cache.Path, nil, 0o644); err != nil {
+			return 0, sourceRefreshResults(c.FreeProxySources, byIndex), fmt.Errorf("clear stale free proxy cache: %w", err)
+		}
+		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), errors.New("no free proxy candidates accepted; stale cache cleared")
 	}
 	content := strings.Join(accepted, "\n") + "\n"
 	if err := writeFileWithLock(cache.Path, []byte(content), 0o644); err != nil {
-		return 0, fmt.Errorf("write free proxy cache: %w", err)
+		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), fmt.Errorf("write free proxy cache: %w", err)
 	}
 	log.Printf("✅ Refreshed free proxy cache %q with %d accepted nodes", cache.Path, len(accepted))
-	return len(accepted), nil
+	return len(accepted), sourceRefreshResults(c.FreeProxySources, byIndex), nil
+}
+
+func sourceRefreshResults(sources []nodesource.SourceConfig, byIndex map[int]freeProxySourceRefreshInternalResult) []FreeProxySourceRefreshResult {
+	out := make([]FreeProxySourceRefreshResult, 0, len(sources))
+	for idx, source := range sources {
+		name := strings.TrimSpace(source.Name)
+		if name == "" {
+			name = firstNonEmptyString(source.File, source.URL, "unnamed")
+		}
+		result, ok := byIndex[idx]
+		item := FreeProxySourceRefreshResult{Name: name, Enabled: source.EnabledValue()}
+		if ok {
+			item.Candidates = result.candidates
+			item.Accepted = len(result.nodes)
+			item.DurationMS = result.durationMS
+			if result.err != nil {
+				item.Error = result.err.Error()
+			}
+		}
+		out = append(out, item)
+	}
+	return out
 }

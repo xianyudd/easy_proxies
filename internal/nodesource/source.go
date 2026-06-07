@@ -16,6 +16,7 @@ import (
 )
 
 const DefaultMaxBytes int64 = 2 * 1024 * 1024
+const DefaultFetchTimeout = 8 * time.Second
 
 // SourceConfig configures one external free-proxy source.
 type SourceConfig struct {
@@ -138,7 +139,7 @@ func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
 
 func fetch(rawURL string, timeout time.Duration, maxBytes int64) ([]byte, error) {
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = DefaultFetchTimeout
 	}
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Get(rawURL)

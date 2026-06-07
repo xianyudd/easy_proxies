@@ -2,11 +2,19 @@ package nodesource
 
 import (
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	DefaultFilterWorkers       = 200
+	MaxFilterWorkers           = 800
+	TargetFullScanBatchLatency = 8 * time.Second
+	MinAdaptiveFilterTimeout   = 150 * time.Millisecond
 )
 
 // FilterConfig controls optional pre-ingestion validation for free proxy sources.
@@ -48,14 +56,14 @@ type nodeDecision struct {
 // Normalized returns a copy with safe defaults and bounded concurrency.
 func (f FilterConfig) Normalized() FilterConfig {
 	if strings.TrimSpace(f.MinTier) == "" {
-		f.MinTier = "http_basic"
+		f.MinTier = "simple_web"
 	}
 	f.MinTier = strings.ToLower(strings.TrimSpace(f.MinTier))
 	if f.Workers <= 0 {
-		f.Workers = 80
+		f.Workers = DefaultFilterWorkers
 	}
-	if f.Workers > 800 {
-		f.Workers = 800
+	if f.Workers > MaxFilterWorkers {
+		f.Workers = MaxFilterWorkers
 	}
 	if f.Timeout <= 0 {
 		f.Timeout = 2 * time.Second
@@ -86,13 +94,8 @@ func FilterNodes(nodes []Node, cfg FilterConfig) FilterResult {
 	if !cfg.Enabled || len(nodes) == 0 {
 		return FilterResult{Accepted: nodes, Summary: FilterSummary{Total: len(nodes), Accepted: len(nodes), Rejected: 0, TierCounts: map[string]int{"unfiltered": len(nodes)}}}
 	}
-	workers := cfg.Workers
-	if workers <= 0 {
-		workers = 1
-	}
-	if workers > len(nodes) {
-		workers = len(nodes)
-	}
+	workers := cfg.effectiveWorkers(len(nodes))
+	cfg.Timeout = cfg.effectiveTimeout(len(nodes), workers)
 
 	jobs := make(chan Node)
 	decisions := make(chan nodeDecision, len(nodes))
@@ -136,6 +139,45 @@ func FilterNodes(nodes []Node, cfg FilterConfig) FilterResult {
 	summary.Accepted = len(accepted)
 	summary.Rejected = len(nodes) - len(accepted)
 	return FilterResult{Accepted: accepted, Summary: summary}
+}
+
+func (f FilterConfig) effectiveWorkers(candidateCount int) int {
+	f = f.Normalized()
+	if candidateCount <= 0 {
+		return 0
+	}
+	workers := f.Workers
+	if f.MaxCandidates <= 0 && f.Timeout > 0 && candidateCount > workers {
+		needed := int(math.Ceil(float64(candidateCount) * float64(f.Timeout) / float64(TargetFullScanBatchLatency)))
+		if needed > workers {
+			workers = needed
+		}
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > MaxFilterWorkers {
+		workers = MaxFilterWorkers
+	}
+	if workers > candidateCount {
+		workers = candidateCount
+	}
+	return workers
+}
+
+func (f FilterConfig) effectiveTimeout(candidateCount, workers int) time.Duration {
+	f = f.Normalized()
+	if f.MaxCandidates > 0 || candidateCount <= workers || workers <= 0 || f.Timeout <= MinAdaptiveFilterTimeout {
+		return f.Timeout
+	}
+	target := time.Duration(float64(TargetFullScanBatchLatency) * float64(workers) / float64(candidateCount))
+	if target < MinAdaptiveFilterTimeout {
+		target = MinAdaptiveFilterTimeout
+	}
+	if target > f.Timeout {
+		return f.Timeout
+	}
+	return target
 }
 
 // Tier returns the lightweight pre-ingestion tier for one proxy URI.

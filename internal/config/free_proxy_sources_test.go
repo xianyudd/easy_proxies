@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 
 	"easy_proxies/internal/nodesource"
@@ -338,5 +339,87 @@ free_proxy_sources:
 	}
 	if remoteRequests != 0 {
 		t.Fatalf("expected startup not to request remote source, got %d requests", remoteRequests)
+	}
+}
+
+func TestRefreshFreeProxyCacheDetailedReportsPerSourceFailures(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "cache.txt")
+	cfg := &Config{
+		filePath:          filepath.Join(dir, "config.yaml"),
+		FreeProxyMaxNodes: 0,
+		FreeProxySources: []nodesource.SourceConfig{
+			{Name: "missing", File: filepath.Join(dir, "missing.txt"), Format: "txt"},
+		},
+		FreeProxyCache: FreeProxyCacheConfig{
+			Path: cachePath,
+		},
+		FreeProxyFilter: nodesource.FilterConfig{Enabled: false},
+	}
+
+	count, details, err := cfg.RefreshFreeProxyCacheDetailed(context.Background())
+	if err == nil {
+		t.Fatal("expected refresh error for missing source")
+	}
+	if count != 0 {
+		t.Fatalf("count=%d, want 0", count)
+	}
+	if len(details) != 1 {
+		t.Fatalf("details len=%d, want 1: %#v", len(details), details)
+	}
+	if details[0].Name != "missing" || !details[0].Enabled || details[0].Error == "" {
+		t.Fatalf("unexpected details: %#v", details[0])
+	}
+	content, readErr := os.ReadFile(cachePath)
+	if readErr != nil {
+		t.Fatalf("failed refresh should leave an empty cache tombstone, read err=%v", readErr)
+	}
+	if len(content) != 0 {
+		t.Fatalf("failed refresh should clear stale cache, got %q", string(content))
+	}
+}
+
+func TestFreeProxyCacheDefaultWorkersCoversAllConfiguredSources(t *testing.T) {
+	cfg := FreeProxyCacheConfig{}.Normalized(filepath.Join(t.TempDir(), "config.yaml"), true)
+	if cfg.Workers != DefaultFreeProxyCacheWorkers {
+		t.Fatalf("workers=%d, want default %d", cfg.Workers, DefaultFreeProxyCacheWorkers)
+	}
+	many := FreeProxyCacheConfig{Workers: 100}.Normalized(filepath.Join(t.TempDir(), "config.yaml"), true)
+	if many.Workers != MaxFreeProxyCacheWorkers {
+		t.Fatalf("workers=%d, want capped %d", many.Workers, MaxFreeProxyCacheWorkers)
+	}
+}
+
+func TestRefreshFreeProxyCacheDetailedClearsStaleCacheWhenNoCandidatesAccepted(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		filePath:          filepath.Join(dir, "config.yaml"),
+		FreeProxyMaxNodes: 0,
+		FreeProxySources: []nodesource.SourceConfig{
+			{Name: "missing", File: filepath.Join(dir, "missing.txt"), Format: "txt"},
+		},
+		FreeProxyCache: FreeProxyCacheConfig{
+			Path: cachePath,
+		},
+		FreeProxyFilter: nodesource.FilterConfig{Enabled: false},
+	}
+
+	count, _, err := cfg.RefreshFreeProxyCacheDetailed(context.Background())
+	if err == nil {
+		t.Fatal("expected refresh error for missing source")
+	}
+	if count != 0 {
+		t.Fatalf("count=%d, want 0", count)
+	}
+	content, readErr := os.ReadFile(cachePath)
+	if readErr != nil {
+		t.Fatalf("cache should still exist as an empty tombstone: %v", readErr)
+	}
+	if len(content) != 0 {
+		t.Fatalf("stale cache should be cleared, got %q", string(content))
 	}
 }

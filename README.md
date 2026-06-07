@@ -310,7 +310,7 @@ free_proxy_sources:
   - name: "remote-json-list"
     url: "https://example.com/free-proxies.json"
     format: json
-    timeout: 15s
+    timeout: 8s
     enabled: false
     # max_nodes: 0 means parse the whole source
     max_nodes: 0

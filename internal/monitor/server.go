@@ -60,14 +60,15 @@ type reloadStatus struct {
 }
 
 type freeProxyRefreshStatus struct {
-	State         string    `json:"state"`
-	StartedAt     time.Time `json:"started_at,omitempty"`
-	FinishedAt    time.Time `json:"finished_at,omitempty"`
-	DurationMS    int64     `json:"duration_ms,omitempty"`
-	Error         string    `json:"error,omitempty"`
-	Accepted      int       `json:"accepted,omitempty"`
-	ReloadStarted bool      `json:"reload_started,omitempty"`
-	RequestedBy   string    `json:"requested_by,omitempty"`
+	State         string                                `json:"state"`
+	StartedAt     time.Time                             `json:"started_at,omitempty"`
+	FinishedAt    time.Time                             `json:"finished_at,omitempty"`
+	DurationMS    int64                                 `json:"duration_ms,omitempty"`
+	Error         string                                `json:"error,omitempty"`
+	Accepted      int                                   `json:"accepted,omitempty"`
+	Sources       []config.FreeProxySourceRefreshResult `json:"sources,omitempty"`
+	ReloadStarted bool                                  `json:"reload_started,omitempty"`
+	RequestedBy   string                                `json:"requested_by,omitempty"`
 }
 
 // Sentinel errors for node operations.
@@ -333,6 +334,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
 	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
 	mux.HandleFunc("/api/reload/status", s.withAuth(s.handleReloadStatus))
+	mux.HandleFunc("/api/free-proxy/refresh", s.withAuth(s.handleFreeProxyRefresh))
 	mux.HandleFunc("/api/free-proxy/refresh/status", s.withAuth(s.handleFreeProxyRefreshStatus))
 	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
@@ -582,10 +584,10 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 	s.freeProxyRefreshMu.Unlock()
 
 	go func(started time.Time) {
-		count, err := cfg.RefreshFreeProxyCache(context.Background())
+		count, sources, err := cfg.RefreshFreeProxyCacheDetailed(context.Background())
 		finished := time.Now()
 		reloadStarted := false
-		if err == nil && count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
+		if cache.AutoReloadValue() && s.nodeMgr != nil {
 			_, startedReload, reloadErr := s.startAsyncReload("free-proxy-refresh")
 			reloadStarted = startedReload
 			if reloadErr != nil && s.logger != nil {
@@ -598,6 +600,7 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 		s.freeProxyRefreshStatus.FinishedAt = finished
 		s.freeProxyRefreshStatus.DurationMS = finished.Sub(started).Milliseconds()
 		s.freeProxyRefreshStatus.Accepted = count
+		s.freeProxyRefreshStatus.Sources = sources
 		s.freeProxyRefreshStatus.ReloadStarted = reloadStarted
 		if err != nil {
 			s.freeProxyRefreshState = "failed"
@@ -2551,8 +2554,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"free_proxy_max_nodes": 0,
 			"free_proxy_filter": map[string]any{
 				"enabled":        false,
-				"min_tier":       "http_basic",
-				"workers":        80,
+				"min_tier":       "simple_web",
+				"workers":        nodesource.DefaultFilterWorkers,
 				"timeout":        "2s",
 				"max_candidates": 0,
 				"probes": map[string]any{
@@ -3214,6 +3217,31 @@ func (s *Server) handleFreeProxyRefreshStatus(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, s.currentFreeProxyRefreshStatus())
+}
+
+func (s *Server) handleFreeProxyRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	status, started, err := s.startFreeProxyRefresh("manual")
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"message": startedText(started, "免费源刷新已启动", "已有免费源刷新在运行"),
+		"started": started,
+		"status":  status,
+	})
+}
+
+func startedText(started bool, startedMessage, runningMessage string) string {
+	if started {
+		return startedMessage
+	}
+	return runningMessage
 }
 
 func (s *Server) ensureNodeManager(w http.ResponseWriter) bool {

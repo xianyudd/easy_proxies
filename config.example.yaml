@@ -152,7 +152,7 @@ geoip:
 #   path: .cache/free-proxies.txt
 #   refresh_on_start: true     # 启动后后台下载/筛选免费源并更新缓存
 #   auto_reload: true          # 缓存更新后自动 reload，让通过筛选的节点入池
-#   workers: 4                 # 源下载并发，不是代理探针并发
+#   workers: 8                 # 源下载并发，不是代理探针并发
 #   max_age: 6h
 # free_proxy_filter:
 #   enabled: true              # 添加源后先自动筛选，通过后才进入运行节点
@@ -176,7 +176,7 @@ geoip:
 #   - name: "remote-json-list"
 #     url: "https://example.com/free-proxies.json"
 #     format: json
-#     timeout: 15s
+#     timeout: 8s
 #     enabled: false
 #     max_nodes: 0              # 0 表示全量解析该源；正数才限制单源数量
 #     max_bytes: 2097152

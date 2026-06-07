@@ -63,3 +63,46 @@ func TestFilterNodesRequiresHTTPSForSimpleWeb(t *testing.T) {
 		t.Fatalf("unexpected tier counts: %#v", result.Summary.TierCounts)
 	}
 }
+
+func TestFilterEffectiveWorkersScalesFullCandidateScans(t *testing.T) {
+	cfg := FilterConfig{Enabled: true, Workers: 80, Timeout: 500 * time.Millisecond, MaxCandidates: 0}
+	if got := cfg.effectiveWorkers(3200); got < 200 {
+		t.Fatalf("workers=%d, want adaptive full-scan workers >= 200", got)
+	}
+
+	capped := FilterConfig{Enabled: true, Workers: 80, Timeout: 2 * time.Second, MaxCandidates: 0}
+	if got := capped.effectiveWorkers(10000); got != MaxFilterWorkers {
+		t.Fatalf("workers=%d, want max cap %d", got, MaxFilterWorkers)
+	}
+
+	limited := FilterConfig{Enabled: true, Workers: 80, Timeout: 500 * time.Millisecond, MaxCandidates: 100}
+	if got := limited.effectiveWorkers(3200); got != 80 {
+		t.Fatalf("limited candidate scans should keep configured workers, got %d", got)
+	}
+}
+
+func TestFilterEffectiveTimeoutShrinksHugeFullScans(t *testing.T) {
+	cfg := FilterConfig{Enabled: true, Workers: 200, Timeout: 500 * time.Millisecond, MaxCandidates: 0}
+	workers := cfg.effectiveWorkers(100000)
+	if workers != MaxFilterWorkers {
+		t.Fatalf("workers=%d, want max cap %d", workers, MaxFilterWorkers)
+	}
+	if got := cfg.effectiveTimeout(100000, workers); got != MinAdaptiveFilterTimeout {
+		t.Fatalf("timeout=%s, want adaptive minimum %s", got, MinAdaptiveFilterTimeout)
+	}
+
+	limited := FilterConfig{Enabled: true, Workers: 200, Timeout: 500 * time.Millisecond, MaxCandidates: 1000}
+	if got := limited.effectiveTimeout(100000, limited.effectiveWorkers(100000)); got != 500*time.Millisecond {
+		t.Fatalf("limited candidate scans should keep configured timeout, got %s", got)
+	}
+}
+
+func TestFilterConfigDefaultsToSimpleWebForStableFreeSources(t *testing.T) {
+	cfg := FilterConfig{}.Normalized()
+	if cfg.MinTier != "simple_web" {
+		t.Fatalf("MinTier=%q, want simple_web", cfg.MinTier)
+	}
+	if cfg.Workers != DefaultFilterWorkers {
+		t.Fatalf("Workers=%d, want %d", cfg.Workers, DefaultFilterWorkers)
+	}
+}

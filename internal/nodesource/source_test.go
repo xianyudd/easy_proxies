@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestParseFreeProxyTextAddsDefaultHTTPSchemeAndSkipsComments(t *testing.T) {
@@ -160,5 +161,11 @@ func TestProviderAppliesDefaultSchemeForPlainTextSources(t *testing.T) {
 		if nodes[i].URI != want[i] {
 			t.Fatalf("node %d uri: want %q got %q", i, want[i], nodes[i].URI)
 		}
+	}
+}
+
+func TestDefaultFetchTimeoutIsBoundedForUnresponsiveSources(t *testing.T) {
+	if DefaultFetchTimeout > 8*time.Second {
+		t.Fatalf("default free proxy fetch timeout should stay bounded, got %s", DefaultFetchTimeout)
 	}
 }

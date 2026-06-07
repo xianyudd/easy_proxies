@@ -423,6 +423,140 @@ free_proxy_filter:
 	}
 }
 
+func TestFreeProxyRefreshStatusIncludesPerSourceFailureDetails(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: missing-source
+    file: ` + filepath.Join(tmp, "missing.txt") + `
+    format: txt
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeNodeManager{done: make(chan struct{})}
+	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
+	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
+		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		status := server.currentFreeProxyRefreshStatus()
+		if status.State == "failed" {
+			if status.Accepted != 0 || len(status.Sources) != 1 || !status.ReloadStarted {
+				t.Fatalf("unexpected failed status: %#v", status)
+			}
+			if status.Sources[0].Name != "missing-source" || status.Sources[0].Error == "" {
+				t.Fatalf("missing source failure details: %#v", status.Sources)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not fail, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/free-proxy/refresh/status", nil)
+	rec := httptest.NewRecorder()
+	server.handleFreeProxyRefreshStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp freeProxyRefreshStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Sources) != 1 || resp.Sources[0].Error == "" {
+		t.Fatalf("API did not include source error details: %#v", resp)
+	}
+	select {
+	case <-fake.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto reload should run after failed refresh to clear stale cache")
+	}
+}
+
+func TestHandleFreeProxyRefreshStartsManualBackgroundRefresh(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	sourcePath := filepath.Join(tmp, "free.txt")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	if err := os.WriteFile(sourcePath, []byte("http://127.0.0.1:18080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: false
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: local
+    file: ` + sourcePath + `
+    format: txt
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+	req := httptest.NewRequest(http.MethodPost, "/api/free-proxy/refresh", nil)
+	rec := httptest.NewRecorder()
+	server.handleFreeProxyRefresh(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Started bool                   `json:"started"`
+		Status  freeProxyRefreshStatus `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Started || resp.Status.State != "running" || resp.Status.RequestedBy != "manual" {
+		t.Fatalf("unexpected manual refresh response: %#v body=%s", resp, rec.Body.String())
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		status := server.currentFreeProxyRefreshStatus()
+		if status.State == "succeeded" {
+			if status.Accepted != 1 {
+				t.Fatalf("accepted=%d, want 1: %#v", status.Accepted, status)
+			}
+			break
+		}
+		if status.State == "failed" {
+			t.Fatalf("manual refresh failed: %#v", status)
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("manual refresh did not finish, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func TestHandleReloadStatusReportsAsyncFailure(t *testing.T) {
 	fake := &fakeNodeManager{err: errors.New("boom"), done: make(chan struct{})}
 	server := &Server{nodeMgr: fake, reloadState: "idle"}

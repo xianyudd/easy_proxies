@@ -71,6 +71,12 @@ export interface SaveSettingsResponse {
   management_url_hint?: string
 }
 
+export interface StartFreeProxyRefreshResponse {
+  message?: string
+  started?: boolean
+  status?: FreeProxyRefreshStatus
+}
+
 export interface ReloadStatus {
   state?: string
   started_at?: string
@@ -87,6 +93,14 @@ export interface FreeProxyRefreshStatus {
   duration_ms?: number
   error?: string
   accepted?: number
+  sources?: Array<{
+    name?: string
+    enabled?: boolean
+    candidates?: number
+    accepted?: number
+    duration_ms?: number
+    error?: string
+  }>
   reload_started?: boolean
   requested_by?: string
 }

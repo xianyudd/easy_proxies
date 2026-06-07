@@ -23,7 +23,7 @@ if [ "$EP_PROFILE" = "isolated" ]; then
   [ -n "$BIN_WAS_SET" ] || BIN="/tmp/easy_proxies_isolated"
   [ -n "$LOG_FILE_WAS_SET" ] || LOG_FILE="/tmp/easy_proxies_isolated.log"
   [ -n "$PID_FILE_WAS_SET" ] || PID_FILE="/tmp/easy_proxies_isolated.pid"
-  [ -n "$WEBUI_URL_WAS_SET" ] || WEBUI_URL="http://127.0.0.1:19091"
+  [ -n "$WEBUI_URL_WAS_SET" ] || WEBUI_URL="http://127.0.0.1:19093"
 else
   [ -n "$CONFIG_FILE_WAS_SET" ] || CONFIG_FILE="config.yaml"
   [ -n "$BIN_WAS_SET" ] || BIN="./easy_proxies_local"
@@ -60,7 +60,7 @@ Service:
 Isolated profile aliases:
   isolated:config                       Write /tmp/easy_proxies_isolated.yaml
   isolated:build                        Build /tmp/easy_proxies_isolated
-  isolated:start                        Start isolated instance on WebUI :19091
+  isolated:start                        Start isolated instance on WebUI :19093
   isolated:stop                         Stop isolated instance only
   isolated:restart                      Restart isolated instance only
   isolated:status                       Show isolated status
@@ -364,26 +364,26 @@ write_isolated_config() {
 mode: hybrid
 listener:
   address: 127.0.0.1
-  port: 12323
+  port: 12340
   username: user
   password: pass
 multi_port:
   address: 127.0.0.1
-  base_port: 25000
+  base_port: 30000
   username: user
   password: pass
 android_proxy:
   enabled: true
   listen: 127.0.0.1
-  base_port: 25150
+  base_port: 30150
 pool:
   mode: balance
   failure_threshold: 3
   blacklist_duration: 24h0m0s
 management:
   enabled: true
-  listen: 127.0.0.1:19091
-  clash_api_listen: 127.0.0.1:19092
+  listen: 127.0.0.1:19093
+  clash_api_listen: 127.0.0.1:19094
   probe_target: http://cp.cloudflare.com/generate_204
   password: ""
 subscription_refresh:
@@ -404,7 +404,7 @@ geoip:
   enabled: false
   database_path: ./GeoLite2-Country.mmdb
   listen: 127.0.0.1
-  port: 12210
+  port: 12341
   auto_update_enabled: false
   auto_update_interval: 24h0m0s
 log:
@@ -427,13 +427,13 @@ free_proxy_cache:
   path: $cache_dir/free-proxies.txt
   refresh_on_start: false
   auto_reload: true
-  workers: 16
+  workers: 8
   max_age: 6h
 free_proxy_max_nodes: 0
 free_proxy_filter:
   enabled: true
-  min_tier: http_basic
-  workers: 80
+  min_tier: simple_web
+  workers: 200
   timeout: 2s
   max_candidates: 0
   probes:

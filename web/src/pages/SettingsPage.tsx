@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Checkbox, Input, Select } from 'antd'
 import { AlertCircle, Clock3, Database, Plus, Save, Trash2, Wifi } from 'lucide-react'
-import { getFreeProxyRefreshStatus, getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig } from '../api/settings'
+import { getFreeProxyRefreshStatus, getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig, startFreeProxyRefresh } from '../api/settings'
 import { getCloudflareCache } from '../api/cloudflare'
 import { getReputationCache } from '../api/reputation'
 import { Button } from '../components/ui/Button'
@@ -138,6 +138,11 @@ export function SettingsPage() {
       setReloadState('idle')
     }
   }, onError:e=>toast(e instanceof Error ? e.message:'保存失败','error') })
+  const manualFreeRefresh = useMutation({ mutationFn: startFreeProxyRefresh, onSuccess:(res)=>{
+    toast(res.started ? '免费源已开始后台刷新...' : '已有免费源刷新在运行...', 'ok')
+    setFreeProxyRefreshState('refreshing')
+    void freeProxyRefreshStatus.refetch()
+  }, onError:e=>toast(e instanceof Error ? e.message:'免费源刷新启动失败','error') })
   const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:()=>{ toast('订阅配置已保存并刷新', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
   const input = (label:string, value:string, onChange:(v:string)=>void, type='text') => <div className="field settings-form-item"><label>{label}</label><Input className="settings-input" type={type} autoComplete={type === 'password' ? 'current-password' : label.includes('用户名') ? 'username' : undefined} value={value} onChange={e=>onChange(e.target.value)} /></div>
   const toggle = (label:string, checked:boolean, onChange:(v:boolean)=>void) => <Checkbox className="settings-checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}>{label}</Checkbox>
@@ -207,7 +212,10 @@ export function SettingsPage() {
       <Clock3 size={18} />
       <div>
         <strong>{freeProxyRefreshState === 'refreshing' ? '免费源正在后台扫描' : '免费源扫描失败'}</strong>
-        <span>{freeProxyRefreshState === 'refreshing' ? '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。' : '配置已保存，但免费源扫描失败；请检查源地址、探针和日志。'}</span>
+        <span>{freeProxyRefreshState === 'refreshing' ? '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。' : '免费源刷新未产生可入池节点，系统已清理旧缓存并按配置重载；请检查源地址、探针或降低筛选等级。'}</span>
+        {freeProxyRefreshStatus.data?.sources?.length ? <span>
+          源结果：{freeProxyRefreshStatus.data.sources.map(src => `${src.name || 'unnamed'} ${src.accepted || 0}/${src.candidates || 0}${src.error ? ' 失败' : ''}`).join('；')}
+        </span> : null}
       </div>
     </div>}
     <div className="settings-layout refined-settings-layout">
@@ -243,13 +251,16 @@ export function SettingsPage() {
         <section className="card settings-section" id="free-proxy">
           <div className="panel-header settings-section-header">
             <div><div className="panel-title">免费代理源</div><div className="panel-subtitle">把公开代理列表作为候选源。保存并重载后，系统会先抓取、去重和预筛，只让通过最低等级的代理进入运行节点。</div></div>
-            <div className="toolbar"><Button onClick={addFreeSource}><Plus size={16} />新增源</Button></div>
+            <div className="toolbar">
+              <Button onClick={()=>manualFreeRefresh.mutate()} disabled={manualFreeRefresh.isPending || freeProxyRefreshState === 'refreshing'}><Wifi size={16} />{manualFreeRefresh.isPending ? '启动中...' : '手动刷新'}</Button>
+              <Button onClick={addFreeSource}><Plus size={16} />新增源</Button>
+            </div>
           </div>
           <div className="settings-status-grid">
             <div className="status-card"><Database size={16} /><span>源数量</span><strong>{freeSources.length}</strong></div>
             <div className="status-card"><Wifi size={16} /><span>启用源</span><strong>{freeSources.filter(s => s.enabled !== false).length}</strong></div>
             <div className="status-card"><Database size={16} /><span>入池上限</span><strong>{Number(draft.free_proxy_max_nodes || 0) > 0 ? Number(draft.free_proxy_max_nodes) : '不限'}</strong></div>
-            <div className="status-card"><Clock3 size={16} /><span>最低等级</span><strong>{String(freeFilter.min_tier || 'http_basic')}</strong></div>
+            <div className="status-card"><Clock3 size={16} /><span>最低等级</span><strong>{String(freeFilter.min_tier || 'simple_web')}</strong></div>
           </div>
           <div className="free-proxy-filter-panel">
             <div className="quality-toggle-row">
@@ -257,10 +268,10 @@ export function SettingsPage() {
               <span className="settings-helper-text">开启后，免费源不会直接进入运行池；只有通过预筛的代理会展示。</span>
             </div>
           <div className="form-grid-3 compact-form-grid">
-            <div className="field settings-form-item"><label>最低等级</label><Select className="settings-input" value={String(freeFilter.min_tier || 'http_basic')} onChange={v=>updateFreeFilter({min_tier:v})} options={[{value:'http_basic',label:'HTTP 基础可用'}, {value:'simple_web',label:'普通 Web 可用'}]} /></div>
+            <div className="field settings-form-item"><label>最低等级</label><Select className="settings-input" value={String(freeFilter.min_tier || 'simple_web')} onChange={v=>updateFreeFilter({min_tier:v})} options={[{value:'http_basic',label:'HTTP 基础可用'}, {value:'simple_web',label:'普通 Web 可用'}]} /></div>
             {input('入池上限（0=不限）', String(draft.free_proxy_max_nodes || 0), v=>setDraft({...draft, free_proxy_max_nodes:Number(v)||0}), 'number')}
             {input('候选上限（0=全量）', String(freeFilter.max_candidates || 0), v=>updateFreeFilter({max_candidates:Number(v)||0}), 'number')}
-            {input('筛选并发', String(freeFilter.workers || 80), v=>updateFreeFilter({workers:Number(v)||80}), 'number')}
+            {input('筛选并发', String(freeFilter.workers || 200), v=>updateFreeFilter({workers:Number(v)||200}), 'number')}
             {input('筛选超时', String(freeFilter.timeout || '2s'), v=>updateFreeFilter({timeout:v}))}
           </div>
           <details className="raw-editor free-proxy-advanced"><summary>缓存与高级探针配置</summary>
@@ -271,7 +282,7 @@ export function SettingsPage() {
             </div>
             <div className="form-grid-3 compact-form-grid free-proxy-probes">
               {input('缓存文件', String(freeCache.path || ''), v=>updateFreeCache({path:v}))}
-              {input('源下载并发', String(freeCache.workers || 4), v=>updateFreeCache({workers:Number(v)||4}), 'number')}
+              {input('源下载并发', String(freeCache.workers || 8), v=>updateFreeCache({workers:Number(v)||8}), 'number')}
               {input('缓存最大年龄', String(freeCache.max_age || '6h0m0s'), v=>updateFreeCache({max_age:v}))}
               {input('HTTP 探针', String(freeFilterProbes.http || 'http://cp.cloudflare.com/generate_204'), v=>updateFreeFilter({probes:{...freeFilterProbes,http:v}}))}
               {input('HTTPS 探针', String(freeFilterProbes.https || 'https://example.com/'), v=>updateFreeFilter({probes:{...freeFilterProbes,https:v}}))}
