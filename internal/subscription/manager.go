@@ -157,18 +157,11 @@ func (m *Manager) UpdateConfig(urls []string, enabled bool, interval time.Durati
 		return
 	}
 
-	// Always start the refresh loop to handle the immediate refresh signal
+	// Start the refresh loop so periodic and explicit manual refreshes can use
+	// the new config. Do not trigger a fetch here: callers that need an
+	// immediate refresh must call RefreshNow or UpdateConfigAndRefresh.
 	m.logger.Infof("subscription config updated: %d URLs, enabled=%v, interval=%s", len(urls), enabled, m.baseCfg.SubscriptionRefresh.Interval)
 	go m.refreshLoop(m.baseCfg.SubscriptionRefresh.Interval)
-
-	// Always trigger an immediate fetch when URLs are provided,
-	// regardless of the "enabled" flag (which only controls periodic auto-refresh)
-	select {
-	case m.manualRefresh <- struct{}{}:
-		m.logger.Infof("triggered immediate refresh after config update")
-	default:
-		// A refresh is already pending
-	}
 }
 
 // UpdateConfigAndRefresh updates subscription config and synchronously waits for
@@ -180,39 +173,16 @@ func (m *Manager) UpdateConfigAndRefresh(urls []string, enabled bool, interval t
 	if len(urls) == 0 {
 		return nil
 	}
-
-	// Wait for the refresh triggered by UpdateConfig to complete
-	timeout := m.baseCfg.SubscriptionRefresh.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	deadline := timeout + m.baseCfg.SubscriptionRefresh.HealthCheckTimeout
-
-	ctx, cancel := context.WithTimeout(m.ctx, deadline)
-	defer cancel()
-
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	startCount := m.Status().RefreshCount
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("刷新超时")
-		case <-ticker.C:
-			status := m.Status()
-			if status.RefreshCount > startCount {
-				if status.LastError != "" {
-					return fmt.Errorf("刷新失败: %s", status.LastError)
-				}
-				return nil
-			}
-		}
-	}
+	return m.triggerRefreshAndWait("刷新超时", "刷新失败")
 }
 
 // RefreshNow triggers an immediate refresh.
 func (m *Manager) RefreshNow() error {
+	return m.triggerRefreshAndWait("refresh timeout", "refresh failed")
+}
+
+func (m *Manager) triggerRefreshAndWait(timeoutMessage, failurePrefix string) error {
+	startCount := m.Status().RefreshCount
 	select {
 	case m.manualRefresh <- struct{}{}:
 	default:
@@ -232,16 +202,15 @@ func (m *Manager) RefreshNow() error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	startCount := m.Status().RefreshCount
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("refresh timeout")
+			return fmt.Errorf("%s", timeoutMessage)
 		case <-ticker.C:
 			status := m.Status()
 			if status.RefreshCount > startCount {
 				if status.LastError != "" {
-					return fmt.Errorf("refresh failed: %s", status.LastError)
+					return fmt.Errorf("%s: %s", failurePrefix, status.LastError)
 				}
 				return nil
 			}

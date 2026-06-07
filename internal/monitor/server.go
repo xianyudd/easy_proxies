@@ -433,6 +433,18 @@ func copyStringSlice(in []string) []string {
 	return out
 }
 
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i]) != strings.TrimSpace(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func coreReloadSignature(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
@@ -3184,9 +3196,18 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		// Update in-memory config and persist to disk
+		// Update in-memory config and persist to disk. Capture the previous
+		// subscription runtime knobs so we can avoid unnecessary synchronous
+		// refreshes for no-op saves or interval-only changes.
 		s.cfgMu.Lock()
+		oldURLs := []string(nil)
+		oldEnabled := false
+		oldInterval := time.Duration(0)
 		if s.cfgSrc != nil {
+			oldURLs = copyStringSlice(s.cfgSrc.Subscriptions)
+			oldEnabled = s.cfgSrc.SubscriptionRefresh.Enabled
+			oldInterval = s.cfgSrc.SubscriptionRefresh.Interval
+
 			s.cfgSrc.Subscriptions = cleanURLs
 			s.cfgSrc.SubscriptionRefresh.Enabled = req.Enabled
 			s.cfgSrc.SubscriptionRefresh.Interval = interval
@@ -3200,28 +3221,51 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 		}
 		s.cfgMu.Unlock()
 
-		// Hot-reload subscription manager and wait for refresh to complete
+		urlsChanged := !stringSlicesEqual(oldURLs, cleanURLs)
+		enabledChanged := oldEnabled != req.Enabled
+		intervalChanged := oldInterval != interval
+		configChanged := urlsChanged || enabledChanged || intervalChanged
+		refreshTriggered := false
+
+		// Hot-reload subscription manager. Only URL/enabled changes require a
+		// blocking refresh because they can change the active node set. Interval-only
+		// changes update the scheduler without re-fetching subscriptions.
 		if s.subRefresher != nil {
-			if err := s.subRefresher.UpdateConfigAndRefresh(cleanURLs, req.Enabled, interval); err != nil {
-				// Config was saved but refresh failed — report partial success
-				writeJSON(w, map[string]any{
-					"message":       fmt.Sprintf("订阅配置已保存，但刷新失败: %v", err),
-					"subscriptions": cleanURLs,
-					"enabled":       req.Enabled,
-					"interval":      interval.String(),
-					"refresh_error": err.Error(),
-				})
-				return
+			if urlsChanged || enabledChanged {
+				refreshTriggered = len(cleanURLs) > 0
+				if err := s.subRefresher.UpdateConfigAndRefresh(cleanURLs, req.Enabled, interval); err != nil {
+					// Config was saved but refresh failed — report partial success
+					writeJSON(w, map[string]any{
+						"message":           fmt.Sprintf("订阅配置已保存，但刷新失败: %v", err),
+						"subscriptions":     cleanURLs,
+						"enabled":           req.Enabled,
+						"interval":          interval.String(),
+						"config_changed":    configChanged,
+						"refresh_triggered": refreshTriggered,
+						"refresh_error":     err.Error(),
+					})
+					return
+				}
+			} else if intervalChanged {
+				s.subRefresher.UpdateConfig(cleanURLs, req.Enabled, interval)
 			}
 		}
 
-		status := s.subRefresher.Status()
+		nodeCount := s.runtimeSubscriptionNodeCount()
+		if s.subRefresher != nil {
+			status := s.subRefresher.Status()
+			if status.NodeCount > nodeCount {
+				nodeCount = status.NodeCount
+			}
+		}
 		writeJSON(w, map[string]any{
-			"message":       "订阅配置已更新并生效",
-			"subscriptions": cleanURLs,
-			"enabled":       req.Enabled,
-			"interval":      interval.String(),
-			"node_count":    status.NodeCount,
+			"message":           "订阅配置已更新并生效",
+			"subscriptions":     cleanURLs,
+			"enabled":           req.Enabled,
+			"interval":          interval.String(),
+			"node_count":        nodeCount,
+			"config_changed":    configChanged,
+			"refresh_triggered": refreshTriggered,
 		})
 
 	default:

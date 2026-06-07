@@ -933,6 +933,171 @@ func (f fakeSubscriptionRefresher) UpdateConfigAndRefresh(urls []string, enabled
 	return nil
 }
 
+type recordingSubscriptionRefresher struct {
+	status             SubscriptionStatus
+	updateCalls        int
+	updateRefreshCalls int
+	lastURLs           []string
+	lastEnabled        bool
+	lastInterval       time.Duration
+}
+
+func (f *recordingSubscriptionRefresher) RefreshNow() error          { return nil }
+func (f *recordingSubscriptionRefresher) Status() SubscriptionStatus { return f.status }
+func (f *recordingSubscriptionRefresher) UpdateConfig(urls []string, enabled bool, interval time.Duration) {
+	f.updateCalls++
+	f.lastURLs = append([]string(nil), urls...)
+	f.lastEnabled = enabled
+	f.lastInterval = interval
+}
+func (f *recordingSubscriptionRefresher) UpdateConfigAndRefresh(urls []string, enabled bool, interval time.Duration) error {
+	f.updateRefreshCalls++
+	f.lastURLs = append([]string(nil), urls...)
+	f.lastEnabled = enabled
+	f.lastInterval = interval
+	return nil
+}
+
+func TestHandleSubscriptionConfigSkipsRefreshForUnchangedConfig(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+subscriptions:
+  - https://example.test/sub-a
+subscription_refresh:
+  enabled: true
+  interval: 1h
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresher := &recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 7}}
+	server := &Server{cfgSrc: cfg}
+	server.SetSubscriptionRefresher(refresher)
+
+	body := []byte(`{"subscriptions":["https://example.test/sub-a"],"enabled":true,"interval":"1h"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSubscriptionConfig(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 0 {
+		t.Fatalf("unchanged config should not update refresher: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
+	}
+	var resp struct {
+		ConfigChanged    bool `json:"config_changed"`
+		RefreshTriggered bool `json:"refresh_triggered"`
+		NodeCount        int  `json:"node_count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ConfigChanged || resp.RefreshTriggered || resp.NodeCount != 7 {
+		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
+	}
+}
+
+func TestHandleSubscriptionConfigUpdatesIntervalWithoutRefresh(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+subscriptions:
+  - https://example.test/sub-a
+subscription_refresh:
+  enabled: true
+  interval: 1h
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresher := &recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 7}}
+	server := &Server{cfgSrc: cfg}
+	server.SetSubscriptionRefresher(refresher)
+
+	body := []byte(`{"subscriptions":["https://example.test/sub-a"],"enabled":true,"interval":"61m"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSubscriptionConfig(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if refresher.updateCalls != 1 || refresher.updateRefreshCalls != 0 {
+		t.Fatalf("interval-only change should update scheduler without refresh: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
+	}
+	if refresher.lastInterval != 61*time.Minute {
+		t.Fatalf("lastInterval=%s, want 61m", refresher.lastInterval)
+	}
+	var resp struct {
+		ConfigChanged    bool   `json:"config_changed"`
+		RefreshTriggered bool   `json:"refresh_triggered"`
+		Interval         string `json:"interval"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.ConfigChanged || resp.RefreshTriggered || resp.Interval != "1h1m0s" {
+		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
+	}
+}
+
+func TestHandleSubscriptionConfigRefreshesWhenURLsChange(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+subscriptions:
+  - https://example.test/sub-a
+subscription_refresh:
+  enabled: true
+  interval: 1h
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresher := &recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 9}}
+	server := &Server{cfgSrc: cfg}
+	server.SetSubscriptionRefresher(refresher)
+
+	body := []byte(`{"subscriptions":["https://example.test/sub-b"],"enabled":true,"interval":"1h"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSubscriptionConfig(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 1 {
+		t.Fatalf("url change should refresh: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
+	}
+	var resp struct {
+		ConfigChanged    bool `json:"config_changed"`
+		RefreshTriggered bool `json:"refresh_triggered"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.ConfigChanged || !resp.RefreshTriggered {
+		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
+	}
+}
+
 func TestHandleSubscriptionStatusFallsBackToRuntimeSubscriptionNodes(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true})
 	if err != nil {
