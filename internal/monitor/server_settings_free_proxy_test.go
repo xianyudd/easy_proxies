@@ -314,14 +314,112 @@ management:
 	if !resp.NeedReload || !resp.ReloadStarted || resp.ReloadStatus.State != "running" {
 		t.Fatalf("expected async reload response, got %#v body=%s", resp, rec.Body.String())
 	}
+	deadline := time.After(2 * time.Second)
+	for {
+		status := server.currentReloadStatus()
+		if status.State == "succeeded" {
+			break
+		}
+		if status.State == "failed" {
+			t.Fatalf("reload failed: %#v", status)
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("async reload did not finish, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if fake.reloadCalls != 1 {
+		t.Fatalf("reloadCalls = %d, want 1", fake.reloadCalls)
+	}
+}
+
+func TestHandleSettingsStartsFreeProxyRefreshAsynchronously(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	sourcePath := filepath.Join(tmp, "free.txt")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	if err := os.WriteFile(sourcePath, []byte("http://127.0.0.1:18080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+free_proxy_filter:
+  enabled: false
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeNodeManager{done: make(chan struct{})}
+	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
+
+	body := []byte(`{
+		"free_proxy_sources": [
+			{"name":"local-test","file":"` + sourcePath + `","default_scheme":"http","format":"txt","enabled":true,"max_nodes":0}
+		],
+		"free_proxy_cache": {"enabled":true,"path":"` + cachePath + `","auto_reload":true,"workers":1,"max_age":"6h"},
+		"free_proxy_filter": {"enabled":false,"min_tier":"http_basic","workers":1,"timeout":"100ms","max_candidates":0}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedReload              bool `json:"need_reload"`
+		ReloadStarted           bool `json:"reload_started"`
+		FreeProxyRefreshNeeded  bool `json:"free_proxy_refresh_needed"`
+		FreeProxyRefreshStarted bool `json:"free_proxy_refresh_started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.NeedReload || resp.ReloadStarted || !resp.FreeProxyRefreshNeeded || !resp.FreeProxyRefreshStarted {
+		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		status := server.currentFreeProxyRefreshStatus()
+		if status.State == "succeeded" {
+			if status.Accepted != 1 || !status.ReloadStarted {
+				t.Fatalf("unexpected refresh status: %#v", status)
+			}
+			break
+		}
+		if status.State == "failed" {
+			t.Fatalf("refresh failed: %#v", status)
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not finish, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 	select {
 	case <-fake.done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("async reload did not finish")
+		t.Fatal("auto reload did not run after free proxy refresh")
 	}
-	status := server.currentReloadStatus()
-	if status.State != "succeeded" || fake.reloadCalls != 1 {
-		t.Fatalf("unexpected reload status=%#v calls=%d", status, fake.reloadCalls)
+	if fake.reloadCalls != 1 {
+		t.Fatalf("reloadCalls = %d, want 1", fake.reloadCalls)
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "http://127.0.0.1:18080\n" {
+		t.Fatalf("cache content = %q", string(data))
 	}
 }
 

@@ -59,6 +59,17 @@ type reloadStatus struct {
 	RequestedBy string    `json:"requested_by,omitempty"`
 }
 
+type freeProxyRefreshStatus struct {
+	State         string    `json:"state"`
+	StartedAt     time.Time `json:"started_at,omitempty"`
+	FinishedAt    time.Time `json:"finished_at,omitempty"`
+	DurationMS    int64     `json:"duration_ms,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	Accepted      int       `json:"accepted,omitempty"`
+	ReloadStarted bool      `json:"reload_started,omitempty"`
+	RequestedBy   string    `json:"requested_by,omitempty"`
+}
+
 // Sentinel errors for node operations.
 var (
 	ErrNodeNotFound = errors.New("节点不存在")
@@ -258,6 +269,10 @@ type Server struct {
 	reloadState  string
 	reloadStatus reloadStatus
 
+	freeProxyRefreshMu     sync.Mutex
+	freeProxyRefreshState  string
+	freeProxyRefreshStatus freeProxyRefreshStatus
+
 	qualityMu      sync.Mutex
 	qualityStop    chan struct{}
 	qualityRunning bool
@@ -318,6 +333,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
 	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
 	mux.HandleFunc("/api/reload/status", s.withAuth(s.handleReloadStatus))
+	mux.HandleFunc("/api/free-proxy/refresh/status", s.withAuth(s.handleFreeProxyRefreshStatus))
 	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
 	s.handler = mux
@@ -438,6 +454,26 @@ func coreReloadSignature(cfg *config.Config) string {
 	return string(data)
 }
 
+func freeProxyRefreshSignature(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	type signature struct {
+		FreeProxySources  []nodesource.SourceConfig
+		FreeProxyMaxNodes int
+		FreeProxyFilter   nodesource.FilterConfig
+		FreeProxyCache    config.FreeProxyCacheConfig
+	}
+	sig := signature{
+		FreeProxySources:  copySourceConfigs(cfg.FreeProxySources),
+		FreeProxyMaxNodes: cfg.FreeProxyMaxNodes,
+		FreeProxyFilter:   cfg.FreeProxyFilter,
+		FreeProxyCache:    cfg.FreeProxyCache,
+	}
+	data, _ := json.Marshal(sig)
+	return string(data)
+}
+
 func cloneConfigNodes(in []config.NodeConfig) []config.NodeConfig {
 	if len(in) == 0 {
 		return nil
@@ -498,6 +534,85 @@ func (s *Server) startAsyncReload(requestedBy string) (reloadStatus, bool, error
 		s.reloadStatus.Error = ""
 		if s.logger != nil {
 			s.logger.Printf("✅ async reload completed in %dms", s.reloadStatus.DurationMS)
+		}
+	}(now)
+
+	return status, true, nil
+}
+
+func (s *Server) currentFreeProxyRefreshStatus() freeProxyRefreshStatus {
+	s.freeProxyRefreshMu.Lock()
+	defer s.freeProxyRefreshMu.Unlock()
+	status := s.freeProxyRefreshStatus
+	if status.State == "" {
+		status.State = "idle"
+	}
+	return status
+}
+
+func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStatus, bool, error) {
+	s.cfgMu.RLock()
+	cfg := s.cfgSrc
+	s.cfgMu.RUnlock()
+	if cfg == nil {
+		return freeProxyRefreshStatus{}, false, errors.New("配置存储未初始化")
+	}
+	if len(cfg.FreeProxySources) == 0 {
+		return freeProxyRefreshStatus{State: "idle", RequestedBy: requestedBy}, false, nil
+	}
+	cache := cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)
+	if !cache.EnabledValue() {
+		return freeProxyRefreshStatus{State: "disabled", RequestedBy: requestedBy}, false, nil
+	}
+
+	now := time.Now()
+	s.freeProxyRefreshMu.Lock()
+	if s.freeProxyRefreshState == "running" {
+		status := s.freeProxyRefreshStatus
+		s.freeProxyRefreshMu.Unlock()
+		return status, false, nil
+	}
+	s.freeProxyRefreshState = "running"
+	s.freeProxyRefreshStatus = freeProxyRefreshStatus{
+		State:       "running",
+		StartedAt:   now,
+		RequestedBy: requestedBy,
+	}
+	status := s.freeProxyRefreshStatus
+	s.freeProxyRefreshMu.Unlock()
+
+	go func(started time.Time) {
+		count, err := cfg.RefreshFreeProxyCache(context.Background())
+		finished := time.Now()
+		reloadStarted := false
+		if err == nil && count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
+			_, startedReload, reloadErr := s.startAsyncReload("free-proxy-refresh")
+			reloadStarted = startedReload
+			if reloadErr != nil && s.logger != nil {
+				s.logger.Printf("❌ free proxy refresh auto-reload start failed: %v", reloadErr)
+			}
+		}
+
+		s.freeProxyRefreshMu.Lock()
+		defer s.freeProxyRefreshMu.Unlock()
+		s.freeProxyRefreshStatus.FinishedAt = finished
+		s.freeProxyRefreshStatus.DurationMS = finished.Sub(started).Milliseconds()
+		s.freeProxyRefreshStatus.Accepted = count
+		s.freeProxyRefreshStatus.ReloadStarted = reloadStarted
+		if err != nil {
+			s.freeProxyRefreshState = "failed"
+			s.freeProxyRefreshStatus.State = "failed"
+			s.freeProxyRefreshStatus.Error = err.Error()
+			if s.logger != nil {
+				s.logger.Printf("❌ free proxy refresh failed: %v", err)
+			}
+			return
+		}
+		s.freeProxyRefreshState = "succeeded"
+		s.freeProxyRefreshStatus.State = "succeeded"
+		s.freeProxyRefreshStatus.Error = ""
+		if s.logger != nil {
+			s.logger.Printf("✅ free proxy refresh completed in %dms, accepted=%d", s.freeProxyRefreshStatus.DurationMS, count)
 		}
 	}(now)
 
@@ -2620,6 +2735,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 		oldManagementListen = s.cfg.Listen
 		oldCoreSignature := coreReloadSignature(s.cfgSrc)
+		oldFreeProxySignature := freeProxyRefreshSignature(s.cfgSrc)
 
 		s.cfg.ExternalIP = extIP
 		s.cfg.ProbeTarget = probeTarget
@@ -2730,6 +2846,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		needReload := oldCoreSignature != coreReloadSignature(s.cfgSrc)
+		needFreeProxyRefresh := oldFreeProxySignature != freeProxyRefreshSignature(s.cfgSrc)
 		s.cfgMu.Unlock()
 
 		reboundListen := ""
@@ -2755,7 +2872,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		reloadStarted := false
 		reloadStatus := s.currentReloadStatus()
 		reloadError := ""
-		if needReload && s.nodeMgr != nil {
+		freeProxyRefreshStarted := false
+		freeProxyRefreshStatus := s.currentFreeProxyRefreshStatus()
+		freeProxyRefreshError := ""
+		if needFreeProxyRefresh {
+			status, started, err := s.startFreeProxyRefresh("settings")
+			freeProxyRefreshStarted = started
+			freeProxyRefreshStatus = status
+			if err != nil {
+				freeProxyRefreshError = err.Error()
+			}
+		} else if needReload && s.nodeMgr != nil {
 			status, started, err := s.startAsyncReload("settings")
 			reloadStarted = started
 			reloadStatus = status
@@ -2765,17 +2892,21 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeJSON(w, map[string]any{
-			"message":             "设置已保存",
-			"external_ip":         extIP,
-			"probe_target":        probeTarget,
-			"skip_cert_verify":    req.SkipCertVerify,
-			"need_reload":         needReload,
-			"reload_started":      reloadStarted,
-			"reload_status":       reloadStatus,
-			"reload_error":        reloadError,
-			"management_rebound":  managementRebound,
-			"management_listen":   reboundListen,
-			"management_url_hint": managementURLHint(r, reboundListen),
+			"message":                    "设置已保存",
+			"external_ip":                extIP,
+			"probe_target":               probeTarget,
+			"skip_cert_verify":           req.SkipCertVerify,
+			"need_reload":                needReload,
+			"reload_started":             reloadStarted,
+			"reload_status":              reloadStatus,
+			"reload_error":               reloadError,
+			"free_proxy_refresh_needed":  needFreeProxyRefresh,
+			"free_proxy_refresh_started": freeProxyRefreshStarted,
+			"free_proxy_refresh_status":  freeProxyRefreshStatus,
+			"free_proxy_refresh_error":   freeProxyRefreshError,
+			"management_rebound":         managementRebound,
+			"management_listen":          reboundListen,
+			"management_url_hint":        managementURLHint(r, reboundListen),
 		})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -3075,6 +3206,14 @@ func (s *Server) handleReloadStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.currentReloadStatus())
+}
+
+func (s *Server) handleFreeProxyRefreshStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, s.currentFreeProxyRefreshStatus())
 }
 
 func (s *Server) ensureNodeManager(w http.ResponseWriter) bool {

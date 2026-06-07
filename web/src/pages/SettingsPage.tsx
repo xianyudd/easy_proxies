@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Checkbox, Input, Select } from 'antd'
 import { AlertCircle, Clock3, Database, Plus, Save, Trash2, Wifi } from 'lucide-react'
-import { getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig } from '../api/settings'
+import { getFreeProxyRefreshStatus, getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig } from '../api/settings'
 import { getCloudflareCache } from '../api/cloudflare'
 import { getReputationCache } from '../api/reputation'
 import { Button } from '../components/ui/Button'
@@ -22,6 +22,15 @@ function shortDate(value: unknown) {
 function splitLines(value: string) { return value.split('\n').map(s => s.trim()).filter(Boolean) }
 function editableLines(value: string) { return value === '' ? [] : value.split('\n') }
 function isWideOpen(value: unknown) { return String(value || '').trim() === '0.0.0.0' }
+function freeSourceKey(src: FreeProxySource) { return `${src.name || ''}|${src.url || ''}|${src.file || ''}` }
+function normalizeFreeSourcesForSave(draftSources: FreeProxySource[], serverSources: FreeProxySource[]) {
+  const serverEnabled = new Map(serverSources.map(src => [freeSourceKey(src), src.enabled !== false]))
+  return draftSources.map(src => {
+    const key = freeSourceKey(src)
+    const knownEnabled = serverEnabled.get(key)
+    return {...src, enabled: src.enabled ?? knownEnabled ?? true}
+  })
+}
 function latestCheckedAt(rows: Array<{ checked_at?: unknown; result?: unknown }>) {
   const latest = rows
     .map(row => {
@@ -41,7 +50,9 @@ export function SettingsPage() {
   const [draft, setDraft] = useState<SettingsResponse>({})
   const [subs, setSubs] = useState('')
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
+  const [freeProxyRefreshState, setFreeProxyRefreshState] = useState<'idle' | 'refreshing' | 'failed'>('idle')
   const reloadStatus = useQuery({ queryKey:['reload-status'], queryFn:getReloadStatus, enabled: reloadState === 'reloading', refetchInterval: reloadState === 'reloading' ? 800 : false })
+  const freeProxyRefreshStatus = useQuery({ queryKey:['free-proxy-refresh-status'], queryFn:getFreeProxyRefreshStatus, enabled: freeProxyRefreshState === 'refreshing', refetchInterval: freeProxyRefreshState === 'refreshing' ? 800 : false })
   const toast = useToast(s=>s.show)
   useEffect(()=>{ if(settings.data){ setDraft(settings.data); setSubs(listValue(settings.data.subscriptions)) } }, [settings.data])
   useEffect(() => {
@@ -64,6 +75,25 @@ export function SettingsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadStatus.data?.state, reloadStatus.data?.duration_ms, reloadStatus.data?.error])
   useEffect(() => {
+    const state = String(freeProxyRefreshStatus.data?.state || '')
+    if (state === 'succeeded') {
+      const duration = Number(freeProxyRefreshStatus.data?.duration_ms || 0)
+      const accepted = Number(freeProxyRefreshStatus.data?.accepted || 0)
+      toast(`免费源扫描完成：${accepted} 条，用时 ${duration}ms`, 'ok')
+      setFreeProxyRefreshState('idle')
+      void settings.refetch()
+      void freeProxyRefreshStatus.refetch()
+      if (freeProxyRefreshStatus.data?.reload_started) {
+        setReloadState('reloading')
+        void reloadStatus.refetch()
+      }
+    } else if (state === 'failed') {
+      setFreeProxyRefreshState('failed')
+      toast(freeProxyRefreshStatus.data?.error ? `免费源扫描失败：${freeProxyRefreshStatus.data.error}` : '免费源扫描失败', 'error')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freeProxyRefreshStatus.data?.state, freeProxyRefreshStatus.data?.duration_ms, freeProxyRefreshStatus.data?.accepted, freeProxyRefreshStatus.data?.error])
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('autoReload') !== '1') return
     params.delete('autoReload')
@@ -83,6 +113,17 @@ export function SettingsPage() {
       return
     }
     void settings.refetch()
+    if (res?.free_proxy_refresh_needed) {
+      if (res.free_proxy_refresh_error) {
+        setFreeProxyRefreshState('failed')
+        toast(`设置已保存，但免费源扫描启动失败：${res.free_proxy_refresh_error}`, 'error')
+        return
+      }
+      toast(res.free_proxy_refresh_started ? '设置已保存，免费源开始后台扫描...' : '设置已保存，已有免费源扫描在运行...', 'ok')
+      setFreeProxyRefreshState('refreshing')
+      void freeProxyRefreshStatus.refetch()
+      return
+    }
     if (res?.need_reload) {
       if (res.reload_error) {
         setReloadState('failed')
@@ -133,7 +174,9 @@ export function SettingsPage() {
       toast('请先补全免费代理源的 URL 或文件路径', 'error')
       return
     }
-    save.mutate(draft)
+    const serverSources = Array.isArray(settings.data?.free_proxy_sources) ? settings.data.free_proxy_sources as FreeProxySource[] : []
+    const normalizedDraft = {...draft, free_proxy_sources: normalizeFreeSourcesForSave(freeSources, serverSources)}
+    save.mutate(normalizedDraft)
   }
   const saveSubscriptions = () => saveSub.mutate({
     subscriptions: cleanSubItems,
@@ -158,6 +201,13 @@ export function SettingsPage() {
       <div>
         <strong>{reloadState === 'reloading' ? '设置已保存，后台正在生效' : '后台生效失败'}</strong>
         <span>{reloadState === 'reloading' ? '页面无需等待；代理核心会在后台完成重载，完成后自动刷新状态。' : '配置已经保存，但核心重载失败；请检查日志后再次保存或使用 epctl 重启隔离实例。'}</span>
+      </div>
+    </div>}
+    {freeProxyRefreshState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status">
+      <Clock3 size={18} />
+      <div>
+        <strong>{freeProxyRefreshState === 'refreshing' ? '免费源正在后台扫描' : '免费源扫描失败'}</strong>
+        <span>{freeProxyRefreshState === 'refreshing' ? '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。' : '配置已保存，但免费源扫描失败；请检查源地址、探针和日志。'}</span>
       </div>
     </div>}
     <div className="settings-layout refined-settings-layout">

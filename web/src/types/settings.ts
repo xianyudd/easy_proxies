@@ -59,6 +59,10 @@ export interface SaveSettingsResponse {
     requested_by?: string
   }
   reload_error?: string
+  free_proxy_refresh_needed?: boolean
+  free_proxy_refresh_started?: boolean
+  free_proxy_refresh_status?: FreeProxyRefreshStatus
+  free_proxy_refresh_error?: string
   external_ip?: string
   probe_target?: string
   skip_cert_verify?: boolean
@@ -73,5 +77,16 @@ export interface ReloadStatus {
   finished_at?: string
   duration_ms?: number
   error?: string
+  requested_by?: string
+}
+
+export interface FreeProxyRefreshStatus {
+  state?: string
+  started_at?: string
+  finished_at?: string
+  duration_ms?: number
+  error?: string
+  accepted?: number
+  reload_started?: boolean
   requested_by?: string
 }
