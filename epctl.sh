@@ -471,6 +471,47 @@ EOF
   echo "[OK] wrote isolated config: $CONFIG_FILE"
 }
 
+ensure_isolated_config_defaults() {
+  [ "$EP_PROFILE" = "isolated" ] || return 0
+  [ -f "$CONFIG_FILE" ] || return 0
+  local tmp changed
+  tmp="$(mktemp)"
+  changed=0
+  awk '
+    BEGIN { in_filter=0 }
+    /^free_proxy_filter:/ { in_filter=1; print; next }
+    in_filter && /^[^[:space:]]/ { in_filter=0 }
+    in_filter && /^[[:space:]]*min_tier:[[:space:]]*simple_web[[:space:]]*$/ {
+      sub(/simple_web/, "http_basic")
+      changed=1
+      print
+      next
+    }
+    in_filter && /^[[:space:]]*timeout:[[:space:]]*500ms[[:space:]]*$/ {
+      sub(/500ms/, "2s")
+      changed=1
+      print
+      next
+    }
+    { print }
+    END { if (changed) exit 42 }
+  ' "$CONFIG_FILE" >"$tmp" || {
+    local code=$?
+    if [ "$code" -eq 42 ]; then
+      changed=1
+    else
+      rm -f "$tmp"
+      return "$code"
+    fi
+  }
+  if [ "$changed" = "1" ]; then
+    mv "$tmp" "$CONFIG_FILE"
+    echo "[OK] migrated isolated free proxy defaults: min_tier=http_basic timeout=2s"
+  else
+    rm -f "$tmp"
+  fi
+}
+
 start_service() {
   if is_running; then
     sync_pid_file
@@ -480,6 +521,7 @@ start_service() {
   if [ ! -f "$CONFIG_FILE" ] && [ "$EP_PROFILE" = "isolated" ]; then
     write_isolated_config
   fi
+  ensure_isolated_config_defaults
   if [ ! -x "$BIN" ]; then
     echo "[ERROR] binary not executable: $BIN"
     echo "Build first: ./epctl.sh service:build"

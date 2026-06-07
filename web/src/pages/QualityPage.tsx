@@ -171,27 +171,27 @@ export function QualityPage() {
       <div className="quality-filter-grid modern-filter-grid">
         <div className="field console-field">
           <label>地区范围</label>
-          <Select className="console-select" value={region} onChange={setRegion} options={[{ value: 'all', label: '全部' }, { value: 'us', label: '美国' }, { value: 'jp', label: '日本' }, { value: 'hk', label: '香港' }, { value: 'sg', label: '新加坡' }, { value: 'de', label: '德国' }, { value: 'gb', label: '英国' }]} />
+          <Select className="console-select" aria-label="地区范围" value={region} onChange={setRegion} options={[{ value: 'all', label: '全部' }, { value: 'us', label: '美国' }, { value: 'jp', label: '日本' }, { value: 'hk', label: '香港' }, { value: 'sg', label: '新加坡' }, { value: 'de', label: '德国' }, { value: 'gb', label: '英国' }]} />
         </div>
         <div className="field console-field">
           <label>节点来源</label>
-          <Select className="console-select" value={source} onChange={setSource} options={[{ value: 'all', label: `全部来源 (${nodesSummary.data?.total_nodes || 0})` }, { value: 'free_proxy', label: `免费源 (${sourceStats.free_proxy || 0})` }, { value: 'subscription', label: `订阅源 (${sourceStats.subscription || 0})` }, { value: 'inline', label: `内联 (${sourceStats.inline || 0})` }, { value: 'nodes_file', label: `节点文件 (${sourceStats.nodes_file || 0})` }]} />
+          <Select className="console-select" aria-label="节点来源" value={source} onChange={setSource} options={[{ value: 'all', label: `全部来源 (${nodesSummary.data?.total_nodes || 0})` }, { value: 'free_proxy', label: `免费源 (${sourceStats.free_proxy || 0})` }, { value: 'subscription', label: `订阅源 (${sourceStats.subscription || 0})` }, { value: 'inline', label: `内联 (${sourceStats.inline || 0})` }, { value: 'nodes_file', label: `节点文件 (${sourceStats.nodes_file || 0})` }]} />
         </div>
         <div className="field console-field">
           <label>样本数</label>
-          <InputNumber className="console-number" min={1} value={count} onChange={value=>setCount(Number(value)||10)} />
+          <InputNumber className="console-number" aria-label="样本数" min={1} value={count} onChange={value=>setCount(Number(value)||10)} />
         </div>
         <div className="field console-field">
           <label>结果筛选</label>
-          <Select className="console-select" value={filter} onChange={setFilter} disabled={!!jobId} options={[{ value: 'all', label: jobId ? '后台任务分页结果' : '全部等级' }, { value: 'excellent', label: '优秀' }, { value: 'good', label: '良好' }, { value: 'fair', label: '一般' }, { value: 'poor', label: '较差' }, { value: 'failed', label: '失败' }]} />
+          <Select className="console-select" aria-label="结果筛选" value={filter} onChange={setFilter} disabled={!!jobId} options={[{ value: 'all', label: jobId ? '后台任务分页结果' : '全部等级' }, { value: 'excellent', label: '优秀' }, { value: 'good', label: '良好' }, { value: 'fair', label: '一般' }, { value: 'poor', label: '较差' }, { value: 'failed', label: '失败' }]} />
         </div>
         <div className="field console-field">
           <label>Tier 筛选</label>
-          <Select className="console-select" value={tierFilter} onChange={setTierFilter} options={[{ value: 'all', label: '全部 Tier' }, { value: 'reject', label: 'T0 Reject' }, { value: 'rescue', label: 'T1 Rescue' }, { value: 'http_only', label: 'T2 HTTP-only' }, { value: 'simple_web', label: 'T3 Simple Web' }, { value: 'recommended', label: 'T4 Recommended' }, { value: 'premium', label: 'T5 Premium' }]} />
+          <Select className="console-select" aria-label="Tier 筛选" value={tierFilter} onChange={setTierFilter} options={[{ value: 'all', label: '全部 Tier' }, { value: 'reject', label: 'T0 Reject' }, { value: 'rescue', label: 'T1 Rescue' }, { value: 'http_only', label: 'T2 HTTP-only' }, { value: 'simple_web', label: 'T3 Simple Web' }, { value: 'recommended', label: 'T4 Recommended' }, { value: 'premium', label: 'T5 Premium' }]} />
         </div>
         <div className="field console-field">
           <label>池筛选</label>
-          <Select className="console-select" value={poolFilter} onChange={setPoolFilter} options={[{ value: 'all', label: '全部池' }, { value: 'reject_pool', label: 'reject_pool' }, { value: 'rescue_pool', label: 'rescue_pool' }, { value: 'http_pool', label: 'http_pool' }, { value: 'web_pool', label: 'web_pool' }, { value: 'recommended_pool', label: 'recommended_pool' }, { value: 'strict_pool', label: 'strict_pool' }]} />
+          <Select className="console-select" aria-label="池筛选" value={poolFilter} onChange={setPoolFilter} options={[{ value: 'all', label: '全部池' }, { value: 'reject_pool', label: 'reject_pool' }, { value: 'rescue_pool', label: 'rescue_pool' }, { value: 'http_pool', label: 'http_pool' }, { value: 'web_pool', label: 'web_pool' }, { value: 'recommended_pool', label: 'recommended_pool' }, { value: 'strict_pool', label: 'strict_pool' }]} />
         </div>
       </div>
       {jobId && <div className="card" style={{ marginTop: 16 }}>

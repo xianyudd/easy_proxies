@@ -56,7 +56,7 @@ type nodeDecision struct {
 // Normalized returns a copy with safe defaults and bounded concurrency.
 func (f FilterConfig) Normalized() FilterConfig {
 	if strings.TrimSpace(f.MinTier) == "" {
-		f.MinTier = "simple_web"
+		f.MinTier = "http_basic"
 	}
 	f.MinTier = strings.ToLower(strings.TrimSpace(f.MinTier))
 	if f.Workers <= 0 {

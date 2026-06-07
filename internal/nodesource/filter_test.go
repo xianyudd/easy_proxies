@@ -97,10 +97,10 @@ func TestFilterEffectiveTimeoutShrinksHugeFullScans(t *testing.T) {
 	}
 }
 
-func TestFilterConfigDefaultsToSimpleWebForStableFreeSources(t *testing.T) {
+func TestFilterConfigDefaultsToHTTPBasicForFreeSourceAvailability(t *testing.T) {
 	cfg := FilterConfig{}.Normalized()
-	if cfg.MinTier != "simple_web" {
-		t.Fatalf("MinTier=%q, want simple_web", cfg.MinTier)
+	if cfg.MinTier != "http_basic" {
+		t.Fatalf("MinTier=%q, want http_basic", cfg.MinTier)
 	}
 	if cfg.Workers != DefaultFilterWorkers {
 		t.Fatalf("Workers=%d, want %d", cfg.Workers, DefaultFilterWorkers)
