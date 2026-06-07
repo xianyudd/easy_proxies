@@ -63,6 +63,11 @@ export function SettingsPage() {
   useEffect(() => {
     const state = String(reloadStatus.data?.state || '')
     if (state === 'succeeded') {
+      if (reloadStatus.data?.requested_by === 'free-proxy-refresh') {
+        setReloadState('idle')
+        void settings.refetch()
+        return
+      }
       const duration = Number(reloadStatus.data?.duration_ms || 0)
       toast(duration > 0 ? `设置已在后台生效（${duration}ms）` : '设置已在后台生效', 'ok')
       setReloadState('idle')
@@ -79,20 +84,31 @@ export function SettingsPage() {
     if (state === 'succeeded') {
       const duration = Number(freeProxyRefreshStatus.data?.duration_ms || 0)
       const accepted = Number(freeProxyRefreshStatus.data?.accepted || 0)
-      toast(`免费源扫描完成：${accepted} 条，用时 ${duration}ms`, 'ok')
+      if (freeProxyRefreshStatus.data?.reload_started) {
+        const reloadState = String(freeProxyRefreshStatus.data?.reload_status?.state || '')
+        if (reloadState === 'failed') {
+          setFreeProxyRefreshState('failed')
+          toast(freeProxyRefreshStatus.data.reload_status?.error ? `免费源已写入缓存，但入池重载失败：${freeProxyRefreshStatus.data.reload_status.error}` : '免费源已写入缓存，但入池重载失败', 'error')
+          return
+        }
+        if (reloadState !== 'succeeded') {
+          setFreeProxyRefreshState('refreshing')
+          setReloadState('reloading')
+          void reloadStatus.refetch()
+          return
+        }
+      }
+      toast(`免费源扫描并入池完成：${accepted} 条，扫描用时 ${duration}ms`, 'ok')
       setFreeProxyRefreshState('idle')
+      setReloadState('idle')
       void settings.refetch()
       void freeProxyRefreshStatus.refetch()
-      if (freeProxyRefreshStatus.data?.reload_started) {
-        setReloadState('reloading')
-        void reloadStatus.refetch()
-      }
     } else if (state === 'failed') {
       setFreeProxyRefreshState('failed')
       toast(freeProxyRefreshStatus.data?.error ? `免费源扫描失败：${freeProxyRefreshStatus.data.error}` : '免费源扫描失败', 'error')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [freeProxyRefreshStatus.data?.state, freeProxyRefreshStatus.data?.duration_ms, freeProxyRefreshStatus.data?.accepted, freeProxyRefreshStatus.data?.error])
+  }, [freeProxyRefreshStatus.data?.state, freeProxyRefreshStatus.data?.duration_ms, freeProxyRefreshStatus.data?.accepted, freeProxyRefreshStatus.data?.error, freeProxyRefreshStatus.data?.reload_status?.state, freeProxyRefreshStatus.data?.reload_status?.error])
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('autoReload') !== '1') return
@@ -211,8 +227,8 @@ export function SettingsPage() {
     {freeProxyRefreshState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status">
       <Clock3 size={18} />
       <div>
-        <strong>{freeProxyRefreshState === 'refreshing' ? '免费源正在后台扫描' : '免费源扫描失败'}</strong>
-        <span>{freeProxyRefreshState === 'refreshing' ? '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。' : '免费源刷新未产生可入池节点，系统已保留现有缓存且不会自动重载；请检查源地址、探针或降低筛选等级。'}</span>
+        <strong>{freeProxyRefreshState === 'refreshing' ? (freeProxyRefreshStatus.data?.state === 'succeeded' && freeProxyRefreshStatus.data?.reload_started ? '免费源缓存已更新，正在重载入池' : '免费源正在后台扫描') : '免费源扫描失败'}</strong>
+        <span>{freeProxyRefreshState === 'refreshing' ? (freeProxyRefreshStatus.data?.state === 'succeeded' && freeProxyRefreshStatus.data?.reload_started ? '候选代理已写入本地缓存；代理核心正在后台重载，完成后新节点才会出现在节点列表和质量检测中。' : '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。') : '免费源刷新未产生可入池节点，系统已保留现有缓存且不会自动重载；请检查源地址、探针或降低筛选等级。'}</span>
         {freeProxyRefreshStatus.data?.sources?.length ? <span>
           源结果：{freeProxyRefreshStatus.data.sources.map(src => `${src.name || 'unnamed'} ${src.accepted || 0}/${src.candidates || 0}${src.error ? ' 失败' : ''}`).join('；')}
         </span> : null}

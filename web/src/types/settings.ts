@@ -102,5 +102,6 @@ export interface FreeProxyRefreshStatus {
     error?: string
   }>
   reload_started?: boolean
+  reload_status?: ReloadStatus
   requested_by?: string
 }

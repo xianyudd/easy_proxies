@@ -456,7 +456,7 @@ free_proxy_filter:
 	for {
 		status := server.currentFreeProxyRefreshStatus()
 		if status.State == "succeeded" {
-			if status.Accepted != 1 || !status.ReloadStarted {
+			if status.Accepted != 1 || !status.ReloadStarted || status.ReloadStatus == nil || status.ReloadStatus.State == "" {
 				t.Fatalf("unexpected refresh status: %#v", status)
 			}
 			break
@@ -477,6 +477,10 @@ free_proxy_filter:
 	}
 	if fake.reloadCalls != 1 {
 		t.Fatalf("reloadCalls = %d, want 1", fake.reloadCalls)
+	}
+	status := server.currentFreeProxyRefreshStatus()
+	if status.ReloadStatus == nil || status.ReloadStatus.State != "succeeded" {
+		t.Fatalf("refresh status should include completed reload status, got %#v", status)
 	}
 	data, err := os.ReadFile(cachePath)
 	if err != nil {

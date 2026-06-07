@@ -68,6 +68,7 @@ type freeProxyRefreshStatus struct {
 	Accepted      int                                   `json:"accepted,omitempty"`
 	Sources       []config.FreeProxySourceRefreshResult `json:"sources,omitempty"`
 	ReloadStarted bool                                  `json:"reload_started,omitempty"`
+	ReloadStatus  *reloadStatus                         `json:"reload_status,omitempty"`
 	RequestedBy   string                                `json:"requested_by,omitempty"`
 }
 
@@ -565,10 +566,14 @@ func (s *Server) startAsyncReload(requestedBy string) (reloadStatus, bool, error
 
 func (s *Server) currentFreeProxyRefreshStatus() freeProxyRefreshStatus {
 	s.freeProxyRefreshMu.Lock()
-	defer s.freeProxyRefreshMu.Unlock()
 	status := s.freeProxyRefreshStatus
+	s.freeProxyRefreshMu.Unlock()
 	if status.State == "" {
 		status.State = "idle"
+	}
+	if status.ReloadStarted {
+		reload := s.currentReloadStatus()
+		status.ReloadStatus = &reload
 	}
 	return status
 }
@@ -608,9 +613,11 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 		count, sources, err := cfg.RefreshFreeProxyCacheDetailed(context.Background())
 		finished := time.Now()
 		reloadStarted := false
+		var reloadStatusSnapshot *reloadStatus
 		if err == nil && count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
-			_, startedReload, reloadErr := s.startAsyncReload("free-proxy-refresh")
+			status, startedReload, reloadErr := s.startAsyncReload("free-proxy-refresh")
 			reloadStarted = startedReload
+			reloadStatusSnapshot = &status
 			if reloadErr != nil && s.logger != nil {
 				s.logger.Printf("❌ free proxy refresh auto-reload start failed: %v", reloadErr)
 			}
@@ -623,6 +630,7 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 		s.freeProxyRefreshStatus.Accepted = count
 		s.freeProxyRefreshStatus.Sources = sources
 		s.freeProxyRefreshStatus.ReloadStarted = reloadStarted
+		s.freeProxyRefreshStatus.ReloadStatus = reloadStatusSnapshot
 		if err != nil {
 			s.freeProxyRefreshState = "failed"
 			s.freeProxyRefreshStatus.State = "failed"
