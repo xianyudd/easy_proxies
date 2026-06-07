@@ -286,10 +286,10 @@ type Server struct {
 	cfChecker    *cloudflarecheck.Checker
 	qualitySvc   *quality.Service
 
-	reloadMu     sync.Mutex
-	reloadState  string
-	reloadStatus reloadStatus
-	reloadPending bool
+	reloadMu        sync.Mutex
+	reloadState     string
+	reloadStatus    reloadStatus
+	reloadPending   bool
 	reloadPendingBy string
 
 	freeProxyRefreshMu     sync.Mutex
@@ -3498,12 +3498,15 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.nodeMgr.TriggerReload(r.Context()); err != nil {
+	status, started, err := s.startAsyncReload("manual")
+	if err != nil {
 		s.respondNodeError(w, err)
 		return
 	}
 	writeJSON(w, map[string]any{
-		"message": "重载成功，现有连接已被中断",
+		"message":       "重载已在后台启动",
+		"started":       started,
+		"reload_status": status,
 	})
 }
 

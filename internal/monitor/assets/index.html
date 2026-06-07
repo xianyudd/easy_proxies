@@ -1472,6 +1472,34 @@
       c.appendChild(t);
       setTimeout(() => { t.style.opacity=0; setTimeout(()=>t.remove(),300); }, 3000);
     }
+    async function waitForReloadCompletion({loadingText='重载核心中...', loadingSubtext='后台正在应用配置，请稍候'} = {}) {
+      showFullscreenLoading(loadingText, loadingSubtext);
+      for (let i = 0; i < 180; i++) {
+        const r = await fetch('/api/reload/status');
+        if (!r.ok) throw new Error('状态查询失败');
+        const s = await r.json();
+        if (s.state === 'failed') { hideFullscreenLoading(); throw new Error(s.error || '重载失败'); }
+        if (s.state === 'succeeded' && !s.reload_pending) {
+          hideFullscreenLoading();
+          return s;
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      hideFullscreenLoading();
+      throw new Error('重载超时');
+    }
+    async function startAndWaitReload() {
+      const r = await fetch('/api/reload', {method:'POST'});
+      if (!r.ok) {
+        const d = await r.json().catch(()=>({}));
+        throw new Error(d.error || '重载启动失败');
+      }
+      const d = await r.json();
+      if (d.reload_status && d.reload_status.state === 'failed') {
+        throw new Error(d.reload_status.error || '重载失败');
+      }
+      return waitForReloadCompletion();
+    }
 
     async function checkAuth() {
       try {
@@ -2225,19 +2253,26 @@
         const url = isEditMode ? '/api/nodes/config/'+encodeURIComponent(editName) : '/api/nodes/config';
         const method = isEditMode ? 'PUT' : 'POST';
         const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(p)});
-        if(r.ok) { document.getElementById('nodeModalOverlay').classList.remove('show'); showToast('成功'); loadConfigNodes(); } else { const d = await r.json(); showToast(d.error, 'error'); }
+        if(r.ok) { const d = await r.json(); document.getElementById('nodeModalOverlay').classList.remove('show'); showToast(d.message || '节点已保存，请点击重载使配置生效'); loadConfigNodes(); } else { const d = await r.json(); showToast(d.error, 'error'); }
       } catch(e){}
     }
     async function deleteNode(name) {
       if(!confirm('Delete '+name+'?')) return;
       try {
         const r = await fetch('/api/nodes/config/'+encodeURIComponent(name), {method:'DELETE'});
-        if(r.ok) { showToast('删除成功'); loadConfigNodes(); }
+        if(r.ok) { const d = await r.json(); showToast(d.message || '节点已删除，请点击重载使配置生效'); loadConfigNodes(); }
       } catch(e){}
     }
     async function triggerReload() {
       if(!confirm('重载核心将中断连接，确认？')) return;
-      try { const r = await fetch('/api/reload', {method:'POST'}); if(r.ok) {showToast('重载成功'); refresh();} } catch(e){}
+      try {
+        await startAndWaitReload();
+        showToast('重载完成');
+        refresh();
+      } catch(e) {
+        hideFullscreenLoading();
+        showToast(e.message || '重载失败', 'error');
+      }
     }
 
     // Debug
@@ -2517,12 +2552,10 @@
         } catch(e){ hideFullscreenLoading(); showToast('订阅配置保存失败', 'error'); saveBtn.disabled = false; saveBtn.textContent = originalText; saveBtn.style.opacity = '1'; return; }
       } else if (coreChanged) {
         // Core changed but no sub change — trigger reload
-        showFullscreenLoading('重载核心中...', '正在应用新配置');
         try {
-          const rr = await fetch('/api/reload', {method:'POST'});
-          hideFullscreenLoading();
-          if (rr.ok) { showToast('已保存并重载成功'); } else { showToast('已保存，重载失败', 'error'); }
-        } catch(e) { hideFullscreenLoading(); showToast('已保存，重载失败', 'error'); }
+          await startAndWaitReload();
+          showToast('已保存并重载完成');
+        } catch(e) { hideFullscreenLoading(); showToast('已保存，重载失败: ' + (e.message || e), 'error'); }
       }
       saveBtn.disabled = false; saveBtn.textContent = originalText; saveBtn.style.opacity = '1';
       refresh();

@@ -1190,6 +1190,93 @@ free_proxy_sources:
 	}
 }
 
+func TestHandleReloadStartsAsyncReload(t *testing.T) {
+	fake := &fakeNodeManager{delay: 200 * time.Millisecond, done: make(chan struct{})}
+	server := &Server{nodeMgr: fake, reloadState: "idle"}
+	req := httptest.NewRequest(http.MethodPost, "/api/reload", nil)
+	rec := httptest.NewRecorder()
+	start := time.Now()
+	server.handleReload(rec, req)
+	elapsed := time.Since(start)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if elapsed >= fake.delay {
+		t.Fatalf("manual reload waited for core reload: elapsed=%s delay=%s", elapsed, fake.delay)
+	}
+	var resp struct {
+		Started      bool         `json:"started"`
+		ReloadStatus reloadStatus `json:"reload_status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Started || resp.ReloadStatus.State != "running" || resp.ReloadStatus.RequestedBy != "manual" {
+		t.Fatalf("unexpected reload response: %#v body=%s", resp, rec.Body.String())
+	}
+	select {
+	case <-fake.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async reload did not finish")
+	}
+	if fake.ReloadCalls() != 1 {
+		t.Fatalf("reloadCalls = %d, want 1", fake.ReloadCalls())
+	}
+}
+
+func TestHandleReloadQueuesWhenReloadAlreadyRunning(t *testing.T) {
+	fake := &fakeNodeManager{delay: 120 * time.Millisecond, reloadCh: make(chan int, 4)}
+	server := &Server{nodeMgr: fake, reloadState: "idle"}
+	first := httptest.NewRecorder()
+	server.handleReload(first, httptest.NewRequest(http.MethodPost, "/api/reload", nil))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body = %s", first.Code, first.Body.String())
+	}
+	select {
+	case <-fake.reloadCh:
+	case <-time.After(time.Second):
+		t.Fatal("first reload did not start")
+	}
+	second := httptest.NewRecorder()
+	server.handleReload(second, httptest.NewRequest(http.MethodPost, "/api/reload", nil))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, body = %s", second.Code, second.Body.String())
+	}
+	var resp struct {
+		Started      bool         `json:"started"`
+		ReloadStatus reloadStatus `json:"reload_status"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Started || resp.ReloadStatus.State != "running" || !resp.ReloadStatus.Pending {
+		t.Fatalf("expected queued reload response, got %#v body=%s", resp, second.Body.String())
+	}
+	select {
+	case <-fake.reloadCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued reload did not start")
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		status := server.currentReloadStatus()
+		if status.State == "succeeded" {
+			break
+		}
+		if status.State == "failed" {
+			t.Fatalf("reload failed: %#v", status)
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("queued reload did not finish, status=%#v calls=%d", status, fake.ReloadCalls())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if fake.ReloadCalls() != 2 {
+		t.Fatalf("reloadCalls = %d, want 2", fake.ReloadCalls())
+	}
+}
+
 func TestHandleReloadStatusReportsAsyncFailure(t *testing.T) {
 	fake := &fakeNodeManager{err: errors.New("boom"), done: make(chan struct{})}
 	server := &Server{nodeMgr: fake, reloadState: "idle"}
