@@ -3356,8 +3356,9 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 		// blocking refresh because they can change the active node set. Interval-only
 		// changes update the scheduler without re-fetching subscriptions.
 		if s.subRefresher != nil {
-			if urlsChanged || enabledChanged {
-				refreshTriggered = len(cleanURLs) > 0
+			shouldRefresh := req.Enabled && len(cleanURLs) > 0 && (urlsChanged || enabledChanged)
+			if shouldRefresh {
+				refreshTriggered = true
 				if err := s.subRefresher.UpdateConfigAndRefresh(cleanURLs, req.Enabled, interval); err != nil {
 					// Config was saved but refresh failed — report partial success
 					writeJSON(w, map[string]any{
@@ -3371,7 +3372,7 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 					})
 					return
 				}
-			} else if intervalChanged {
+			} else if urlsChanged || enabledChanged || intervalChanged {
 				s.subRefresher.UpdateConfig(cleanURLs, req.Enabled, interval)
 			}
 		}
