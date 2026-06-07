@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getNodes } from '../api/nodes'
+import { getNodes, getNodesSummary } from '../api/nodes'
 import { getDebug } from '../api/logs'
 import { Badge } from '../components/ui/Badge'
 import { RegionAvailabilityChart, LatencyTopChart, TrafficTrendChart, FailureRankChart } from '../components/charts/NodeCharts'
@@ -10,16 +10,20 @@ interface DebugResponse { success_rate?: number; nodes?: DebugNode[]; total_call
 
 export function StatusPage() {
   const { data = [] } = useQuery({ queryKey:['nodes'], queryFn:getNodes, refetchInterval:10000 })
+  const summary = useQuery({ queryKey:['nodes-summary'], queryFn:getNodesSummary, refetchInterval:10000 })
   const debug = useQuery({ queryKey:['debug-summary'], queryFn:() => getDebug() as Promise<DebugResponse>, refetchInterval:10000 })
+  const summaryData = summary.data
+  const healthyTotal = Object.values(summaryData?.region_healthy || {}).reduce((sum, count) => sum + Number(count || 0), 0)
+  const totalNodes = Number(summaryData?.total_nodes || data.length || 0)
   const stats = useMemo(() => ({
-    total:data.length,
-    healthy:data.filter(n=>n.available&&!n.blacklisted).length,
-    bad:data.filter(n=>n.blacklisted || (n.initial_check_done && !n.available)).length,
+    total: totalNodes,
+    healthy: healthyTotal || data.filter(n=>n.available&&!n.blacklisted).length,
+    bad: Math.max(0, totalNodes - (healthyTotal || data.filter(n=>n.available&&!n.blacklisted).length)),
     conn:data.reduce((s,n)=>s+(Number(n.active_connections)||0),0),
     successRate: Number(debug.data?.success_rate || 0),
-  }), [data, debug.data])
+  }), [data, debug.data, healthyTotal, totalNodes])
   const healthRate = stats.total ? Math.round((stats.healthy / stats.total) * 100) : 0
-  const regions = Object.entries(data.reduce((m,n)=>{ const r=String(n.region||'other'); m[r]=(m[r]||0)+1; return m }, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1])
+  const regions = Object.entries(summaryData?.region_stats && Object.keys(summaryData.region_stats).length ? summaryData.region_stats : data.reduce((m,n)=>{ const r=String(n.region||'other'); m[r]=(m[r]||0)+1; return m }, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1])
   const recentBad = data.filter(n=>n.blacklisted || (Number(n.failure_count)||0)>0).slice(0,8)
   return <div className="page">
     <div className="page-header"><div><h1>运行状态</h1><p>把整体健康度、关键趋势和异常节点放在同一监控视图里，优先定位需要处理的问题。</p></div></div>
