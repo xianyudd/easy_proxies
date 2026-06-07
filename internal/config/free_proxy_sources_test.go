@@ -387,10 +387,56 @@ func TestFreeProxyCacheDefaultWorkersCoversAllConfiguredSources(t *testing.T) {
 	}
 }
 
+func TestRefreshFreeProxyCacheUsesFreshCacheWithoutFetchingRemote(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\nhttp://8.8.8.8:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hits := 0
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		t.Fatal("fresh cache refresh should not fetch remote source")
+	}))
+	defer slow.Close()
+
+	cfg := &Config{
+		filePath: filepath.Join(dir, "config.yaml"),
+		FreeProxySources: []nodesource.SourceConfig{
+			{Name: "remote", URL: slow.URL, Format: "txt", Timeout: time.Second},
+		},
+		FreeProxyCache:  FreeProxyCacheConfig{Path: cachePath, MaxAge: time.Hour},
+		FreeProxyFilter: nodesource.FilterConfig{Enabled: false},
+	}
+
+	started := time.Now()
+	summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
+	if err != nil {
+		t.Fatalf("refresh should reuse fresh cache: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("fresh cache reuse took too long: %s", elapsed)
+	}
+	if summary.Count != 2 || summary.CacheUpdated {
+		t.Fatalf("summary=%#v, want two cached nodes without cache update", summary)
+	}
+	if len(summary.Sources) != 1 || summary.Sources[0].Candidates != 0 || summary.Sources[0].Accepted != 0 || summary.Sources[0].Error != "" {
+		t.Fatalf("fresh-cache skip should keep source telemetry neutral, got %#v", summary.Sources)
+	}
+	if hits != 0 {
+		t.Fatalf("remote hits=%d, want 0", hits)
+	}
+}
+
 func TestRefreshFreeProxyCacheDetailedReusesStaleCacheWhenNoCandidatesAccepted(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "cache.txt")
 	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(cachePath, old, old); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &Config{
@@ -400,7 +446,8 @@ func TestRefreshFreeProxyCacheDetailedReusesStaleCacheWhenNoCandidatesAccepted(t
 			{Name: "missing", File: filepath.Join(dir, "missing.txt"), Format: "txt"},
 		},
 		FreeProxyCache: FreeProxyCacheConfig{
-			Path: cachePath,
+			Path:   cachePath,
+			MaxAge: time.Hour,
 		},
 		FreeProxyFilter: nodesource.FilterConfig{Enabled: false},
 	}

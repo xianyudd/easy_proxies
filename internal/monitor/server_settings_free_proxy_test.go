@@ -564,11 +564,79 @@ free_proxy_sources:
 	}
 }
 
+func TestFreeProxyRefreshUsesFreshCacheWithoutRemoteFetchOrReload(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("fresh cache refresh should not fetch remote source")
+	}))
+	defer slow.Close()
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+  max_age: 1h
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: remote-source
+    url: ` + slow.URL + `
+    format: txt
+    timeout: 1s
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeNodeManager{done: make(chan struct{})}
+	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
+	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
+		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
+	}
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		status := server.currentFreeProxyRefreshStatus()
+		if status.State == "succeeded" {
+			if status.Accepted != 1 || status.CacheUpdated || status.ReloadStarted {
+				t.Fatalf("fresh cache refresh should succeed without update/reload, got %#v", status)
+			}
+			if status.DurationMS > 200 {
+				t.Fatalf("fresh cache refresh too slow: %#v", status)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not finish quickly, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	select {
+	case <-fake.done:
+		t.Fatal("auto reload should not run when fresh cache was reused")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestFreeProxyRefreshReusesStaleCacheWithoutReload(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	cachePath := filepath.Join(tmp, "cache.txt")
 	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(cachePath, old, old); err != nil {
 		t.Fatal(err)
 	}
 	initial := []byte(`nodes:
@@ -578,6 +646,7 @@ free_proxy_cache:
   enabled: true
   path: ` + cachePath + `
   auto_reload: true
+  max_age: 1h
 free_proxy_filter:
   enabled: false
 free_proxy_sources:

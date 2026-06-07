@@ -1705,6 +1705,11 @@ func (c *Config) RefreshFreeProxyCacheSummary(ctx context.Context) (FreeProxyCac
 		return FreeProxyCacheRefreshSummary{}, nil
 	}
 
+	if count, fresh := freshCachedFreeProxyNodeCount(cache.Path, cache.MaxAge, time.Now()); fresh && count > 0 {
+		log.Printf("ℹ️ Free proxy cache %q is fresh; reusing %d cached nodes without remote refresh", cache.Path, count)
+		return FreeProxyCacheRefreshSummary{Count: count, CacheUpdated: false, Sources: sourceRefreshResults(c.FreeProxySources, nil)}, nil
+	}
+
 	filter := c.FreeProxyFilter.Normalized()
 	workers := cache.Workers
 	if workers <= 0 {
@@ -1821,6 +1826,28 @@ func (c *Config) RefreshFreeProxyCacheSummary(ctx context.Context) (FreeProxyCac
 	}
 	log.Printf("✅ Refreshed free proxy cache %q with %d accepted nodes", cache.Path, len(accepted))
 	return FreeProxyCacheRefreshSummary{Count: len(accepted), CacheUpdated: true, Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, nil
+}
+
+func freshCachedFreeProxyNodeCount(path string, maxAge time.Duration, now time.Time) (int, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" || maxAge <= 0 {
+		return 0, false
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return 0, false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if age := now.Sub(info.ModTime()); age < 0 || age > maxAge {
+		return 0, false
+	}
+	count, err := countCachedFreeProxyNodes(path)
+	if err != nil || count <= 0 {
+		return 0, false
+	}
+	return count, true
 }
 
 func countCachedFreeProxyNodes(path string) (int, error) {
