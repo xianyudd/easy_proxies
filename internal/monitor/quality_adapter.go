@@ -129,6 +129,8 @@ const quickCheckURL = "http://cp.cloudflare.com/generate_204"
 
 func (r monitorQualityRunner) CheckQuick(ctx context.Context, target quality.Target) quality.Result {
 	result := quality.Result{Kind: quality.CheckQuick, Target: target, TargetIndex: target.Index, TargetID: target.ID}
+	defer func() { r.syncQuickAvailability(target, result) }()
+
 	proxyURL, err := url.Parse(strings.TrimSpace(qualityCheckProxyURL(target)))
 	if err != nil || proxyURL.Host == "" {
 		result.Status = "failed"
@@ -170,6 +172,31 @@ func (r monitorQualityRunner) CheckQuick(ctx context.Context, target quality.Tar
 	result.Success = true
 	result.Quick = map[string]any{"status": "ok", "latency_ms": result.LatencyMS, "http_status": resp.StatusCode}
 	return result
+}
+
+func (r monitorQualityRunner) syncQuickAvailability(target quality.Target, result quality.Result) {
+	if r.s == nil || r.s.mgr == nil || strings.TrimSpace(target.NodeTag) == "" {
+		return
+	}
+	entry, err := r.s.mgr.entry(target.NodeTag)
+	if err != nil || entry == nil {
+		return
+	}
+	if result.Success && result.Status == "completed" && result.Error == "" {
+		latency := time.Duration(result.LatencyMS) * time.Millisecond
+		if latency <= 0 {
+			latency = time.Millisecond
+		}
+		entry.recordProbeSuccess(latency)
+		return
+	}
+	if result.Status == "failed" || result.Error != "" {
+		errText := strings.TrimSpace(result.Error)
+		if errText == "" {
+			errText = "quick check failed"
+		}
+		entry.recordProbeFailure(fmt.Errorf("%s", errText))
+	}
 }
 
 func (r monitorQualityRunner) CheckCloudflare(ctx context.Context, target quality.Target) quality.Result {

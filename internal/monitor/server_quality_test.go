@@ -354,3 +354,57 @@ func TestMonitorQualityRunnerFallsBackToLocalProxyForUnsupportedUpstreamScheme(t
 		t.Fatalf("quality checks should fall back to local proxy URL for unsupported upstream schemes, got %q", got)
 	}
 }
+
+func TestMonitorQualityRunnerQuickUpdatesMonitorAvailability(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Host == "cp.cloudflare.com" && r.URL.Path == "/generate_204" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := mgr.Register(NodeInfo{Tag: "free-a", Name: "Free A", URI: proxy.URL, ListenAddress: "127.0.0.1", Port: 13001, Source: "free_proxy"})
+	handle.MarkAvailable(false)
+	srv := &Server{mgr: mgr}
+	target := quality.Target{NodeTag: "free-a", NodeName: "Free A", ProxyURL: proxy.URL, Host: "127.0.0.1", Port: 13001, Source: "free_proxy"}
+
+	result := monitorQualityRunner{s: srv}.CheckQuick(context.Background(), target)
+	if !result.Success || result.Status != "completed" {
+		t.Fatalf("quick result should succeed: %#v", result)
+	}
+	snap := mgr.Snapshot()[0]
+	if !snap.InitialCheckDone || !snap.Available || snap.LastLatencyMs <= 0 {
+		t.Fatalf("quick success should mark monitor node available with latency, got %#v", snap)
+	}
+}
+
+func TestMonitorQualityRunnerQuickFailureMarksMonitorUnavailable(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := mgr.Register(NodeInfo{Tag: "free-bad", Name: "Free Bad", URI: proxy.URL, ListenAddress: "127.0.0.1", Port: 13002, Source: "free_proxy"})
+	handle.MarkInitialCheckDone(true)
+	srv := &Server{mgr: mgr}
+	target := quality.Target{NodeTag: "free-bad", NodeName: "Free Bad", ProxyURL: proxy.URL, Host: "127.0.0.1", Port: 13002, Source: "free_proxy"}
+
+	result := monitorQualityRunner{s: srv}.CheckQuick(context.Background(), target)
+	if result.Success || result.Status != "failed" {
+		t.Fatalf("quick result should fail: %#v", result)
+	}
+	snap := mgr.Snapshot()[0]
+	if !snap.InitialCheckDone || snap.Available || snap.FailureCount != 1 || snap.LastError == "" {
+		t.Fatalf("quick failure should mark monitor node unavailable with error, got %#v", snap)
+	}
+}

@@ -39,7 +39,13 @@ ADB_SERIAL="${ADB_SERIAL:-192.168.1.118:5555}"
 TEST_URL="${TEST_URL:-http://cp.cloudflare.com/generate_204}"
 TIMEOUT="${TIMEOUT:-10}"
 RETRIES="${RETRIES:-3}"
-START_TIMEOUT="${START_TIMEOUT:-20}"
+if [ -z "${START_TIMEOUT+x}" ]; then
+  if [ "$EP_PROFILE" = "isolated" ]; then
+    START_TIMEOUT=45
+  else
+    START_TIMEOUT=20
+  fi
+fi
 STOP_TIMEOUT="${STOP_TIMEOUT:-30}"
 KILL_TIMEOUT="${KILL_TIMEOUT:-8}"
 BUILD_TAGS="${BUILD_TAGS:-with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api}"
