@@ -6,6 +6,8 @@ import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { DataTable } from '../components/ui/DataTable'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
+import { useToast } from '../components/ui/Toast'
+import { copyToClipboard } from '../lib/clipboard'
 import type { NodeSnapshot } from '../types/node'
 
 const REGION_LABELS: Record<string, string> = {
@@ -55,6 +57,7 @@ export function NodeOverviewPage() {
   const [sortKey, setSortKey] = useState<'name'|'latency'|'latency_desc'|'region'|'source'>('latency')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
+  const toast = useToast(s => s.show)
 
   const queryParams = { page, page_size: pageSize, region, source, availability, latency, sort: sortKey }
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -95,7 +98,7 @@ export function NodeOverviewPage() {
       `port=${node.port || '-'}`,
       `latency=${Number(node.last_latency_ms) || 0}ms`,
     ].join(' | ')
-    navigator.clipboard.writeText(text)
+    void copyToClipboard(text, toast, '节点信息已复制')
   }
 
   return <div className="page overview-page">

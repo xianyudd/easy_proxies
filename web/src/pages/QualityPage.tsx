@@ -14,6 +14,7 @@ import { CfDistributionChart, ReputationRiskChart, CfScoreRankChart } from '../c
 import { useToast } from '../components/ui/Toast'
 import { useAppStore } from '../store/appStore'
 import { useExtractorStore } from '../store/extractorStore'
+import { copyToClipboard } from '../lib/clipboard'
 import type { CloudflareResult } from '../types/cloudflare'
 import type { ReputationResult } from '../types/reputation'
 import type { QualityJobResult, QualityJobSnapshot } from '../types/qualityJob'
@@ -175,7 +176,7 @@ export function QualityPage() {
     { title: 'Tier/池', width: 180, render: (_, item) => <div><Badge tone={qualityTone(item.score)}>{item.tier || '-'}</Badge><br /><span className="muted mono">{item.pool || '-'}</span></div> },
     { title: '综合质量', width: 140, sorter: jobId ? undefined : (a, b) => a.score - b.score, defaultSortOrder: jobId ? undefined : 'descend', render: (_, item) => <Badge tone={qualityTone(item.score)}>{item.score} / {qualityLabel(item.score)}</Badge> },
     { title: '延迟', width: 100, sorter: jobId ? undefined : (a, b) => (Number(a.row.latency_ms) || 0) - (Number(b.row.latency_ms) || 0), render: (_, item) => `${item.row.latency_ms || 0} ms` },
-    { title: '操作', width: 190, fixed: 'right', render: (_, item) => <Space size={6}><Button variant="primary" onClick={() => navigator.clipboard.writeText(proxyUrl(item.row)).then(()=>toast('代理已复制','ok'))}>复制</Button><Button onClick={() => navigator.clipboard.writeText(`curl -x ${proxyUrl(item.row)} http://cp.cloudflare.com/generate_204`).then(()=>toast('curl 已复制','ok'))}>curl</Button><Button onClick={() => extract(item.row)}>提取</Button></Space> },
+    { title: '操作', width: 190, fixed: 'right', render: (_, item) => <Space size={6}><Button variant="primary" onClick={() => { void copyToClipboard(proxyUrl(item.row), toast, '代理已复制') }}>复制</Button><Button onClick={() => { void copyToClipboard(`curl -x ${proxyUrl(item.row)} http://cp.cloudflare.com/generate_204`, toast, 'curl 已复制') }}>curl</Button><Button onClick={() => extract(item.row)}>提取</Button></Space> },
   ], [jobId, proxyUrl, toast, extract])
   return <div className="page quality-page">
     <div className="page-header"><div><h1>节点质量</h1><p>自动加载缓存，一键全量扫描，并按 CF 评分、IP 风险和综合质量筛选可用节点。</p></div></div>

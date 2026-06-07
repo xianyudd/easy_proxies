@@ -7,6 +7,7 @@ import { ExtractorForm } from '../components/extractor/ExtractorForm'
 import { QuickExtractBar } from '../components/extractor/QuickExtractBar'
 import { ProxyResultList, entriesToText } from '../components/extractor/ProxyResultList'
 import { useExtractorStore } from '../store/extractorStore'
+import { copyToClipboard } from '../lib/clipboard'
 import type { ExtractorParams } from '../types/extractor'
 
 export function ExtractorPage() {
@@ -30,11 +31,11 @@ export function ExtractorPage() {
     const data = await mutation.mutateAsync(params)
     setResult(data)
     const out = entriesToText(data.entries || [])
-    if (out) await navigator.clipboard.writeText(out)
-    toast('已生成并复制', 'ok')
+    if (out) await copyToClipboard(out, toast, '已生成并复制')
+    else toast('已生成，但没有可复制的内容', 'info')
   }
   const text = entriesToText(entries)
-  const copyAll = async () => { if (!text) return toast('请先生成代理', 'error'); await navigator.clipboard.writeText(text); toast('已复制全部', 'ok') }
+  const copyAll = async () => { if (!text) return toast('请先生成代理', 'error'); await copyToClipboard(text, toast, '已复制全部') }
   const download = () => { if (!text) return toast('请先生成代理', 'error'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], {type:'text/plain;charset=utf-8'})); a.download = 'proxy_extractor.txt'; a.click(); URL.revokeObjectURL(a.href) }
   return <div className="page">
     <div className="page-header"><div><h1>代理提取</h1><p>先选择模式和区域，再生成可复制、可下载的代理结果。常用预设收纳在参数区，减少页面跳动。</p></div></div>

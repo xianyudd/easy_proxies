@@ -1,6 +1,7 @@
 import type { ExtractorEntry } from '../../types/extractor'
 import { Button } from '../ui/Button'
 import { useToast } from '../ui/Toast'
+import { copyToClipboard } from '../../lib/clipboard'
 
 function stringifyEntry(entry: ExtractorEntry) {
   if (typeof entry === 'string') return entry
@@ -28,7 +29,7 @@ export function entriesToText(entries: ExtractorEntry[]) {
 }
 export function ProxyResultList({ entries }: {entries: ExtractorEntry[]}) {
   const toast = useToast(s => s.show)
-  const copy = async (text: string, label = '已复制') => { await navigator.clipboard.writeText(text); toast(label, 'ok') }
+  const copy = async (text: string, label = '已复制') => { await copyToClipboard(text, toast, label) }
   if (!entries.length) return <div className="empty-cell">还没有结果。请选择参数后点击生成。</div>
   return <div className="result-list">{entries.slice(0, 50).map((entry, idx) => {
     const main = entryForCopy(entry)
