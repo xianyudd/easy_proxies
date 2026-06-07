@@ -72,6 +72,18 @@ export interface SaveSettingsResponse {
   management_url_hint?: string
 }
 
+
+export interface SubscriptionConfigResponse {
+  message?: string
+  subscriptions?: string[]
+  enabled?: boolean
+  interval?: string
+  node_count?: number
+  config_changed?: boolean
+  refresh_triggered?: boolean
+  refresh_error?: string
+}
+
 export interface StartFreeProxyRefreshResponse {
   message?: string
   started?: boolean
