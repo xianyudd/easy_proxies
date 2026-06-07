@@ -83,6 +83,7 @@ free_proxy_filter:
 			"workers": 222,
 			"timeout": "1500ms",
 			"max_candidates": 4567,
+			"max_probe_candidates": 12000,
 			"probes": {"http":"http://cp.cloudflare.com/generate_204","https":"https://example.com/"}
 		}
 	}`)
@@ -116,7 +117,7 @@ free_proxy_filter:
 		t.Fatalf("unexpected source: %#v", source)
 	}
 	filter := reloaded.FreeProxyFilter
-	if !filter.Enabled || filter.MinTier != "simple_web" || filter.Workers != 222 || filter.Timeout.String() != "1.5s" || filter.MaxCandidates != 4567 {
+	if !filter.Enabled || filter.MinTier != "simple_web" || filter.Workers != 222 || filter.Timeout.String() != "1.5s" || filter.MaxCandidates != 4567 || filter.MaxProbeCandidates != 12000 {
 		t.Fatalf("unexpected filter: %#v", filter)
 	}
 }
@@ -206,16 +207,17 @@ func TestHandleSettingsReturnsFreeProxyConfig(t *testing.T) {
 	var resp struct {
 		FreeProxyMaxNodes int `json:"free_proxy_max_nodes"`
 		FreeProxyFilter   struct {
-			Enabled       bool   `json:"enabled"`
-			MinTier       string `json:"min_tier"`
-			Workers       int    `json:"workers"`
-			MaxCandidates int    `json:"max_candidates"`
+			Enabled            bool   `json:"enabled"`
+			MinTier            string `json:"min_tier"`
+			Workers            int    `json:"workers"`
+			MaxCandidates      int    `json:"max_candidates"`
+			MaxProbeCandidates int    `json:"max_probe_candidates"`
 		} `json:"free_proxy_filter"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.FreeProxyMaxNodes != 88 || !resp.FreeProxyFilter.Enabled || resp.FreeProxyFilter.MinTier != "simple_web" || resp.FreeProxyFilter.Workers != 120 || resp.FreeProxyFilter.MaxCandidates != 3000 {
+	if resp.FreeProxyMaxNodes != 88 || !resp.FreeProxyFilter.Enabled || resp.FreeProxyFilter.MinTier != "simple_web" || resp.FreeProxyFilter.Workers != 120 || resp.FreeProxyFilter.MaxCandidates != 3000 || resp.FreeProxyFilter.MaxProbeCandidates != 0 {
 		t.Fatalf("unexpected response: %#v", resp)
 	}
 }

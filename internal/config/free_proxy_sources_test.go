@@ -476,3 +476,64 @@ func TestRefreshFreeProxyCacheDetailedFallsBackToHTTPBasicWhenSimpleWebRejectsAl
 		t.Fatalf("details should report fallback accepted node: %#v", details)
 	}
 }
+
+func TestRefreshFreeProxyCacheUsesProbeBudgetWithoutParseCap(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "proxies.txt")
+	cachePath := filepath.Join(dir, "cache.txt")
+
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/generate_204" {
+			t.Fatalf("unexpected probe path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer good.Close()
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer bad.Close()
+
+	lines := []string{good.URL}
+	for i := 0; i < 8; i++ {
+		lines = append(lines, bad.URL)
+	}
+	lines = append(lines, good.URL)
+	if err := os.WriteFile(sourcePath, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{
+		filePath: filepath.Join(dir, "config.yaml"),
+		FreeProxySources: []nodesource.SourceConfig{
+			{Name: "budgeted", File: sourcePath, Format: "txt"},
+		},
+		FreeProxyCache: FreeProxyCacheConfig{Path: cachePath},
+		FreeProxyFilter: nodesource.FilterConfig{
+			Enabled:            true,
+			MinTier:            "http_basic",
+			Workers:            2,
+			Timeout:            time.Second,
+			MaxProbeCandidates: 2,
+			Probes:             nodesource.FilterProbes{HTTP: "/generate_204"},
+		},
+	}
+
+	count, details, err := cfg.RefreshFreeProxyCacheDetailed(context.Background())
+	if err != nil {
+		t.Fatalf("refresh failed: %v details=%#v", err, details)
+	}
+	if count != 1 {
+		t.Fatalf("count=%d, want deduplicated accepted count 1", count)
+	}
+	if len(details) != 1 || details[0].Candidates != 10 || details[0].Accepted != 2 {
+		t.Fatalf("details should report full parsed candidates and budgeted accepted probes: %#v", details)
+	}
+	content, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), good.URL+"\n"; got != want {
+		t.Fatalf("cache=%q, want %q", got, want)
+	}
+}

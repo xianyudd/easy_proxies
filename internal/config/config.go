@@ -386,19 +386,28 @@ func (c *Config) appendRemoteFreeProxyNodes() error {
 }
 
 func filterFreeProxyCandidates(nodes []nodesource.Node, filter nodesource.FilterConfig, sourceName string, background bool) []nodesource.Node {
-	filtered := nodesource.FilterNodes(nodes, filter)
+	filter = filter.Normalized()
+	probeNodes := nodesource.SelectProbeCandidates(nodes, filter.MaxProbeCandidates)
+	if len(probeNodes) != len(nodes) {
+		scope := "runtime"
+		if background {
+			scope = "background"
+		}
+		log.Printf("🔎 Free proxy source %q %s probe budget selected %d/%d candidates (max_probe_candidates=%d)", sourceName, scope, len(probeNodes), len(nodes), filter.MaxProbeCandidates)
+	}
+	filtered := nodesource.FilterNodes(probeNodes, filter)
 	if len(filtered.Accepted) > 0 || nodesource.TierRank(filter.MinTier) <= nodesource.TierRank("http_basic") {
 		return filtered.Accepted
 	}
 	fallbackFilter := filter
 	fallbackFilter.MinTier = "http_basic"
-	fallback := nodesource.FilterNodes(nodes, fallbackFilter)
+	fallback := nodesource.FilterNodes(probeNodes, fallbackFilter)
 	if len(fallback.Accepted) > 0 {
 		scope := "runtime"
 		if background {
 			scope = "background"
 		}
-		log.Printf("🔎 Free proxy source %q %s fallback kept %d/%d nodes (min_tier=http_basic, configured_min_tier=%s)", sourceName, scope, len(fallback.Accepted), len(nodes), filter.MinTier)
+		log.Printf("🔎 Free proxy source %q %s fallback kept %d/%d probed nodes from %d candidates (min_tier=http_basic, configured_min_tier=%s)", sourceName, scope, len(fallback.Accepted), len(probeNodes), len(nodes), filter.MinTier)
 	}
 	return fallback.Accepted
 }

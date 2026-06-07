@@ -286,8 +286,9 @@ export function SettingsPage() {
           <div className="form-grid-3 compact-form-grid">
             <div className="field settings-form-item"><label>最低等级</label><Select className="settings-input" value={String(freeFilter.min_tier || 'http_basic')} onChange={v=>updateFreeFilter({min_tier:v})} options={[{value:'http_basic',label:'HTTP 基础可用'}, {value:'simple_web',label:'普通 Web 可用'}]} /></div>
             {input('入池上限（0=不限）', String(draft.free_proxy_max_nodes || 0), v=>setDraft({...draft, free_proxy_max_nodes:Number(v)||0}), 'number')}
-            {input('候选上限（0=全量）', String(freeFilter.max_candidates || 0), v=>updateFreeFilter({max_candidates:Number(v)||0}), 'number')}
-            {input('筛选并发', String(freeFilter.workers || 200), v=>updateFreeFilter({workers:Number(v)||200}), 'number')}
+            {input('解析上限（0=全量）', String(freeFilter.max_candidates || 0), v=>updateFreeFilter({max_candidates:Number(v)||0}), 'number')}
+            {input('探测预算（0=全量）', String(freeFilter.max_probe_candidates || 0), v=>updateFreeFilter({max_probe_candidates:Number(v)||0}), 'number')}
+              {input('筛选并发', String(freeFilter.workers || 200), v=>updateFreeFilter({workers:Number(v)||200}), 'number')}
             {input('筛选超时', String(freeFilter.timeout || '2s'), v=>updateFreeFilter({timeout:v}))}
           </div>
           <details className="raw-editor free-proxy-advanced"><summary>缓存与高级探针配置</summary>
@@ -317,7 +318,7 @@ export function SettingsPage() {
               <Button variant="danger" onClick={()=>removeFreeSource(idx)}><Trash2 size={15} />删除</Button>
             </div>) : <div className="empty-state compact-empty"><strong>暂无免费代理源</strong><span>添加 GitHub raw、远程文本列表或本地文件。保存并重载后，系统会自动筛选，通过后才进入节点总览。</span><Button onClick={addFreeSource}><Plus size={15} />新增源</Button></div>}
           </div>
-          <div className="settings-inline-note"><Badge tone={freeFilter.enabled ? 'good' : 'neutral'}>{freeFilter.enabled ? '自动筛选已启用' : '未启用自动筛选'}</Badge><span>建议先使用 HTTP 基础可用入池，再通过 CF/IP 风险检测筛质量；候选上限/入池上限填 0 表示不截断。</span></div>
+          <div className="settings-inline-note"><Badge tone={freeFilter.enabled ? 'good' : 'neutral'}>{freeFilter.enabled ? '自动筛选已启用' : '未启用自动筛选'}</Badge><span>建议先使用 HTTP 基础可用入池，再通过 CF/IP 风险检测筛质量；解析上限/入池上限填 0 表示不截断，探测预算填 0 表示全量探测。</span></div>
         </section>
 
 

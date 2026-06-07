@@ -16,6 +16,7 @@ export interface FreeProxyFilter {
   workers?: number
   timeout?: string
   max_candidates?: number
+  max_probe_candidates?: number
   probes?: { http?: string; https?: string }
 }
 

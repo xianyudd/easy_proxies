@@ -19,12 +19,13 @@ const (
 
 // FilterConfig controls optional pre-ingestion validation for free proxy sources.
 type FilterConfig struct {
-	Enabled       bool          `yaml:"enabled" json:"enabled"`
-	MinTier       string        `yaml:"min_tier" json:"min_tier"`
-	Workers       int           `yaml:"workers" json:"workers"`
-	Timeout       time.Duration `yaml:"timeout" json:"timeout"`
-	MaxCandidates int           `yaml:"max_candidates" json:"max_candidates"`
-	Probes        FilterProbes  `yaml:"probes" json:"probes"`
+	Enabled            bool          `yaml:"enabled" json:"enabled"`
+	MinTier            string        `yaml:"min_tier" json:"min_tier"`
+	Workers            int           `yaml:"workers" json:"workers"`
+	Timeout            time.Duration `yaml:"timeout" json:"timeout"`
+	MaxCandidates      int           `yaml:"max_candidates" json:"max_candidates"`
+	MaxProbeCandidates int           `yaml:"max_probe_candidates" json:"max_probe_candidates"`
+	Probes             FilterProbes  `yaml:"probes" json:"probes"`
 }
 
 // FilterProbes names the probe URLs used by the free-proxy prefilter.
@@ -68,6 +69,12 @@ func (f FilterConfig) Normalized() FilterConfig {
 	if f.Timeout <= 0 {
 		f.Timeout = 2 * time.Second
 	}
+	if f.MaxCandidates < 0 {
+		f.MaxCandidates = 0
+	}
+	if f.MaxProbeCandidates < 0 {
+		f.MaxProbeCandidates = 0
+	}
 	if f.Probes.HTTP == "" {
 		f.Probes.HTTP = "http://cp.cloudflare.com/generate_204"
 	}
@@ -86,6 +93,31 @@ func (f FilterConfig) LoadLimit(remaining int) int {
 		return f.MaxCandidates
 	}
 	return remaining
+}
+
+// SelectProbeCandidates returns the candidate subset to probe. A non-positive
+// maxProbeCandidates keeps the full source. When capped, candidates are sampled
+// deterministically across the whole source instead of taking only the head, so
+// very large lists do not let one stale prefix hide later usable entries.
+func SelectProbeCandidates(nodes []Node, maxProbeCandidates int) []Node {
+	if maxProbeCandidates <= 0 || len(nodes) <= maxProbeCandidates {
+		return nodes
+	}
+	if maxProbeCandidates == 1 {
+		return append([]Node(nil), nodes[0])
+	}
+	out := make([]Node, 0, maxProbeCandidates)
+	last := -1
+	denom := maxProbeCandidates - 1
+	for i := 0; i < maxProbeCandidates; i++ {
+		idx := i * (len(nodes) - 1) / denom
+		if idx == last {
+			continue
+		}
+		out = append(out, nodes[idx])
+		last = idx
+	}
+	return out
 }
 
 // FilterNodes validates candidates and preserves source order for accepted nodes.

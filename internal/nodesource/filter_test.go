@@ -1,6 +1,7 @@
 package nodesource
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -104,5 +105,25 @@ func TestFilterConfigDefaultsToHTTPBasicForFreeSourceAvailability(t *testing.T) 
 	}
 	if cfg.Workers != DefaultFilterWorkers {
 		t.Fatalf("Workers=%d, want %d", cfg.Workers, DefaultFilterWorkers)
+	}
+}
+
+func TestSelectProbeCandidatesSamplesAcrossFullSource(t *testing.T) {
+	var nodes []Node
+	for i := 0; i < 10; i++ {
+		nodes = append(nodes, Node{URI: fmt.Sprintf("http://127.0.0.1:%d", i)})
+	}
+	got := SelectProbeCandidates(nodes, 4)
+	if len(got) != 4 {
+		t.Fatalf("len=%d, want 4", len(got))
+	}
+	wantIndexes := []int{0, 3, 6, 9}
+	for i, idx := range wantIndexes {
+		if got[i].URI != nodes[idx].URI {
+			t.Fatalf("sample[%d]=%q, want %q", i, got[i].URI, nodes[idx].URI)
+		}
+	}
+	if same := SelectProbeCandidates(nodes, 0); len(same) != len(nodes) {
+		t.Fatalf("uncapped len=%d, want %d", len(same), len(nodes))
 	}
 }

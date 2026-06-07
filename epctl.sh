@@ -451,6 +451,7 @@ free_proxy_filter:
   workers: 200
   timeout: 2s
   max_candidates: 0
+  max_probe_candidates: 12000
   probes:
     http: http://cp.cloudflare.com/generate_204
     https: https://example.com/
@@ -490,6 +491,16 @@ ensure_isolated_config_defaults() {
     in_filter && /^[[:space:]]*timeout:[[:space:]]*500ms[[:space:]]*$/ {
       sub(/500ms/, "2s")
       changed=1
+      print
+      next
+    }
+    in_filter && /^[[:space:]]*max_probe_candidates:/ { has_probe_budget=1 }
+    in_filter && /^[[:space:]]*probes:/ && !has_probe_budget {
+      indent=$0
+      sub(/probes:.*/, "", indent)
+      print indent "max_probe_candidates: 12000"
+      changed=1
+      has_probe_budget=1
       print
       next
     }

@@ -136,12 +136,13 @@ type nodesourceSourceConfigRequest struct {
 }
 
 type freeProxyFilterRequest struct {
-	Enabled       bool   `json:"enabled"`
-	MinTier       string `json:"min_tier"`
-	Workers       int    `json:"workers"`
-	Timeout       string `json:"timeout"`
-	MaxCandidates int    `json:"max_candidates"`
-	Probes        struct {
+	Enabled            bool   `json:"enabled"`
+	MinTier            string `json:"min_tier"`
+	Workers            int    `json:"workers"`
+	Timeout            string `json:"timeout"`
+	MaxCandidates      int    `json:"max_candidates"`
+	MaxProbeCandidates int    `json:"max_probe_candidates"`
+	Probes             struct {
 		HTTP  string `json:"http"`
 		HTTPS string `json:"https"`
 	} `json:"probes"`
@@ -185,11 +186,12 @@ func freeProxyFilterFromRequest(req *freeProxyFilterRequest, fallback nodesource
 		return fallback
 	}
 	out := nodesource.FilterConfig{
-		Enabled:       req.Enabled,
-		MinTier:       strings.TrimSpace(req.MinTier),
-		Workers:       req.Workers,
-		Timeout:       fallback.Timeout,
-		MaxCandidates: req.MaxCandidates,
+		Enabled:            req.Enabled,
+		MinTier:            strings.TrimSpace(req.MinTier),
+		Workers:            req.Workers,
+		Timeout:            fallback.Timeout,
+		MaxCandidates:      req.MaxCandidates,
+		MaxProbeCandidates: req.MaxProbeCandidates,
 		Probes: nodesource.FilterProbes{
 			HTTP:  strings.TrimSpace(req.Probes.HTTP),
 			HTTPS: strings.TrimSpace(req.Probes.HTTPS),
@@ -2674,11 +2676,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			resp["free_proxy_sources"] = cfg.FreeProxySources
 			resp["free_proxy_max_nodes"] = cfg.FreeProxyMaxNodes
 			resp["free_proxy_filter"] = map[string]any{
-				"enabled":        cfg.FreeProxyFilter.Enabled,
-				"min_tier":       cfg.FreeProxyFilter.MinTier,
-				"workers":        cfg.FreeProxyFilter.Workers,
-				"timeout":        cfg.FreeProxyFilter.Timeout.String(),
-				"max_candidates": cfg.FreeProxyFilter.MaxCandidates,
+				"enabled":              cfg.FreeProxyFilter.Enabled,
+				"min_tier":             cfg.FreeProxyFilter.MinTier,
+				"workers":              cfg.FreeProxyFilter.Workers,
+				"timeout":              cfg.FreeProxyFilter.Timeout.String(),
+				"max_candidates":       cfg.FreeProxyFilter.MaxCandidates,
+				"max_probe_candidates": cfg.FreeProxyFilter.MaxProbeCandidates,
 				"probes": map[string]any{
 					"http":  cfg.FreeProxyFilter.Probes.HTTP,
 					"https": cfg.FreeProxyFilter.Probes.HTTPS,
