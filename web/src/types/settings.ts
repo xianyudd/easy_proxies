@@ -106,6 +106,7 @@ export interface FreeProxyRefreshStatus {
   duration_ms?: number
   error?: string
   accepted?: number
+  cache_updated?: boolean
   sources?: Array<{
     name?: string
     enabled?: boolean

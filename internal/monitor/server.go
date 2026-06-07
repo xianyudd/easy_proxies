@@ -63,12 +63,12 @@ type freeProxyRefreshStatus struct {
 	State         string                                `json:"state"`
 	StartedAt     time.Time                             `json:"started_at,omitempty"`
 	FinishedAt    time.Time                             `json:"finished_at,omitempty"`
-	DurationMS    int64                                 `json:"duration_ms,omitempty"`
+	DurationMS    int64                                 `json:"duration_ms"`
 	Error         string                                `json:"error,omitempty"`
-	Accepted      int                                   `json:"accepted,omitempty"`
-	CacheUpdated  bool                                  `json:"cache_updated,omitempty"`
+	Accepted      int                                   `json:"accepted"`
+	CacheUpdated  bool                                  `json:"cache_updated"`
 	Sources       []config.FreeProxySourceRefreshResult `json:"sources,omitempty"`
-	ReloadStarted bool                                  `json:"reload_started,omitempty"`
+	ReloadStarted bool                                  `json:"reload_started"`
 	ReloadStatus  *reloadStatus                         `json:"reload_status,omitempty"`
 	RequestedBy   string                                `json:"requested_by,omitempty"`
 }

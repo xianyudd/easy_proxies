@@ -643,6 +643,86 @@ free_proxy_sources:
 	}
 }
 
+
+func TestHandleFreeProxyRefreshStatusSerializesCacheReuseFields(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("fresh cache refresh should not fetch remote source")
+	}))
+	defer slow.Close()
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+  max_age: 1h
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: remote-source
+    url: ` + slow.URL + `
+    format: txt
+    timeout: 1s
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, nodeMgr: &fakeNodeManager{done: make(chan struct{})}, reloadState: "idle"}
+	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
+		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
+	}
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		if status := server.currentFreeProxyRefreshStatus(); status.State == "succeeded" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not finish quickly")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/free-proxy/refresh/status", nil)
+	server.handleFreeProxyRefreshStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"duration_ms", "cache_updated", "reload_started", "accepted"} {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("expected %s to be serialized for cache reuse status, body=%s", key, rec.Body.String())
+		}
+	}
+	var resp struct {
+		State         string `json:"state"`
+		Accepted      int    `json:"accepted"`
+		CacheUpdated  bool   `json:"cache_updated"`
+		ReloadStarted bool   `json:"reload_started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.State != "succeeded" || resp.Accepted != 1 || resp.CacheUpdated || resp.ReloadStarted {
+		t.Fatalf("unexpected status payload: %#v body=%s", resp, rec.Body.String())
+	}
+}
+
 func TestFreeProxyRefreshUsesFreshCacheWithoutRemoteFetchOrReload(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
