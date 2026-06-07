@@ -65,6 +65,35 @@ func TestHandleNodesPagedFiltersSourceAndAvailability(t *testing.T) {
 	}
 }
 
+func TestHandleNodesPagedClampsOutOfRangePageAndReportsTotalPages(t *testing.T) {
+	server := newTestNodesServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes?page=99&page_size=1&availability=all", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleNodes(rr, req)
+
+	var payload struct {
+		Nodes         []Snapshot `json:"nodes"`
+		TotalFiltered int        `json:"total_filtered"`
+		Page          int        `json:"page"`
+		PageSize      int        `json:"page_size"`
+		TotalPages    int        `json:"total_pages"`
+		HasNext       bool       `json:"has_next"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.TotalFiltered != 3 || payload.TotalPages != 3 {
+		t.Fatalf("bad totals: %#v", payload)
+	}
+	if payload.Page != 3 || payload.PageSize != 1 || payload.HasNext {
+		t.Fatalf("out-of-range page should clamp to the last page: %#v", payload)
+	}
+	if len(payload.Nodes) != 1 || payload.Nodes[0].Tag != "free-c" {
+		t.Fatalf("expected last page row, got %#v", payload.Nodes)
+	}
+}
+
 func TestHandleNodesSummaryOnlyReturnsStatsWithoutRows(t *testing.T) {
 	server := newTestNodesServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes?summary_only=true", nil)

@@ -1143,6 +1143,13 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	filtered := filterNodeSnapshots(allNodes, q)
 	sortNodeSnapshots(filtered, q.Get("sort"))
 	totalFiltered := len(filtered)
+	totalPages := 0
+	if totalFiltered > 0 {
+		totalPages = (totalFiltered + pageSize - 1) / pageSize
+		if page > totalPages {
+			page = totalPages
+		}
+	}
 	if strings.EqualFold(q.Get("summary_only"), "true") || q.Get("summary_only") == "1" {
 		filtered = nil
 	} else {
@@ -1163,6 +1170,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"total_filtered": totalFiltered,
 		"page":           page,
 		"page_size":      pageSize,
+		"total_pages":    totalPages,
 		"has_next":       page*pageSize < totalFiltered,
 		"visible_nodes":  visibleNodes,
 		"available":      availableNodes,
