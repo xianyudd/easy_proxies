@@ -29,4 +29,5 @@ def test_concurrency_has_hard_cap():
 
 if __name__ == "__main__":
     test_timeout_kills_and_reaps_subprocess()
+    test_cancellation_kills_and_reaps_subprocess()
     test_concurrency_has_hard_cap()

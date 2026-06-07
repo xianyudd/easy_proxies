@@ -44,7 +44,7 @@ export async function getNodesSummary() {
   const data = await api.get<NodesSummary>('/api/nodes?summary_only=true')
   return normalizeNodesPage(data)
 }
-export function probeAllNodes() { return fetch('/api/nodes/probe-all', { method: 'POST', credentials: 'same-origin' }) }
+export function probeAllNodes() { return api.post('/api/nodes/probe-all') }
 export function probeNode(tag: string) { return api.post<{latency_ms?: number; error?: string}>(`/api/nodes/${encodeURIComponent(tag)}/probe`) }
 export function blacklistNode(tag: string) { return api.post(`/api/nodes/${encodeURIComponent(tag)}/blacklist`, { duration: '24h' }) }
 export function releaseNode(tag: string) { return api.post(`/api/nodes/${encodeURIComponent(tag)}/release`) }

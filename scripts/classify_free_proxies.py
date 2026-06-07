@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import statistics
 import time
@@ -113,7 +114,12 @@ def validate_body(name: str, body: str, code: str) -> bool:
     if name == "https_cf_trace":
         return "ip=" in body and ("loc=" in body or "colo=" in body)
     if name == "https_ipify":
-        return "ip" in body and "{" in body
+        try:
+            ip = json.loads(body).get("ip", "")
+            ipaddress.ip_address(str(ip))
+            return True
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            return False
     if name == "https_github":
         return "GitHub" in body
     return True
@@ -277,12 +283,8 @@ async def main_async(args: argparse.Namespace) -> int:
             raise SystemExit(f"unknown probes: {', '.join(sorted(missing))}")
     proxies = load_proxies(args.input, args.limit)
     sem = asyncio.Semaphore(args.concurrency)
-    records = []
     total = len(proxies)
     started = time.time()
-    for idx, proxy in enumerate(proxies, 1):
-        # Schedule in batches so stdout progress remains bounded and memory use predictable.
-        records.append(proxy)
     batch_size = max(args.concurrency * 2, 1)
     classified: list[dict] = []
     for offset in range(0, total, batch_size):

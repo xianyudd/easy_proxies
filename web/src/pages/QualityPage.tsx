@@ -103,10 +103,16 @@ export function QualityPage() {
   const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true, retry_failed: true, replace: true }), onSuccess: job => { setJobId(job.job_id); setResultPage(1); toast('失败节点 Pipeline 重试任务已创建', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '创建重试任务失败', 'error') })
   const cancelScan = useMutation({ mutationFn: () => cancelQualityJob(jobId), onSuccess: () => { void jobQuery.refetch(); void jobResults.refetch(); toast('后台任务已取消', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '取消任务失败', 'error') })
   const loadCache = async () => {
-    const [cf, rep] = await Promise.all([cfCache.refetch(), repCache.refetch()])
-    setCfRows(cf.data?.data || [])
-    setRepRows(rep.data?.data || [])
-    toast('缓存结果已加载', 'ok')
+    try {
+      const [cf, rep] = await Promise.all([cfCache.refetch(), repCache.refetch()])
+      const failed = [cf.error, rep.error].find(Boolean)
+      if (failed) throw failed
+      setCfRows(cf.data?.data || [])
+      setRepRows(rep.data?.data || [])
+      toast('缓存结果已加载', 'ok')
+    } catch (e) {
+      toast(e instanceof Error ? `加载质量缓存失败：${e.message}` : '加载质量缓存失败', 'error')
+    }
   }
   useEffect(() => {
     void loadCache()

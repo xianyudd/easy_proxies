@@ -60,6 +60,15 @@ async def cancellation_case() -> None:
         assert not pid_exists(pid), f"fake curl pid {pid} still exists after cancellation cleanup"
 
 
+def ipify_body_validation_case() -> None:
+    assert mod.validate_body("https_ipify", '{"ip":"203.0.113.10"}', "200")
+    assert mod.validate_body("https_ipify", '{"ip":"2001:db8::1"}', "200")
+    assert not mod.validate_body("https_ipify", '{"message":"ip ok"}', "200")
+    assert not mod.validate_body("https_ipify", '{"ip":"not-an-ip"}', "200")
+    assert not mod.validate_body("https_ipify", 'ip=203.0.113.10', "200")
+
+
 if __name__ == "__main__":
+    ipify_body_validation_case()
     asyncio.run(timeout_case())
     asyncio.run(cancellation_case())
