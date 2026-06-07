@@ -3678,6 +3678,10 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 
 // handleLogs returns recent console log content from the in-memory ring buffer.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	content := SharedLogBuffer.Content()
 	writeJSON(w, map[string]any{"logs": content})
 }
