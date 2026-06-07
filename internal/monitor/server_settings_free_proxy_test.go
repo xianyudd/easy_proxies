@@ -121,6 +121,70 @@ free_proxy_filter:
 	}
 }
 
+func TestHandleSettingsUpdatesCloudflareRuntimeConfig(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+quality_check:
+  enabled: false
+  interval: 1h
+  region: all
+  count: 500
+  include_unavailable: true
+  retry_failed: false
+  cloudflare_timeout: 5s
+  cloudflare_concurrency: 24
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	server := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	server.SetConfig(cfg)
+
+	body := []byte(`{
+		"quality_check": {
+			"enabled": false,
+			"interval": "1h",
+			"region": "all",
+			"count": 500,
+			"include_unavailable": true,
+			"retry_failed": false,
+			"cloudflare_timeout": "3s",
+			"cloudflare_concurrency": 32
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	timeout, concurrency := server.cfChecker.Settings()
+	if timeout != 3*time.Second || concurrency != 32 {
+		t.Fatalf("cloudflare runtime settings = %s/%d, want 3s/32", timeout, concurrency)
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := reloaded.QualityCheck.Normalized()
+	if q.CloudflareTimeout != 3*time.Second || q.CloudflareConcurrency != 32 {
+		t.Fatalf("persisted cloudflare settings = %s/%d", q.CloudflareTimeout, q.CloudflareConcurrency)
+	}
+}
+
 func TestHandleSettingsReturnsFreeProxyConfig(t *testing.T) {
 	cfg := &config.Config{FreeProxyMaxNodes: 88}
 	cfg.FreeProxyFilter.Enabled = true
@@ -457,7 +521,7 @@ free_proxy_sources:
 	for {
 		status := server.currentFreeProxyRefreshStatus()
 		if status.State == "failed" {
-			if status.Accepted != 0 || len(status.Sources) != 1 || !status.ReloadStarted {
+			if status.Accepted != 0 || len(status.Sources) != 1 || status.ReloadStarted {
 				t.Fatalf("unexpected failed status: %#v", status)
 			}
 			if status.Sources[0].Name != "missing-source" || status.Sources[0].Error == "" {
@@ -486,8 +550,11 @@ free_proxy_sources:
 	}
 	select {
 	case <-fake.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("auto reload should run after failed refresh to clear stale cache")
+		t.Fatal("auto reload should not run after failed refresh; stale cache must be preserved")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if fake.reloadCalls != 0 {
+		t.Fatalf("reloadCalls = %d, want 0", fake.reloadCalls)
 	}
 }
 

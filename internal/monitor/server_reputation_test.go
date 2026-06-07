@@ -4,8 +4,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"easy_proxies/internal/cloudflarecheck"
+	"easy_proxies/internal/config"
 	"easy_proxies/internal/reputation"
 )
 
@@ -97,5 +99,19 @@ func TestCloudflareHTTPHandlers(t *testing.T) {
 	srv.srv.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid count status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCloudflareCheckerUsesQualityConfig(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	srv.SetConfig(&config.Config{QualityCheck: config.QualityCheckConfig{CloudflareTimeout: 3500 * time.Millisecond, CloudflareConcurrency: 24}})
+
+	timeout, concurrency := srv.cfChecker.Settings()
+	if timeout != 3500*time.Millisecond || concurrency != 24 {
+		t.Fatalf("cloudflare checker settings = %s/%d, want 3.5s/24", timeout, concurrency)
 	}
 }

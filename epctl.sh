@@ -40,6 +40,8 @@ TEST_URL="${TEST_URL:-http://cp.cloudflare.com/generate_204}"
 TIMEOUT="${TIMEOUT:-10}"
 RETRIES="${RETRIES:-3}"
 START_TIMEOUT="${START_TIMEOUT:-20}"
+STOP_TIMEOUT="${STOP_TIMEOUT:-30}"
+KILL_TIMEOUT="${KILL_TIMEOUT:-8}"
 BUILD_TAGS="${BUILD_TAGS:-with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api}"
 
 usage() {
@@ -400,6 +402,8 @@ quality_check:
   count: 500
   include_unavailable: false
   retry_failed: true
+  cloudflare_timeout: 3s
+  cloudflare_concurrency: 32
 geoip:
   enabled: false
   database_path: ./GeoLite2-Country.mmdb
@@ -487,8 +491,32 @@ start_service() {
   fi
 }
 
+alive_pids() {
+  local pids="$*" alive="" pid
+  for pid in $pids; do
+    if kill -0 "$pid" 2>/dev/null; then
+      alive="$alive $pid"
+    fi
+  done
+  echo "$alive"
+}
+
+wait_until_stopped() {
+  local wait_seconds="$1" pids="$2" deadline alive
+  deadline=$((SECONDS + wait_seconds))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    alive="$(alive_pids $pids)"
+    if [ -z "$alive" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  alive="$(alive_pids $pids)"
+  [ -z "$alive" ]
+}
+
 stop_service() {
-  local pids pid stopped=0
+  local pids alive
   pids="$(find_service_pids | sort -u || true)"
   if [ -z "$pids" ]; then
     echo "[OK] not running, profile=$EP_PROFILE"
@@ -497,25 +525,23 @@ stop_service() {
   fi
   echo "[INFO] stopping profile=$EP_PROFILE pids=$(echo "$pids" | tr '\n' ' ')"
   for pid in $pids; do kill "$pid" 2>/dev/null || true; done
-  for _ in $(seq 1 15); do
-    local alive=""
-    for pid in $pids; do
-      if kill -0 "$pid" 2>/dev/null; then
-        alive="$alive $pid"
-      fi
-    done
-    if [ -z "$alive" ]; then
-      stopped=1
-      break
-    fi
-    sleep 1
-  done
-  if [ "$stopped" = "1" ]; then
+  if wait_until_stopped "$STOP_TIMEOUT" "$pids"; then
     rm -f "$PID_FILE"
     echo "[OK] stopped"
-  else
-    echo "[WARN] still running after graceful stop:$(for pid in $pids; do kill -0 "$pid" 2>/dev/null && printf ' %s' "$pid"; done)"
+    return
   fi
+
+  alive="$(alive_pids $pids)"
+  echo "[WARN] graceful stop timed out after ${STOP_TIMEOUT}s, killing:${alive}"
+  for pid in $alive; do kill -KILL "$pid" 2>/dev/null || true; done
+  if wait_until_stopped "$KILL_TIMEOUT" "$alive"; then
+    rm -f "$PID_FILE"
+    echo "[OK] stopped after kill"
+    return
+  fi
+
+  echo "[ERROR] still running after kill:$(alive_pids $alive)" >&2
+  exit 1
 }
 
 status_service() {

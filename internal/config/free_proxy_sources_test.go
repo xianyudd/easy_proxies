@@ -370,12 +370,8 @@ func TestRefreshFreeProxyCacheDetailedReportsPerSourceFailures(t *testing.T) {
 	if details[0].Name != "missing" || !details[0].Enabled || details[0].Error == "" {
 		t.Fatalf("unexpected details: %#v", details[0])
 	}
-	content, readErr := os.ReadFile(cachePath)
-	if readErr != nil {
-		t.Fatalf("failed refresh should leave an empty cache tombstone, read err=%v", readErr)
-	}
-	if len(content) != 0 {
-		t.Fatalf("failed refresh should clear stale cache, got %q", string(content))
+	if _, readErr := os.Stat(cachePath); !os.IsNotExist(readErr) {
+		t.Fatalf("failed refresh without prior cache should not create cache file, stat err=%v", readErr)
 	}
 }
 
@@ -390,7 +386,7 @@ func TestFreeProxyCacheDefaultWorkersCoversAllConfiguredSources(t *testing.T) {
 	}
 }
 
-func TestRefreshFreeProxyCacheDetailedClearsStaleCacheWhenNoCandidatesAccepted(t *testing.T) {
+func TestRefreshFreeProxyCacheDetailedKeepsStaleCacheWhenNoCandidatesAccepted(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "cache.txt")
 	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
@@ -417,9 +413,9 @@ func TestRefreshFreeProxyCacheDetailedClearsStaleCacheWhenNoCandidatesAccepted(t
 	}
 	content, readErr := os.ReadFile(cachePath)
 	if readErr != nil {
-		t.Fatalf("cache should still exist as an empty tombstone: %v", readErr)
+		t.Fatalf("cache should still exist: %v", readErr)
 	}
-	if len(content) != 0 {
-		t.Fatalf("stale cache should be cleared, got %q", string(content))
+	if got, want := string(content), "http://9.9.9.9:8080\n"; got != want {
+		t.Fatalf("stale cache should be preserved, got %q want %q", got, want)
 	}
 }

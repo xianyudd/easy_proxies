@@ -53,6 +53,13 @@ func (c *Checker) CacheList() []Result    { return c.cache.List() }
 func (c *Checker) DeleteCache(key string) { c.cache.Delete(key) }
 func (c *Checker) ClearCache()            { c.cache.Clear() }
 
+func (c *Checker) Settings() (time.Duration, int) {
+	if c == nil {
+		return 0, 0
+	}
+	return c.timeout, c.maxConcurrency
+}
+
 func (c *Checker) CheckTargets(ctx context.Context, targets []ProxyTarget) []Result {
 	results := make([]Result, len(targets))
 	if len(targets) == 0 {

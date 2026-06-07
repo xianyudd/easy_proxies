@@ -126,11 +126,16 @@ const (
 )
 
 const (
-	DefaultQualityCheckInterval = 24 * time.Hour
-	MinQualityCheckInterval     = time.Hour
-	DefaultQualityCheckRegion   = "all"
-	DefaultQualityCheckCount    = 500
-	MaxQualityCheckCount        = 500
+	DefaultQualityCheckInterval  = 24 * time.Hour
+	MinQualityCheckInterval      = time.Hour
+	DefaultQualityCheckRegion    = "all"
+	DefaultQualityCheckCount     = 500
+	MaxQualityCheckCount         = 500
+	DefaultCloudflareTimeout     = 5 * time.Second
+	MinCloudflareTimeout         = 1500 * time.Millisecond
+	MaxCloudflareTimeout         = 15 * time.Second
+	DefaultCloudflareConcurrency = 24
+	MaxCloudflareConcurrency     = 80
 )
 
 // FreeProxyCacheConfig controls cache-first loading for remote free-proxy sources.
@@ -185,12 +190,14 @@ func (f FreeProxyCacheConfig) Normalized(configPath string, hasSources bool) Fre
 
 // QualityCheckConfig controls scheduled node quality checks.
 type QualityCheckConfig struct {
-	Enabled            bool          `yaml:"enabled"`             // 是否启用节点质量定时检测
-	Interval           time.Duration `yaml:"interval"`            // 检测间隔，默认 24 小时
-	Region             string        `yaml:"region"`              // 检测地区范围，默认 all
-	Count              int           `yaml:"count"`               // 单次检测数量，默认 500
-	IncludeUnavailable bool          `yaml:"include_unavailable"` // 是否包含不可用节点，默认 true
-	RetryFailed        bool          `yaml:"retry_failed"`        // 是否优先重试失败节点，默认 false
+	Enabled               bool          `yaml:"enabled"`                // 是否启用节点质量定时检测
+	Interval              time.Duration `yaml:"interval"`               // 检测间隔，默认 24 小时
+	Region                string        `yaml:"region"`                 // 检测地区范围，默认 all
+	Count                 int           `yaml:"count"`                  // 单次检测数量，默认 500
+	IncludeUnavailable    bool          `yaml:"include_unavailable"`    // 是否包含不可用节点，默认 true
+	RetryFailed           bool          `yaml:"retry_failed"`           // 是否优先重试失败节点，默认 false
+	CloudflareTimeout     time.Duration `yaml:"cloudflare_timeout"`     // Cloudflare 单节点检测超时
+	CloudflareConcurrency int           `yaml:"cloudflare_concurrency"` // Cloudflare 检测并发
 }
 
 func (q QualityCheckConfig) Normalized() QualityCheckConfig {
@@ -212,6 +219,21 @@ func (q QualityCheckConfig) Normalized() QualityCheckConfig {
 	}
 	if q.Count > MaxQualityCheckCount {
 		q.Count = MaxQualityCheckCount
+	}
+	if q.CloudflareTimeout <= 0 {
+		q.CloudflareTimeout = DefaultCloudflareTimeout
+	}
+	if q.CloudflareTimeout < MinCloudflareTimeout {
+		q.CloudflareTimeout = MinCloudflareTimeout
+	}
+	if q.CloudflareTimeout > MaxCloudflareTimeout {
+		q.CloudflareTimeout = MaxCloudflareTimeout
+	}
+	if q.CloudflareConcurrency <= 0 {
+		q.CloudflareConcurrency = DefaultCloudflareConcurrency
+	}
+	if q.CloudflareConcurrency > MaxCloudflareConcurrency {
+		q.CloudflareConcurrency = MaxCloudflareConcurrency
 	}
 	return q
 }
@@ -1751,10 +1773,7 @@ func (c *Config) RefreshFreeProxyCacheDetailed(ctx context.Context) (int, []Free
 		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), fmt.Errorf("create free proxy cache dir: %w", err)
 	}
 	if len(accepted) == 0 {
-		if err := writeFileWithLock(cache.Path, nil, 0o644); err != nil {
-			return 0, sourceRefreshResults(c.FreeProxySources, byIndex), fmt.Errorf("clear stale free proxy cache: %w", err)
-		}
-		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), errors.New("no free proxy candidates accepted; stale cache cleared")
+		return 0, sourceRefreshResults(c.FreeProxySources, byIndex), errors.New("no free proxy candidates accepted; existing cache preserved")
 	}
 	content := strings.Join(accepted, "\n") + "\n"
 	if err := writeFileWithLock(cache.Path, []byte(content), 0o644); err != nil {

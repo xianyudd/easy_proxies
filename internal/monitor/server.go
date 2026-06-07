@@ -305,6 +305,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 		repChecker: reputation.NewChecker(),
 		cfChecker:  cloudflarecheck.NewChecker(),
 	}
+	s.applyQualityRuntimeConfig(nil)
 	s.qualitySvc = quality.NewService(quality.ServiceOptions{TargetSource: newMonitorQualityTargetSource(s), QuickRunner: monitorQualityRunner{s: s}, CloudflareRunner: monitorQualityRunner{s: s}, ReputationRunner: monitorQualityRunner{s: s}})
 
 	// Start session cleanup goroutine
@@ -363,7 +364,6 @@ func (s *Server) SetConfig(cfg *config.Config) {
 		return
 	}
 	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
 	// Preserve subscription config from previous cfgSrc if new config has none
 	if cfg != nil && s.cfgSrc != nil {
 		if len(cfg.Subscriptions) == 0 && len(s.cfgSrc.Subscriptions) > 0 {
@@ -387,7 +387,28 @@ func (s *Server) SetConfig(cfg *config.Config) {
 			s.cfg.ProxyPassword = cfg.Listener.Password
 		}
 	}
+	s.cfgMu.Unlock()
+	s.applyQualityRuntimeConfig(cfg)
 	go s.ensureQualityScheduler()
+}
+
+func (s *Server) applyQualityRuntimeConfig(cfg *config.Config) {
+	if s == nil {
+		return
+	}
+	if cfg == nil {
+		s.cfgMu.RLock()
+		cfg = s.cfgSrc
+		s.cfgMu.RUnlock()
+	}
+	q := config.QualityCheckConfig{}.Normalized()
+	if cfg != nil {
+		q = cfg.QualityCheck.Normalized()
+	}
+	s.cfChecker = cloudflarecheck.NewChecker(
+		cloudflarecheck.WithTimeout(q.CloudflareTimeout),
+		cloudflarecheck.WithMaxConcurrency(q.CloudflareConcurrency),
+	)
 }
 
 func copySourceConfigs(in []nodesource.SourceConfig) []nodesource.SourceConfig {
@@ -587,7 +608,7 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 		count, sources, err := cfg.RefreshFreeProxyCacheDetailed(context.Background())
 		finished := time.Now()
 		reloadStarted := false
-		if cache.AutoReloadValue() && s.nodeMgr != nil {
+		if err == nil && count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
 			_, startedReload, reloadErr := s.startAsyncReload("free-proxy-refresh")
 			reloadStarted = startedReload
 			if reloadErr != nil && s.logger != nil {
@@ -2543,12 +2564,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"auto_update_interval": "",
 			},
 			"quality_check": map[string]any{
-				"enabled":             false,
-				"interval":            "",
-				"region":              "all",
-				"count":               500,
-				"include_unavailable": true,
-				"retry_failed":        false,
+				"enabled":                false,
+				"interval":               "",
+				"region":                 "all",
+				"count":                  500,
+				"include_unavailable":    true,
+				"retry_failed":           false,
+				"cloudflare_timeout":     config.DefaultCloudflareTimeout.String(),
+				"cloudflare_concurrency": config.DefaultCloudflareConcurrency,
 			},
 			"free_proxy_sources":   []any{},
 			"free_proxy_max_nodes": 0,
@@ -2641,12 +2664,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 			q := cfg.QualityCheck.Normalized()
 			resp["quality_check"] = map[string]any{
-				"enabled":             q.Enabled,
-				"interval":            q.Interval.String(),
-				"region":              q.Region,
-				"count":               q.Count,
-				"include_unavailable": q.IncludeUnavailable,
-				"retry_failed":        q.RetryFailed,
+				"enabled":                q.Enabled,
+				"interval":               q.Interval.String(),
+				"region":                 q.Region,
+				"count":                  q.Count,
+				"include_unavailable":    q.IncludeUnavailable,
+				"retry_failed":           q.RetryFailed,
+				"cloudflare_timeout":     q.CloudflareTimeout.String(),
+				"cloudflare_concurrency": q.CloudflareConcurrency,
 			}
 		}
 		writeJSON(w, resp)
@@ -2693,12 +2718,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				AutoUpdateInterval string `json:"auto_update_interval"`
 			} `json:"geoip"`
 			QualityCheck *struct {
-				Enabled            bool   `json:"enabled"`
-				Interval           string `json:"interval"`
-				Region             string `json:"region"`
-				Count              int    `json:"count"`
-				IncludeUnavailable bool   `json:"include_unavailable"`
-				RetryFailed        bool   `json:"retry_failed"`
+				Enabled               bool   `json:"enabled"`
+				Interval              string `json:"interval"`
+				Region                string `json:"region"`
+				Count                 int    `json:"count"`
+				IncludeUnavailable    bool   `json:"include_unavailable"`
+				RetryFailed           bool   `json:"retry_failed"`
+				CloudflareTimeout     string `json:"cloudflare_timeout"`
+				CloudflareConcurrency int    `json:"cloudflare_concurrency"`
 			} `json:"quality_check"`
 			FreeProxySources  []nodesourceSourceConfigRequest `json:"free_proxy_sources"`
 			FreeProxyMaxNodes *int                            `json:"free_proxy_max_nodes"`
@@ -2820,16 +2847,23 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.QualityCheck != nil {
 			s.cfgSrc.QualityCheck = config.QualityCheckConfig{
-				Enabled:            req.QualityCheck.Enabled,
-				Interval:           s.cfgSrc.QualityCheck.Interval,
-				Region:             req.QualityCheck.Region,
-				Count:              req.QualityCheck.Count,
-				IncludeUnavailable: req.QualityCheck.IncludeUnavailable,
-				RetryFailed:        req.QualityCheck.RetryFailed,
+				Enabled:               req.QualityCheck.Enabled,
+				Interval:              s.cfgSrc.QualityCheck.Interval,
+				Region:                req.QualityCheck.Region,
+				Count:                 req.QualityCheck.Count,
+				IncludeUnavailable:    req.QualityCheck.IncludeUnavailable,
+				RetryFailed:           req.QualityCheck.RetryFailed,
+				CloudflareTimeout:     s.cfgSrc.QualityCheck.CloudflareTimeout,
+				CloudflareConcurrency: req.QualityCheck.CloudflareConcurrency,
 			}
 			if req.QualityCheck.Interval != "" {
 				if d, err := time.ParseDuration(req.QualityCheck.Interval); err == nil {
 					s.cfgSrc.QualityCheck.Interval = d
+				}
+			}
+			if req.QualityCheck.CloudflareTimeout != "" {
+				if d, err := time.ParseDuration(req.QualityCheck.CloudflareTimeout); err == nil {
+					s.cfgSrc.QualityCheck.CloudflareTimeout = d
 				}
 			}
 			s.cfgSrc.QualityCheck = s.cfgSrc.QualityCheck.Normalized()
@@ -2870,6 +2904,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			s.cfgMu.Unlock()
 		}
+		s.applyQualityRuntimeConfig(s.cfgSrc)
 		s.ensureQualityScheduler()
 
 		reloadStarted := false
@@ -3265,6 +3300,37 @@ func (s *Server) respondNodeError(w http.ResponseWriter, err error) {
 	writeJSON(w, map[string]any{"error": err.Error()})
 }
 
+func (s *Server) trafficAPIURL() string {
+	listen := "127.0.0.1:9092"
+	s.cfgMu.RLock()
+	if s.cfgSrc != nil && strings.TrimSpace(s.cfgSrc.Management.ClashAPIListen) != "" {
+		listen = strings.TrimSpace(s.cfgSrc.Management.ClashAPIListen)
+	}
+	s.cfgMu.RUnlock()
+	if strings.HasPrefix(listen, "http://") || strings.HasPrefix(listen, "https://") {
+		return strings.TrimRight(listen, "/") + "/traffic"
+	}
+	return "http://" + strings.TrimRight(listen, "/") + "/traffic"
+}
+
+func (s *Server) streamUnavailableTraffic(r *http.Request, w http.ResponseWriter, flusher http.Flusher) {
+	writeUnavailable := func() {
+		fmt.Fprintf(w, "data: {\"up\":0,\"down\":0,\"status\":\"unavailable\"}\n\n")
+		flusher.Flush()
+	}
+	writeUnavailable()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			writeUnavailable()
+		}
+	}
+}
+
 // handleTraffic streams real-time traffic from sing-box Clash API as SSE.
 // Clash API /traffic returns newline-delimited JSON; we convert to SSE for browser EventSource.
 func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
@@ -3282,21 +3348,25 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	// Connect to sing-box Clash API. If the Clash API is not ready, keep the
 	// SSE stream alive with zero traffic samples so the WebUI chart can render
 	// without noisy browser-side EventSource failures.
-	resp, err := http.Get("http://127.0.0.1:9092/traffic")
+	client := &http.Client{Transport: &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 1200 * time.Millisecond}).DialContext,
+		ResponseHeaderTimeout: 1200 * time.Millisecond,
+	}}
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.trafficAPIURL(), nil)
 	if err != nil {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case <-ticker.C:
-				fmt.Fprintf(w, "data: {\"up\":0,\"down\":0,\"status\":\"unavailable\"}\n\n")
-				flusher.Flush()
-			}
-		}
+		s.streamUnavailableTraffic(r, w, flusher)
+		return
+	}
+	resp, err := client.Do(upstreamReq)
+	if err != nil {
+		s.streamUnavailableTraffic(r, w, flusher)
+		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		s.streamUnavailableTraffic(r, w, flusher)
+		return
+	}
 
 	// Read NDJSON lines from Clash API and forward as SSE
 	buf := make([]byte, 4096)
