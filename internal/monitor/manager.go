@@ -221,6 +221,7 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 	var wg sync.WaitGroup
 	var availableCount atomic.Int32
 	var failedCount atomic.Int32
+	failureSummary := newProbeFailureSummary(5)
 
 	for _, e := range entries {
 		e.mu.RLock()
@@ -258,8 +259,8 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 			}
 			entry.mu.Unlock()
 
-			if err != nil && m.logger != nil {
-				m.logger.Warn("probe failed for ", tag, ": ", err)
+			if err != nil {
+				failureSummary.Add(tag, err)
 			}
 		}(e, probeFn, tag)
 	}
@@ -267,7 +268,86 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 
 	if m.logger != nil {
 		m.logger.Info("health check completed: ", availableCount.Load(), " available, ", failedCount.Load(), " failed")
+		if failedCount.Load() > 0 {
+			m.logger.Warn(failureSummary.String())
+		}
 	}
+}
+
+type probeFailureSummary struct {
+	mu       sync.Mutex
+	limit    int
+	total    int
+	order    []string
+	byReason map[string]*probeFailureGroup
+}
+
+type probeFailureGroup struct {
+	count     int
+	sampleTag string
+}
+
+func newProbeFailureSummary(limit int) *probeFailureSummary {
+	if limit <= 0 {
+		limit = 5
+	}
+	return &probeFailureSummary{limit: limit, byReason: make(map[string]*probeFailureGroup)}
+}
+
+func (s *probeFailureSummary) Add(tag string, err error) {
+	if s == nil || err == nil {
+		return
+	}
+	reason := err.Error()
+	if reason == "" {
+		reason = "unknown error"
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.total++
+	group := s.byReason[reason]
+	if group == nil {
+		group = &probeFailureGroup{sampleTag: tag}
+		s.byReason[reason] = group
+		s.order = append(s.order, reason)
+	}
+	group.count++
+	if group.sampleTag == "" {
+		group.sampleTag = tag
+	}
+}
+
+func (s *probeFailureSummary) String() string {
+	if s == nil {
+		return "probe failures: 0"
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.total == 0 {
+		return "probe failures: 0"
+	}
+	parts := make([]string, 0, min(len(s.order), s.limit))
+	shown := 0
+	for _, reason := range s.order {
+		if shown >= s.limit {
+			break
+		}
+		group := s.byReason[reason]
+		if group == nil {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%dx %s (sample=%s)", group.count, reason, group.sampleTag))
+		shown++
+	}
+	remainingReasons := len(s.order) - shown
+	message := fmt.Sprintf("probe failures aggregated: total=%d reasons=%d", s.total, len(s.order))
+	if len(parts) > 0 {
+		message += ": " + strings.Join(parts, "; ")
+	}
+	if remainingReasons > 0 {
+		message += fmt.Sprintf("; +%d more reasons", remainingReasons)
+	}
+	return message
 }
 
 // Stop stops the periodic health check.
