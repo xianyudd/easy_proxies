@@ -1,7 +1,9 @@
 package monitor
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -71,11 +73,11 @@ func TestHandleNodesSummaryOnlyReturnsStatsWithoutRows(t *testing.T) {
 	server.handleNodes(rr, req)
 
 	var payload struct {
-		Nodes         []Snapshot    `json:"nodes"`
-		TotalNodes    int           `json:"total_nodes"`
-		TotalFiltered int           `json:"total_filtered"`
-		VisibleNodes  int           `json:"visible_nodes"`
-		Available     int           `json:"available"`
+		Nodes         []Snapshot     `json:"nodes"`
+		TotalNodes    int            `json:"total_nodes"`
+		TotalFiltered int            `json:"total_filtered"`
+		VisibleNodes  int            `json:"visible_nodes"`
+		Available     int            `json:"available"`
 		PortRange     map[string]int `json:"port_range"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
@@ -89,6 +91,56 @@ func TestHandleNodesSummaryOnlyReturnsStatsWithoutRows(t *testing.T) {
 	}
 	if payload.PortRange == nil || payload.PortRange["first"] != 13001 || payload.PortRange["last"] != 13003 {
 		t.Fatalf("summary should include full port range, got %#v", payload.PortRange)
+	}
+}
+
+func TestManualProbeFailureMarksNodeUnavailable(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := mgr.Register(NodeInfo{Tag: "bad", Name: "Bad", URI: "http://127.0.0.1:1", Region: "us", Source: "free_proxy", Port: 13010})
+	h.MarkInitialCheckDone(true)
+	h.SetProbe(func(ctx context.Context) (time.Duration, error) {
+		return 0, errors.New("probe failed")
+	})
+	server := &Server{mgr: mgr}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/nodes/bad/probe", nil)
+	rr := httptest.NewRecorder()
+	server.handleNodeAction(rr, req)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	snap := mgr.Snapshot()[0]
+	if snap.Available || !snap.InitialCheckDone || snap.FailureCount != 1 || snap.LastError != "probe failed" {
+		t.Fatalf("probe failure should mark unavailable and record error, got %#v", snap)
+	}
+}
+
+func TestManualProbeSuccessMarksNodeAvailable(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := mgr.Register(NodeInfo{Tag: "good", Name: "Good", URI: "http://127.0.0.1:1", Region: "us", Source: "free_proxy", Port: 13011})
+	h.MarkInitialCheckDone(false)
+	h.SetProbe(func(ctx context.Context) (time.Duration, error) {
+		return 25 * time.Millisecond, nil
+	})
+	server := &Server{mgr: mgr}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/nodes/good/probe", nil)
+	rr := httptest.NewRecorder()
+	server.handleNodeAction(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	snap := mgr.Snapshot()[0]
+	if !snap.Available || !snap.InitialCheckDone || snap.SuccessCount != 1 || snap.LastLatencyMs != 25 {
+		t.Fatalf("probe success should mark available and record latency, got %#v", snap)
 	}
 }
 
@@ -107,7 +159,6 @@ func newTestNodesServer(t *testing.T) *Server {
 
 	freeUnchecked := mgr.Register(NodeInfo{Tag: "free-c", Name: "Free C", URI: "http://3.3.3.3:80", Region: "jp", Source: "free_proxy", Port: 13003})
 	freeUnchecked.MarkAvailable(false)
-
 
 	return &Server{mgr: mgr}
 }

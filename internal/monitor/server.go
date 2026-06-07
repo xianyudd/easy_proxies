@@ -1294,6 +1294,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		latency, err := s.mgr.Probe(ctx, tag)
 		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
 		}

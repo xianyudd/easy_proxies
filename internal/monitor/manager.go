@@ -378,9 +378,10 @@ func (m *Manager) Probe(ctx context.Context, tag string) (time.Duration, error) 
 	}
 	latency, err := e.probe(ctx)
 	if err != nil {
+		e.recordProbeFailure(err)
 		return 0, err
 	}
-	e.recordProbeLatency(latency)
+	e.recordProbeSuccess(latency)
 	return latency, nil
 }
 
@@ -546,6 +547,34 @@ func (e *entry) recordProbeLatency(d time.Duration) {
 	e.mu.Lock()
 	e.lastProbe = d
 	e.mu.Unlock()
+}
+
+func (e *entry) recordProbeFailure(err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	errStr := err.Error()
+	e.failure++
+	e.lastError = errStr
+	e.lastFail = time.Now()
+	e.available = false
+	e.initialCheckDone = true
+	e.appendTimelineLocked(false, 0, errStr)
+}
+
+func (e *entry) recordProbeSuccess(latency time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.success++
+	e.lastOK = time.Now()
+	e.lastError = ""
+	e.lastProbe = latency
+	e.available = true
+	e.initialCheckDone = true
+	latencyMs := latency.Milliseconds()
+	if latencyMs == 0 && latency > 0 {
+		latencyMs = 1
+	}
+	e.appendTimelineLocked(true, latencyMs, "")
 }
 
 // RecordFailure updates failure counters.
