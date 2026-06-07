@@ -3443,7 +3443,7 @@ func (s *Server) handleConfigNodes(w http.ResponseWriter, r *http.Request) {
 			s.respondNodeError(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"node": node, "message": "节点已添加，请点击重载使配置生效"})
+		writeJSON(w, map[string]any{"node": node, "message": "节点已添加，请点击重载使配置生效", "need_reload": true})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -3476,13 +3476,13 @@ func (s *Server) handleConfigNodeItem(w http.ResponseWriter, r *http.Request) {
 			s.respondNodeError(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"node": node, "message": "节点已更新，请点击重载使配置生效"})
+		writeJSON(w, map[string]any{"node": node, "message": "节点已更新，请点击重载使配置生效", "need_reload": true})
 	case http.MethodDelete:
 		if err := s.nodeMgr.DeleteNode(r.Context(), nodeName); err != nil {
 			s.respondNodeError(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"message": "节点已删除，请点击重载使配置生效"})
+		writeJSON(w, map[string]any{"message": "节点已删除，请点击重载使配置生效", "need_reload": true})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}

@@ -25,6 +25,11 @@ type fakeNodeManager struct {
 	done        chan struct{}
 	doneOnce    sync.Once
 	reloadCh    chan int
+	nodes       []config.NodeConfig
+	created     []config.NodeConfig
+	updated     []config.NodeConfig
+	updatedName string
+	deleted     []string
 }
 
 func freeLocalListen(t *testing.T) string {
@@ -41,18 +46,47 @@ func freeLocalListen(t *testing.T) string {
 }
 
 func (f *fakeNodeManager) ListConfigNodes(ctx context.Context) ([]config.NodeConfig, error) {
-	return nil, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]config.NodeConfig, len(f.nodes))
+	copy(out, f.nodes)
+	return out, nil
 }
 
 func (f *fakeNodeManager) CreateNode(ctx context.Context, node config.NodeConfig) (config.NodeConfig, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.created = append(f.created, node)
+	f.nodes = append(f.nodes, node)
 	return node, nil
 }
 
 func (f *fakeNodeManager) UpdateNode(ctx context.Context, name string, node config.NodeConfig) (config.NodeConfig, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updatedName = name
+	f.updated = append(f.updated, node)
+	for i, existing := range f.nodes {
+		if existing.Name == name {
+			f.nodes[i] = node
+			return node, nil
+		}
+	}
+	f.nodes = append(f.nodes, node)
 	return node, nil
 }
 
 func (f *fakeNodeManager) DeleteNode(ctx context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, name)
+	filtered := f.nodes[:0]
+	for _, node := range f.nodes {
+		if node.Name != name {
+			filtered = append(filtered, node)
+		}
+	}
+	f.nodes = filtered
 	return nil
 }
 
@@ -388,7 +422,7 @@ management:
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &fakeNodeManager{delay: 250 * time.Millisecond, done: make(chan struct{})}
+	fake := &fakeNodeManager{delay: 2 * time.Second, done: make(chan struct{})}
 	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
 
 	body := []byte(`{
@@ -405,8 +439,8 @@ management:
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if elapsed >= fake.delay {
-		t.Fatalf("settings save waited for reload: elapsed=%s delay=%s", elapsed, fake.delay)
+	if elapsed >= 500*time.Millisecond {
+		t.Fatalf("settings save waited too long for async reload start: elapsed=%s delay=%s", elapsed, fake.delay)
 	}
 	var resp struct {
 		NeedReload    bool `json:"need_reload"`
@@ -421,7 +455,7 @@ management:
 	if !resp.NeedReload || !resp.ReloadStarted || resp.ReloadStatus.State != "running" {
 		t.Fatalf("expected async reload response, got %#v body=%s", resp, rec.Body.String())
 	}
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(4 * time.Second)
 	for {
 		status := server.currentReloadStatus()
 		if status.State == "succeeded" {
@@ -1187,6 +1221,81 @@ free_proxy_sources:
 			t.Fatalf("manual refresh did not finish, status=%#v", status)
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+func TestHandleConfigNodesCRUDReportsNeedReloadWithoutReloading(t *testing.T) {
+	fake := &fakeNodeManager{nodes: []config.NodeConfig{{Name: "old", URI: "http://127.0.0.1:18080", Port: 18080}}}
+	server := &Server{nodeMgr: fake, reloadState: "idle"}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/nodes/config", nil)
+	listRec := httptest.NewRecorder()
+	server.handleConfigNodes(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", listRec.Code, listRec.Body.String())
+	}
+	var listResp struct {
+		Nodes []config.NodeConfig `json:"nodes"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(listResp.Nodes) != 1 || listResp.Nodes[0].Name != "old" {
+		t.Fatalf("unexpected list response: %#v body=%s", listResp, listRec.Body.String())
+	}
+
+	createBody := []byte(`{"name":"new","uri":"http://127.0.0.1:18081","port":18081}`)
+	createRec := httptest.NewRecorder()
+	server.handleConfigNodes(createRec, httptest.NewRequest(http.MethodPost, "/api/nodes/config", bytes.NewReader(createBody)))
+	if createRec.Code != http.StatusOK {
+		t.Fatalf("create status = %d, body = %s", createRec.Code, createRec.Body.String())
+	}
+	var createResp struct {
+		Node       config.NodeConfig `json:"node"`
+		NeedReload bool              `json:"need_reload"`
+		Message    string            `json:"message"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatal(err)
+	}
+	if createResp.Node.Name != "new" || !createResp.NeedReload || createResp.Message == "" {
+		t.Fatalf("unexpected create response: %#v body=%s", createResp, createRec.Body.String())
+	}
+
+	updateBody := []byte(`{"name":"newer","uri":"http://127.0.0.1:18082","port":18082}`)
+	updateRec := httptest.NewRecorder()
+	server.handleConfigNodeItem(updateRec, httptest.NewRequest(http.MethodPut, "/api/nodes/config/new", bytes.NewReader(updateBody)))
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", updateRec.Code, updateRec.Body.String())
+	}
+	var updateResp struct {
+		Node       config.NodeConfig `json:"node"`
+		NeedReload bool              `json:"need_reload"`
+	}
+	if err := json.Unmarshal(updateRec.Body.Bytes(), &updateResp); err != nil {
+		t.Fatal(err)
+	}
+	if updateResp.Node.Name != "newer" || !updateResp.NeedReload || fake.updatedName != "new" {
+		t.Fatalf("unexpected update response: %#v updatedName=%q body=%s", updateResp, fake.updatedName, updateRec.Body.String())
+	}
+
+	deleteRec := httptest.NewRecorder()
+	server.handleConfigNodeItem(deleteRec, httptest.NewRequest(http.MethodDelete, "/api/nodes/config/newer", nil))
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body = %s", deleteRec.Code, deleteRec.Body.String())
+	}
+	var deleteResp struct {
+		NeedReload bool   `json:"need_reload"`
+		Message    string `json:"message"`
+	}
+	if err := json.Unmarshal(deleteRec.Body.Bytes(), &deleteResp); err != nil {
+		t.Fatal(err)
+	}
+	if !deleteResp.NeedReload || deleteResp.Message == "" || len(fake.deleted) != 1 || fake.deleted[0] != "newer" {
+		t.Fatalf("unexpected delete response: %#v deleted=%#v body=%s", deleteResp, fake.deleted, deleteRec.Body.String())
+	}
+	if fake.ReloadCalls() != 0 {
+		t.Fatalf("CRUD should not reload automatically, reloadCalls=%d", fake.ReloadCalls())
 	}
 }
 
