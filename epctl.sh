@@ -70,7 +70,7 @@ Isolated profile aliases:
   isolated:build                        Build /tmp/easy_proxies_isolated
   isolated:start                        Start isolated instance on WebUI :19093
   isolated:stop                         Stop isolated instance only
-  isolated:restart                      Restart isolated instance only
+  isolated:restart                      Rebuild and restart isolated instance
   isolated:status                       Show isolated status
   isolated:logs [N]                     Tail isolated log
   isolated:logs-follow                  Follow isolated log
@@ -765,7 +765,7 @@ case "$cmd" in
   isolated:build|service:isolated:build) EP_PROFILE=isolated; build_service ;;
   isolated:start|service:isolated:start) start_service ;;
   isolated:stop|service:isolated:stop) stop_service ;;
-  isolated:restart|service:isolated:restart) stop_service; start_service ;;
+  isolated:restart|service:isolated:restart) build_service; stop_service; start_service ;;
   isolated:status|service:isolated:status) status_service ;;
   isolated:logs) show_logs "${2:-120}" ;;
   isolated:logs-follow) tail -f "$LOG_FILE" ;;
