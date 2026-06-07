@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,19 @@ type fakeNodeManager struct {
 	err         error
 	reloadCalls int
 	done        chan struct{}
+}
+
+func freeLocalListen(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("allocate local listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close local listen: %v", err)
+	}
+	return addr
 }
 
 func (f *fakeNodeManager) ListConfigNodes(ctx context.Context) ([]config.NodeConfig, error) {
@@ -126,9 +140,12 @@ free_proxy_filter:
 func TestHandleSettingsUpdatesCloudflareRuntimeConfig(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
+management:
+  listen: ` + listen + `
 quality_check:
   enabled: false
   interval: 1h
@@ -150,10 +167,11 @@ quality_check:
 	if err != nil {
 		t.Fatalf("manager: %v", err)
 	}
-	server := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	server := NewServer(Config{Enabled: true, Listen: listen}, mgr, nil)
 	server.SetConfig(cfg)
 
 	body := []byte(`{
+		"management": {"listen":"` + listen + `","password":""},
 		"quality_check": {
 			"enabled": false,
 			"interval": "1h",
@@ -280,11 +298,12 @@ free_proxy_cache:
 func TestHandleSettingsSkipsReloadForControlPlaneOnlyChanges(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
 management:
-  listen: 127.0.0.1:9091
+  listen: ` + listen + `
   password: ""
   probe_target: http://cp.cloudflare.com/generate_204
 log:
@@ -304,7 +323,7 @@ log:
 	body := []byte(`{
 		"external_ip": "1.2.3.4",
 		"probe_target": "http://example.test/generate_204",
-		"management": {"listen":"127.0.0.1:9091","password":"secret"},
+		"management": {"listen":"` + listen + `","password":"secret"},
 		"log": {"output":"stdout","max_size":200,"max_backups":2,"max_age":3,"compress":false}
 	}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
@@ -328,6 +347,7 @@ log:
 func TestHandleSettingsStartsCoreReloadAsynchronously(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
 	initial := []byte(`mode: hybrid
 listener:
   address: 127.0.0.1
@@ -339,7 +359,7 @@ nodes:
   - name: base
     uri: http://127.0.0.1:18080
 management:
-  listen: 127.0.0.1:9091
+  listen: ` + listen + `
 `)
 	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
 		t.Fatal(err)
@@ -355,7 +375,7 @@ management:
 		"mode": "hybrid",
 		"listener": {"address":"127.0.0.1","port":18081,"username":"","password":""},
 		"multi_port": {"address":"127.0.0.1","base_port":25000,"username":"","password":""},
-		"management": {"listen":"127.0.0.1:9091","password":""}
+		"management": {"listen":"` + listen + `","password":""}
 	}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -565,6 +585,75 @@ free_proxy_sources:
 	}
 }
 
+func TestFreeProxyRefreshUsesConfigSnapshotFromStart(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	requested := make(chan struct{})
+	release := make(chan struct{})
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requested)
+		<-release
+		_, _ = w.Write([]byte("http://127.0.0.1:18080\nhttp://127.0.0.1:18081\n"))
+	}))
+	defer source.Close()
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: false
+free_proxy_filter:
+  enabled: false
+free_proxy_max_nodes: 2
+free_proxy_sources:
+  - name: slow-source
+    url: ` + source.URL + `
+    format: txt
+    timeout: 2s
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, nodeMgr: &fakeNodeManager{done: make(chan struct{})}, reloadState: "idle"}
+	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
+		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
+	}
+	select {
+	case <-requested:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not request slow source")
+	}
+	server.cfgMu.Lock()
+	server.cfgSrc.FreeProxyMaxNodes = 1
+	server.cfgMu.Unlock()
+	close(release)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		status := server.currentFreeProxyRefreshStatus()
+		if status.State == "succeeded" {
+			if status.Accepted != 2 {
+				t.Fatalf("refresh should use start-time config snapshot and accept 2 nodes, got %#v", status)
+			}
+			break
+		}
+		if status.State == "failed" {
+			t.Fatalf("refresh failed: %#v", status)
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not finish, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 func TestHandleSettingsReportsNoImmediateReloadWhenFreshFreeProxyCacheIsReused(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
@@ -642,7 +731,6 @@ free_proxy_sources:
 		}
 	}
 }
-
 
 func TestHandleFreeProxyRefreshStatusSerializesCacheReuseFields(t *testing.T) {
 	tmp := t.TempDir()

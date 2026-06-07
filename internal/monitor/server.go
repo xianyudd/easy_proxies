@@ -513,6 +513,20 @@ func freeProxyRefreshSignature(cfg *config.Config) string {
 	return string(data)
 }
 
+func freeProxyRefreshConfigSnapshot(cfg *config.Config) *config.Config {
+	if cfg == nil {
+		return nil
+	}
+	snapshot := &config.Config{
+		FreeProxySources:  copySourceConfigs(cfg.FreeProxySources),
+		FreeProxyMaxNodes: cfg.FreeProxyMaxNodes,
+		FreeProxyFilter:   cfg.FreeProxyFilter,
+		FreeProxyCache:    cfg.FreeProxyCache,
+	}
+	snapshot.SetFilePath(cfg.FilePath())
+	return snapshot
+}
+
 func cloneConfigNodes(in []config.NodeConfig) []config.NodeConfig {
 	if len(in) == 0 {
 		return nil
@@ -595,7 +609,7 @@ func (s *Server) currentFreeProxyRefreshStatus() freeProxyRefreshStatus {
 
 func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStatus, bool, error) {
 	s.cfgMu.RLock()
-	cfg := s.cfgSrc
+	cfg := freeProxyRefreshConfigSnapshot(s.cfgSrc)
 	s.cfgMu.RUnlock()
 	if cfg == nil {
 		return freeProxyRefreshStatus{}, false, errors.New("配置存储未初始化")
