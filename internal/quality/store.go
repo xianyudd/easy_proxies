@@ -531,7 +531,7 @@ func detailFailed(detail map[string]any) bool {
 }
 
 func buildResultRows(snapshot JobSnapshot, targets []Target, results []Result) []Result {
-	if len(targets) == 0 {
+	if len(targets) == 0 || isTerminalStatus(snapshot.Status) {
 		out := append([]Result(nil), results...)
 		for i := range out {
 			out[i] = cloneResult(out[i])

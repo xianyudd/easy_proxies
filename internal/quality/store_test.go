@@ -220,8 +220,8 @@ func TestStoreCancelledJobCannotBecomeCompletedOrAcceptLateResults(t *testing.T)
 		t.Fatalf("status = %q, want %q", got.Status, JobCancelled)
 	}
 	page := store.ListResults(snapshot.ID, ResultQuery{Page: 1, PageSize: 10})
-	if page.Count != 1 || len(page.Data) != 1 || page.Data[0].Status != "pending" {
-		t.Fatalf("expected one pending target row after rejected late result, got %#v", page)
+	if page.Count != 0 || len(page.Data) != 0 {
+		t.Fatalf("cancelled job should not expose synthetic pending target rows, got %#v", page)
 	}
 }
 
@@ -252,6 +252,34 @@ func TestStoreListResultsIncludesPendingTargetsWithStableCount(t *testing.T) {
 	page2 := store.ListResults(snapshot.ID, ResultQuery{Page: 2, PageSize: 2})
 	if len(page2.Data) != 1 || page2.Data[0].NodeTag != "node-2" || page2.Data[0].Status != "completed" {
 		t.Fatalf("unexpected second page rows: %#v", page2.Data)
+	}
+}
+
+func TestStoreTerminalResultsDoNotSynthesizePendingTargets(t *testing.T) {
+	store := NewStore()
+	snapshot, err := store.CreateJob(JobRequest{Kind: CheckCombined, Targets: []Target{
+		{Index: 0, ID: "node-0", NodeTag: "node-0"},
+		{Index: 1, ID: "node-1", NodeTag: "node-1"},
+	}})
+	if err != nil {
+		t.Fatalf("CreateJob returned error: %v", err)
+	}
+	if err := store.StartJob(snapshot.ID); err != nil {
+		t.Fatalf("StartJob returned error: %v", err)
+	}
+	if err := store.AddResult(snapshot.ID, Result{TargetIndex: 1, TargetID: "node-1", NodeTag: "node-1", Status: "completed", Success: true}); err != nil {
+		t.Fatalf("AddResult returned error: %v", err)
+	}
+	if err := store.CancelJob(snapshot.ID, "cancelled"); err != nil {
+		t.Fatalf("CancelJob returned error: %v", err)
+	}
+
+	page := store.ListResults(snapshot.ID, ResultQuery{Page: 1, PageSize: 10})
+	if page.Count != 1 || len(page.Data) != 1 {
+		t.Fatalf("terminal job should expose only actual results, got %#v", page)
+	}
+	if page.Data[0].NodeTag != "node-1" || page.Data[0].Status != "completed" {
+		t.Fatalf("unexpected terminal result rows: %#v", page.Data)
 	}
 }
 
