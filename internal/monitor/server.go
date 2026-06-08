@@ -1442,7 +1442,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 		latency, err := s.mgr.Probe(ctx, tag)
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
-			writeJSON(w, map[string]any{"error": err.Error()})
+			writeJSON(w, map[string]any{"error": err.Error(), "code": "probe_failed"})
 			return
 		}
 		latencyMs := latency.Milliseconds()
@@ -1456,7 +1456,8 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.mgr.Release(tag); err != nil {
-			writeJSON(w, map[string]any{"error": err.Error()})
+			w.WriteHeader(http.StatusNotFound)
+			writeJSON(w, map[string]any{"error": err.Error(), "code": "node_not_found"})
 			return
 		}
 		writeJSON(w, map[string]any{"message": "已解除拉黑"})
@@ -1476,7 +1477,8 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 			duration = 24 * time.Hour
 		}
 		if err := s.mgr.ManualBlacklist(tag, duration); err != nil {
-			writeJSON(w, map[string]any{"error": err.Error()})
+			w.WriteHeader(http.StatusNotFound)
+			writeJSON(w, map[string]any{"error": err.Error(), "code": "node_not_found"})
 			return
 		}
 		writeJSON(w, map[string]any{"message": fmt.Sprintf("已拉黑 %s", duration)})

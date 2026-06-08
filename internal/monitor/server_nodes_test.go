@@ -188,9 +188,39 @@ func TestManualProbeFailureMarksNodeUnavailable(t *testing.T) {
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
+	assertNodeActionErrorCode(t, rr, "probe_failed")
 	snap := mgr.Snapshot()[0]
 	if snap.Available || !snap.InitialCheckDone || snap.FailureCount != 1 || snap.LastError != "probe failed" {
 		t.Fatalf("probe failure should mark unavailable and record error, got %#v", snap)
+	}
+}
+
+func TestNodeActionMissingNodeReturnsStructuredErrors(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{mgr: mgr}
+
+	for _, tc := range []struct {
+		name   string
+		path   string
+		status int
+		code   string
+	}{
+		{name: "probe", path: "/api/nodes/missing/probe", status: http.StatusBadGateway, code: "probe_failed"},
+		{name: "release", path: "/api/nodes/missing/release", status: http.StatusNotFound, code: "node_not_found"},
+		{name: "blacklist", path: "/api/nodes/missing/blacklist", status: http.StatusNotFound, code: "node_not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			rr := httptest.NewRecorder()
+			server.handleNodeAction(rr, req)
+			if rr.Code != tc.status {
+				t.Fatalf("status=%d, want %d body=%s", rr.Code, tc.status, rr.Body.String())
+			}
+			assertNodeActionErrorCode(t, rr, tc.code)
+		})
 	}
 }
 
@@ -236,4 +266,18 @@ func newTestNodesServer(t *testing.T) *Server {
 	freeUnchecked.MarkAvailable(false)
 
 	return &Server{mgr: mgr}
+}
+
+func assertNodeActionErrorCode(t *testing.T, rr *httptest.ResponseRecorder, code string) {
+	t.Helper()
+	var body struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == "" || body.Code != code {
+		t.Fatalf("unexpected body: %#v raw=%s", body, rr.Body.String())
+	}
 }
