@@ -3314,6 +3314,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasMultiPortUsername := hasNestedJSONKey(body, "multi_port", "username")
 		hasMultiPortPassword := hasNestedJSONKey(body, "multi_port", "password")
 		hasManagementListen := hasNestedJSONKey(body, "management", "listen")
+		hasGeoIPDatabasePath := hasNestedJSONKey(body, "geoip", "database_path")
+		hasGeoIPListen := hasNestedJSONKey(body, "geoip", "listen")
+		hasGeoIPPort := hasNestedJSONKey(body, "geoip", "port")
+		hasGeoIPAutoUpdateEnabled := hasNestedJSONKey(body, "geoip", "auto_update_enabled")
 
 		logCfg := config.LogConfig{}
 		hasLogCfg := false
@@ -3621,10 +3625,18 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.Management.Password = req.Management.Password
 		}
 		if req.GeoIP != nil {
-			s.cfgSrc.GeoIP.DatabasePath = req.GeoIP.DatabasePath
-			s.cfgSrc.GeoIP.Listen = req.GeoIP.Listen
-			s.cfgSrc.GeoIP.Port = req.GeoIP.Port
-			s.cfgSrc.GeoIP.AutoUpdateEnabled = req.GeoIP.AutoUpdateEnabled
+			if hasGeoIPDatabasePath {
+				s.cfgSrc.GeoIP.DatabasePath = req.GeoIP.DatabasePath
+			}
+			if hasGeoIPListen {
+				s.cfgSrc.GeoIP.Listen = req.GeoIP.Listen
+			}
+			if hasGeoIPPort {
+				s.cfgSrc.GeoIP.Port = req.GeoIP.Port
+			}
+			if hasGeoIPAutoUpdateEnabled {
+				s.cfgSrc.GeoIP.AutoUpdateEnabled = req.GeoIP.AutoUpdateEnabled
+			}
 			if strings.TrimSpace(req.GeoIP.AutoUpdateInterval) != "" {
 				s.cfgSrc.GeoIP.AutoUpdateInterval = geoIPAutoUpdateInterval
 			}
