@@ -191,6 +191,216 @@ free_proxy_filter:
 	}
 }
 
+func TestHandleSettingsRejectsInvalidPoolDurationWithoutMutatingMemory(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+pool:
+  mode: round_robin
+  failure_threshold: 3
+  blacklist_duration: 5m
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	body := []byte(`{
+		"external_ip": "2.2.2.2",
+		"pool": {"mode":"least_failures","failure_threshold":9,"blacklist_duration":"bad-duration"}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body = %s", rec.Code, rec.Body.String())
+	}
+	if server.cfgSrc.ExternalIP != "1.1.1.1" || server.cfgSrc.Pool.Mode != "round_robin" || server.cfgSrc.Pool.FailureThreshold != 3 || server.cfgSrc.Pool.BlacklistDuration != 5*time.Minute {
+		t.Fatalf("invalid settings should not mutate memory: external_ip=%q pool=%#v", server.cfgSrc.ExternalIP, server.cfgSrc.Pool)
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ExternalIP != "1.1.1.1" || reloaded.Pool.Mode != "round_robin" || reloaded.Pool.FailureThreshold != 3 || reloaded.Pool.BlacklistDuration != 5*time.Minute {
+		t.Fatalf("invalid settings should not be persisted: external_ip=%q pool=%#v", reloaded.ExternalIP, reloaded.Pool)
+	}
+}
+
+func TestHandleSettingsRejectsInvalidGeoIPIntervalWithoutMutatingMemory(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+geoip:
+  enabled: true
+  database_path: /tmp/GeoLite2.mmdb
+  listen: 127.0.0.1
+  port: 1221
+  auto_update_enabled: true
+  auto_update_interval: 24h
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	body := []byte(`{
+		"external_ip": "2.2.2.2",
+		"geoip": {
+			"enabled": true,
+			"database_path": "/tmp/other.mmdb",
+			"listen": "127.0.0.1",
+			"port": 1222,
+			"auto_update_enabled": false,
+			"auto_update_interval": "bad-duration"
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body = %s", rec.Code, rec.Body.String())
+	}
+	if server.cfgSrc.ExternalIP != "1.1.1.1" || server.cfgSrc.GeoIP.DatabasePath != "/tmp/GeoLite2.mmdb" || server.cfgSrc.GeoIP.Port != 1221 || server.cfgSrc.GeoIP.AutoUpdateInterval != 24*time.Hour {
+		t.Fatalf("invalid geoip settings should not mutate memory: external_ip=%q geoip=%#v", server.cfgSrc.ExternalIP, server.cfgSrc.GeoIP)
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ExternalIP != "1.1.1.1" || reloaded.GeoIP.DatabasePath != "/tmp/GeoLite2.mmdb" || reloaded.GeoIP.Port != 1221 || reloaded.GeoIP.AutoUpdateInterval != 24*time.Hour {
+		t.Fatalf("invalid geoip settings should not be persisted: external_ip=%q geoip=%#v", reloaded.ExternalIP, reloaded.GeoIP)
+	}
+}
+
+func TestHandleSettingsRejectsInvalidFreeProxyFilterTimeoutWithoutMutatingMemory(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+free_proxy_filter:
+  enabled: true
+  min_tier: simple_web
+  workers: 12
+  timeout: 1500ms
+  max_candidates: 100
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	body := []byte(`{
+		"external_ip": "2.2.2.2",
+		"free_proxy_filter": {
+			"enabled": true,
+			"min_tier": "simple_web",
+			"workers": 22,
+			"timeout": "bad-duration",
+			"max_candidates": 200,
+			"probes": {"http":"http://cp.cloudflare.com/generate_204","https":"https://example.com/"}
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body = %s", rec.Code, rec.Body.String())
+	}
+	if server.cfgSrc.ExternalIP != "1.1.1.1" || server.cfgSrc.FreeProxyFilter.Workers != 12 || server.cfgSrc.FreeProxyFilter.Timeout != 1500*time.Millisecond || server.cfgSrc.FreeProxyFilter.MaxCandidates != 100 {
+		t.Fatalf("invalid free proxy filter should not mutate memory: external_ip=%q filter=%#v", server.cfgSrc.ExternalIP, server.cfgSrc.FreeProxyFilter)
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ExternalIP != "1.1.1.1" || reloaded.FreeProxyFilter.Workers != 12 || reloaded.FreeProxyFilter.Timeout != 1500*time.Millisecond || reloaded.FreeProxyFilter.MaxCandidates != 100 {
+		t.Fatalf("invalid free proxy filter should not be persisted: external_ip=%q filter=%#v", reloaded.ExternalIP, reloaded.FreeProxyFilter)
+	}
+}
+
+func TestHandleSettingsRejectsInvalidFreeProxyCacheMaxAgeWithoutMutatingMemory(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+free_proxy_cache:
+  enabled: true
+  path: .cache/free-proxies.txt
+  refresh_on_start: true
+  auto_reload: true
+  workers: 4
+  max_age: 6h
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalCache := cfg.FreeProxyCache
+	server := &Server{cfgSrc: cfg}
+
+	body := []byte(`{
+		"external_ip": "2.2.2.2",
+		"free_proxy_cache": {
+			"enabled": true,
+			"path": ".cache/other.txt",
+			"refresh_on_start": false,
+			"auto_reload": false,
+			"workers": 9,
+			"max_age": "bad-duration"
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body = %s", rec.Code, rec.Body.String())
+	}
+	if server.cfgSrc.ExternalIP != "1.1.1.1" || server.cfgSrc.FreeProxyCache.Path != originalCache.Path || server.cfgSrc.FreeProxyCache.Workers != originalCache.Workers || server.cfgSrc.FreeProxyCache.MaxAge != originalCache.MaxAge {
+		t.Fatalf("invalid free proxy cache should not mutate memory: external_ip=%q cache=%#v original=%#v", server.cfgSrc.ExternalIP, server.cfgSrc.FreeProxyCache, originalCache)
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ExternalIP != "1.1.1.1" || reloaded.FreeProxyCache.Path != originalCache.Path || reloaded.FreeProxyCache.Workers != originalCache.Workers || reloaded.FreeProxyCache.MaxAge != originalCache.MaxAge {
+		t.Fatalf("invalid free proxy cache should not be persisted: external_ip=%q cache=%#v original=%#v", reloaded.ExternalIP, reloaded.FreeProxyCache, originalCache)
+	}
+}
+
 func TestHandleSettingsRejectsInvalidFreeProxySourceURLBeforePersisting(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

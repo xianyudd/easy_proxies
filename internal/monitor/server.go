@@ -3018,6 +3018,76 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			hasLogCfg = true
 		}
+		var poolBlacklistDuration time.Duration
+		if req.Pool != nil && strings.TrimSpace(req.Pool.BlacklistDuration) != "" {
+			d, err := time.ParseDuration(req.Pool.BlacklistDuration)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的节点池黑名单时长: %v", err), "code": "invalid_pool_blacklist_duration"})
+				return
+			}
+			poolBlacklistDuration = d
+		}
+		var geoIPAutoUpdateInterval time.Duration
+		if req.GeoIP != nil && strings.TrimSpace(req.GeoIP.AutoUpdateInterval) != "" {
+			d, err := time.ParseDuration(req.GeoIP.AutoUpdateInterval)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的 GeoIP 自动更新间隔: %v", err), "code": "invalid_geoip_auto_update_interval"})
+				return
+			}
+			geoIPAutoUpdateInterval = d
+		}
+		if req.FreeProxyFilter != nil && strings.TrimSpace(req.FreeProxyFilter.Timeout) != "" {
+			if _, err := time.ParseDuration(req.FreeProxyFilter.Timeout); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的免费源筛选超时: %v", err), "code": "invalid_free_proxy_filter_timeout"})
+				return
+			}
+		}
+		if req.FreeProxyCache != nil && strings.TrimSpace(req.FreeProxyCache.MaxAge) != "" {
+			if _, err := time.ParseDuration(req.FreeProxyCache.MaxAge); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的免费源缓存时长: %v", err), "code": "invalid_free_proxy_cache_max_age"})
+				return
+			}
+		}
+		var sourceConfigs []nodesource.SourceConfig
+		if req.FreeProxySources != nil {
+			var err error
+			sourceConfigs, err = sourceConfigsFromRequest(req.FreeProxySources)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_free_proxy_source"})
+				return
+			}
+		}
+		var qualityInterval time.Duration
+		hasQualityInterval := false
+		var cloudflareTimeout time.Duration
+		hasCloudflareTimeout := false
+		if req.QualityCheck != nil {
+			if strings.TrimSpace(req.QualityCheck.Interval) != "" {
+				d, err := time.ParseDuration(req.QualityCheck.Interval)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的质量检测间隔: %v", err), "code": "invalid_quality_interval"})
+					return
+				}
+				qualityInterval = d
+				hasQualityInterval = true
+			}
+			if strings.TrimSpace(req.QualityCheck.CloudflareTimeout) != "" {
+				d, err := time.ParseDuration(req.QualityCheck.CloudflareTimeout)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的 CF 超时: %v", err), "code": "invalid_cloudflare_timeout"})
+					return
+				}
+				cloudflareTimeout = d
+				hasCloudflareTimeout = true
+			}
+		}
 
 		s.cfgMu.Lock()
 		if s.cfgSrc == nil {
@@ -3084,10 +3154,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if req.Pool != nil {
 			s.cfgSrc.Pool.Mode = req.Pool.Mode
 			s.cfgSrc.Pool.FailureThreshold = req.Pool.FailureThreshold
-			if req.Pool.BlacklistDuration != "" {
-				if d, err := time.ParseDuration(req.Pool.BlacklistDuration); err == nil {
-					s.cfgSrc.Pool.BlacklistDuration = d
-				}
+			if strings.TrimSpace(req.Pool.BlacklistDuration) != "" {
+				s.cfgSrc.Pool.BlacklistDuration = poolBlacklistDuration
 			}
 		}
 		if req.Management != nil {
@@ -3099,21 +3167,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.GeoIP.Listen = req.GeoIP.Listen
 			s.cfgSrc.GeoIP.Port = req.GeoIP.Port
 			s.cfgSrc.GeoIP.AutoUpdateEnabled = req.GeoIP.AutoUpdateEnabled
-			if req.GeoIP.AutoUpdateInterval != "" {
-				if d, err := time.ParseDuration(req.GeoIP.AutoUpdateInterval); err == nil {
-					s.cfgSrc.GeoIP.AutoUpdateInterval = d
-				}
+			if strings.TrimSpace(req.GeoIP.AutoUpdateInterval) != "" {
+				s.cfgSrc.GeoIP.AutoUpdateInterval = geoIPAutoUpdateInterval
 			}
 		}
 		if req.FreeProxySources != nil {
-			sources, err := sourceConfigsFromRequest(req.FreeProxySources)
-			if err != nil {
-				s.cfgMu.Unlock()
-				w.WriteHeader(http.StatusBadRequest)
-				writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_free_proxy_source"})
-				return
-			}
-			s.cfgSrc.FreeProxySources = sources
+			s.cfgSrc.FreeProxySources = sourceConfigs
 		}
 		if req.FreeProxyMaxNodes != nil {
 			s.cfgSrc.FreeProxyMaxNodes = *req.FreeProxyMaxNodes
@@ -3125,36 +3184,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.FreeProxyCache = freeProxyCacheFromRequest(req.FreeProxyCache, s.cfgSrc.FreeProxyCache)
 		}
 		if req.QualityCheck != nil {
-			qualityInterval := s.cfgSrc.QualityCheck.Interval
-			if req.QualityCheck.Interval != "" {
-				d, err := time.ParseDuration(req.QualityCheck.Interval)
-				if err != nil {
-					s.cfgMu.Unlock()
-					w.WriteHeader(http.StatusBadRequest)
-					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的质量检测间隔: %v", err), "code": "invalid_quality_interval"})
-					return
-				}
-				qualityInterval = d
+			resolvedQualityInterval := s.cfgSrc.QualityCheck.Interval
+			if hasQualityInterval {
+				resolvedQualityInterval = qualityInterval
 			}
-			cloudflareTimeout := s.cfgSrc.QualityCheck.CloudflareTimeout
-			if req.QualityCheck.CloudflareTimeout != "" {
-				d, err := time.ParseDuration(req.QualityCheck.CloudflareTimeout)
-				if err != nil {
-					s.cfgMu.Unlock()
-					w.WriteHeader(http.StatusBadRequest)
-					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的 CF 超时: %v", err), "code": "invalid_cloudflare_timeout"})
-					return
-				}
-				cloudflareTimeout = d
+			resolvedCloudflareTimeout := s.cfgSrc.QualityCheck.CloudflareTimeout
+			if hasCloudflareTimeout {
+				resolvedCloudflareTimeout = cloudflareTimeout
 			}
 			s.cfgSrc.QualityCheck = config.QualityCheckConfig{
 				Enabled:               req.QualityCheck.Enabled,
-				Interval:              qualityInterval,
+				Interval:              resolvedQualityInterval,
 				Region:                req.QualityCheck.Region,
 				Count:                 req.QualityCheck.Count,
 				IncludeUnavailable:    req.QualityCheck.IncludeUnavailable,
 				RetryFailed:           req.QualityCheck.RetryFailed,
-				CloudflareTimeout:     cloudflareTimeout,
+				CloudflareTimeout:     resolvedCloudflareTimeout,
 				CloudflareConcurrency: req.QualityCheck.CloudflareConcurrency,
 			}
 			s.cfgSrc.QualityCheck = s.cfgSrc.QualityCheck.Normalized()
