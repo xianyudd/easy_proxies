@@ -1498,6 +1498,43 @@ nodes:
 	}
 }
 
+func TestHandleSettingsPreservesPoolFieldsWhenPartiallyUpdated(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`pool:
+  mode: round_robin
+  failure_threshold: 3
+  blacklist_duration: 5m
+nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+
+	body := []byte(`{"pool":{"mode":"least_failures"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Pool.Mode != "least_failures" || reloaded.Pool.FailureThreshold != 3 || reloaded.Pool.BlacklistDuration != 5*time.Minute {
+		t.Fatalf("pool partial update corrupted fields: %#v", reloaded.Pool)
+	}
+}
+
 func TestHandleSettingsPreservesGeoIPFieldsWhenPartiallyUpdated(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

@@ -3313,6 +3313,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasMultiPortBasePort := hasNestedJSONKey(body, "multi_port", "base_port")
 		hasMultiPortUsername := hasNestedJSONKey(body, "multi_port", "username")
 		hasMultiPortPassword := hasNestedJSONKey(body, "multi_port", "password")
+		hasPoolMode := hasNestedJSONKey(body, "pool", "mode")
+		hasPoolFailureThreshold := hasNestedJSONKey(body, "pool", "failure_threshold")
+		hasPoolBlacklistDuration := hasNestedJSONKey(body, "pool", "blacklist_duration")
 		hasManagementListen := hasNestedJSONKey(body, "management", "listen")
 		hasGeoIPDatabasePath := hasNestedJSONKey(body, "geoip", "database_path")
 		hasGeoIPListen := hasNestedJSONKey(body, "geoip", "listen")
@@ -3356,19 +3359,19 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Pool != nil {
-			if !isAllowedPoolMode(req.Pool.Mode) {
+			if hasPoolMode && !isAllowedPoolMode(req.Pool.Mode) {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的节点池模式", "code": "invalid_pool_mode"})
 				return
 			}
-			if req.Pool.FailureThreshold <= 0 {
+			if hasPoolFailureThreshold && req.Pool.FailureThreshold <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的节点池失败阈值", "code": "invalid_pool_failure_threshold"})
 				return
 			}
 		}
 		var poolBlacklistDuration time.Duration
-		if req.Pool != nil && strings.TrimSpace(req.Pool.BlacklistDuration) != "" {
+		if req.Pool != nil && hasPoolBlacklistDuration && strings.TrimSpace(req.Pool.BlacklistDuration) != "" {
 			d, err := time.ParseDuration(req.Pool.BlacklistDuration)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
@@ -3612,9 +3615,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if req.Pool != nil {
-			s.cfgSrc.Pool.Mode = req.Pool.Mode
-			s.cfgSrc.Pool.FailureThreshold = req.Pool.FailureThreshold
-			if strings.TrimSpace(req.Pool.BlacklistDuration) != "" {
+			if hasPoolMode {
+				s.cfgSrc.Pool.Mode = req.Pool.Mode
+			}
+			if hasPoolFailureThreshold {
+				s.cfgSrc.Pool.FailureThreshold = req.Pool.FailureThreshold
+			}
+			if hasPoolBlacklistDuration && strings.TrimSpace(req.Pool.BlacklistDuration) != "" {
 				s.cfgSrc.Pool.BlacklistDuration = poolBlacklistDuration
 			}
 		}
