@@ -374,7 +374,7 @@ free_proxy_cache:
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		NeedReload                  bool `json:"need_reload"`
+		NeedReload                 bool `json:"need_reload"`
 		ReloadStarted              bool `json:"reload_started"`
 		FreeProxyRefreshNeeded     bool `json:"free_proxy_refresh_needed"`
 		FreeProxyRefreshStarted    bool `json:"free_proxy_refresh_started"`
@@ -3878,8 +3878,6 @@ func TestHandleSubscriptionConfigURLChangeRefreshesInBackground(t *testing.T) {
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
-subscriptions:
-  - https://example.test/sub-a
 subscription_refresh:
   enabled: true
   interval: 1h
@@ -3891,6 +3889,9 @@ subscription_refresh:
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Avoid a real subscription fetch during test setup. The handler only
+	// needs the in-memory old URL to detect that the request changed URLs.
+	cfg.Subscriptions = []string{"https://example.test/sub-a"}
 	refresher := &recordingSubscriptionRefresher{
 		status:               SubscriptionStatus{NodeCount: 9},
 		updateRefreshStarted: make(chan struct{}, 1),

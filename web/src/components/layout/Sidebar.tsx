@@ -1,9 +1,10 @@
-import { Activity, FileSearch, Gauge, List, Settings, ShieldCheck, Wifi } from 'lucide-react'
+import { Activity, FileSearch, Gauge, List, ServerCog, Settings, ShieldCheck, Wifi } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 
 const items = [
   ['extractor', FileSearch, '代理提取'],
   ['overview', List, '节点总览'],
+  ['config', ServerCog, '节点配置'],
   ['quality', ShieldCheck, '节点质量'],
   ['status', Gauge, '运行状态'],
   ['settings', Settings, '系统设置'],

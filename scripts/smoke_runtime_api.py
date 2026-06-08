@@ -157,6 +157,44 @@ def check_debug_and_logs(opener: urllib.request.OpenerDirector) -> None:
     print("debug/logs: summary/full/logs and structured invalid bool ok")
 
 
+
+def check_config_node_crud(opener: urllib.request.OpenerDirector) -> None:
+    suffix = str(int(time.time() * 1000))
+    name = f"smoke-node-{suffix}"
+    updated = f"smoke-node-updated-{suffix}"
+
+    def cleanup(node_name: str) -> None:
+        code, _ = request(opener, "DELETE", f"/api/nodes/config/{urllib.parse.quote(node_name)}")
+        require(code in {200, 404}, f"cleanup config node {node_name} failed HTTP {code}")
+
+    cleanup(name)
+    cleanup(updated)
+    try:
+        create_payload = {"name": name, "uri": "http://127.0.0.1:1", "port": 0}
+        code, created = request(opener, "POST", "/api/nodes/config", create_payload)
+        require(code == 200 and isinstance(created, dict), f"create config node failed HTTP {code}: {created!r}")
+        require(created.get("need_reload") is True, f"create config node should require reload: {created!r}")
+        require((created.get("node") or {}).get("name") == name, f"created node name mismatch: {created!r}")
+
+        update_payload = {"name": updated, "uri": "http://127.0.0.1:2", "port": 0}
+        code, changed = request(opener, "PUT", f"/api/nodes/config/{urllib.parse.quote(name)}", update_payload)
+        require(code == 200 and isinstance(changed, dict), f"update config node failed HTTP {code}: {changed!r}")
+        require(changed.get("need_reload") is True, f"update config node should require reload: {changed!r}")
+        require((changed.get("node") or {}).get("name") == updated, f"updated node name mismatch: {changed!r}")
+
+        code, listed = request(opener, "GET", "/api/nodes/config")
+        require(code == 200 and isinstance(listed, dict), f"list config nodes failed HTTP {code}: {listed!r}")
+        nodes = listed.get("nodes") or []
+        require(any(isinstance(node, dict) and node.get("name") == updated for node in nodes), f"updated config node not listed: {listed!r}")
+
+        code, deleted = request(opener, "DELETE", f"/api/nodes/config/{urllib.parse.quote(updated)}")
+        require(code == 200 and isinstance(deleted, dict), f"delete config node failed HTTP {code}: {deleted!r}")
+        require(deleted.get("need_reload") is True, f"delete config node should require reload: {deleted!r}")
+        print("config-nodes: create/update/list/delete require manual reload and cleaned up")
+    finally:
+        cleanup(name)
+        cleanup(updated)
+
 def check_quality_paths(opener: urllib.request.OpenerDirector) -> None:
     for path in ("/api/cloudflare/cache", "/api/reputation/cache"):
         code, payload = request(opener, "GET", path)
@@ -379,6 +417,7 @@ def main() -> int:
         original_settings = check_same_value_save(opener)
         check_status_endpoints(opener)
         check_debug_and_logs(opener)
+        check_config_node_crud(opener)
         check_quality_paths(opener)
         check_extractor_paths(opener)
         check_manual_reload(opener)

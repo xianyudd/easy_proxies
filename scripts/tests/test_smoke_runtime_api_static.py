@@ -78,8 +78,20 @@ def test_smoke_script_uses_env_configurable_base_url_and_password():
     assert 'runtime-partial-secret' in text
 
 
+def test_smoke_script_checks_config_node_crud_without_auto_reload():
+    text = read_source()
+    assert "check_config_node_crud" in text
+    assert '"POST", "/api/nodes/config"' in text
+    assert '"GET", "/api/nodes/config"' in text
+    assert '"PUT", f"/api/nodes/config/{urllib.parse.quote(name)}"' in text
+    assert '"DELETE", f"/api/nodes/config/{urllib.parse.quote(updated)}"' in text
+    assert 'create config node should require reload' in text
+    assert 'config-nodes: create/update/list/delete require manual reload and cleaned up' in text
+
+
 if __name__ == "__main__":
     test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths()
+    test_smoke_script_checks_config_node_crud_without_auto_reload()
     test_smoke_script_checks_port_continuity_after_reload()
     test_smoke_script_checks_auth_negative_paths_by_default()
     test_smoke_script_can_exercise_local_free_proxy_fixture_safely()
