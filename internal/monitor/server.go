@@ -1917,6 +1917,16 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckCloudflare, region, mode, source, count, includeUnavailable, retryFailed); startBackground {
 		return
 	}
+	const maxSyncCloudflareCount = 50
+	if count > maxSyncCloudflareCount {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{
+			"error":     fmt.Sprintf("cloudflare sync count is limited to %d; use background=true for larger scans", maxSyncCloudflareCount),
+			"code":      "use_background",
+			"max_count": maxSyncCloudflareCount,
+		})
+		return
+	}
 	maxCount := 50
 	if includeUnavailable {
 		maxCount = 500

@@ -2669,15 +2669,20 @@
 
     async function checkCloudflareScore(includeUnavailable) {
       const region = document.getElementById('cfRegion').value;
-      const count = includeUnavailable ? 500 : (document.getElementById('cfCount').value || 10);
+      const count = includeUnavailable ? 500 : Math.min(50, Math.max(1, Number(document.getElementById('cfCount').value) || 10));
       const status = document.getElementById('cfStatus');
-      status.textContent = includeUnavailable ? 'CF 全量扫描中，请稍候...' : 'CF 检测中，请稍候...';
+      status.textContent = includeUnavailable ? 'CF 全量扫描任务创建中...' : 'CF 检测中，请稍候...';
       try {
         await loadCloudflareProxySettings();
-        const include = includeUnavailable ? '&include_unavailable=true' : '';
+        const include = includeUnavailable ? '&include_unavailable=true&background=true' : '';
         const res = await fetch(`/api/cloudflare/check?region=${encodeURIComponent(region)}&mode=multi-port&count=${encodeURIComponent(count)}${include}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        if (data.job_id) {
+          status.textContent = `后台任务已创建：${data.job_id}。请到当前新版节点质量页查看进度。`;
+          showToast('CF 全量扫描已转入后台', 'success');
+          return;
+        }
         updateCloudflareSummary(data.summary);
         renderCloudflareRows(data.data || []);
         status.textContent = `完成：检测 ${data.checked_count || 0} 条，地区 ${data.region || region}${data.include_unavailable ? '，包含不可用节点' : ''}。注意：这是本地兼容评分，不是官方 Bot Score。`;
