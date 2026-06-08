@@ -2072,8 +2072,9 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// GeoIP 分区路由入口
-	if geoipCfg.Enabled && geoipCfg.Port > 0 {
+	// GeoIP 分区路由入口。GeoIP router exposes HTTP paths only, so omit
+	// it from socks5-only exports to keep the file scheme-homogeneous.
+	if geoipCfg.Enabled && geoipCfg.Port > 0 && scheme != "socks5" {
 		geoAddr := geoipCfg.Listen
 		if geoAddr == "" || geoAddr == "0.0.0.0" || geoAddr == "::" {
 			if extIP, _, _, _ := s.getSettings(); extIP != "" {

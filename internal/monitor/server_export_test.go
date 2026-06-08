@@ -52,6 +52,34 @@ func TestHandleExportOnlyIncludesCheckedAvailableNodes(t *testing.T) {
 	}
 }
 
+func TestHandleExportSocks5DoesNotIncludeGeoIPHTTPEntry(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{
+		mgr: mgr,
+		cfg: Config{ProxyUsername: "user", ProxyPassword: "pass"},
+		cfgSrc: &config.Config{
+			Mode:     "multi-port",
+			Listener: config.ListenerConfig{Username: "user", Password: "pass"},
+			GeoIP:    config.GeoIPConfig{Enabled: true, Listen: "127.0.0.1", Port: 1221},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/export?scheme=socks5", nil)
+	rec := httptest.NewRecorder()
+	srv.handleExport(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "GeoIP") || strings.Contains(body, "http://") {
+		t.Fatalf("socks5 export should not include HTTP-only GeoIP entries: %q", body)
+	}
+}
+
 func TestHandleExportRejectsInvalidSchemeWithStructuredCode(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
 	if err != nil {
