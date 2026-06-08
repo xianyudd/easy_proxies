@@ -188,8 +188,11 @@ export function SettingsPage() {
     }
   }, onError:e=>toast(e instanceof Error ? e.message:'保存失败','error') })
   const manualFreeRefresh = useMutation({ mutationFn: startFreeProxyRefresh, onSuccess:(res)=>{
-    toast(res.started ? '免费源已开始后台刷新...' : '已有免费源刷新在运行...', 'ok')
-    setFreeProxyRefreshState('refreshing')
+    const statusState = String(res.status?.state || '')
+    const started = !!res.started
+    const message = String(res.message || (started ? '免费源已开始后台刷新...' : '免费源刷新未启动'))
+    toast(message, statusState === 'failed' ? 'error' : 'ok')
+    setFreeProxyRefreshState(started || statusState === 'running' ? 'refreshing' : 'idle')
     void freeProxyRefreshStatus.refetch()
   }, onError:e=>toast(e instanceof Error ? e.message:'免费源刷新启动失败','error') })
   const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:(res)=>{ const changed = res.config_changed !== false; const refreshed = !!res.refresh_triggered; toast(refreshed ? '订阅配置已保存，后台刷新已启动' : changed ? '订阅配置已保存，调度已更新' : '订阅配置未变化，已保持当前状态', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
