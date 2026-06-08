@@ -56,6 +56,7 @@ type reloadStatus struct {
 	StartedAt   time.Time `json:"started_at,omitempty"`
 	FinishedAt  time.Time `json:"finished_at,omitempty"`
 	DurationMS  int64     `json:"duration_ms,omitempty"`
+	ElapsedMS   int64     `json:"elapsed_ms,omitempty"`
 	Error       string    `json:"error,omitempty"`
 	RequestedBy string    `json:"requested_by,omitempty"`
 	Pending     bool      `json:"reload_pending,omitempty"`
@@ -560,6 +561,9 @@ func (s *Server) currentReloadStatus() reloadStatus {
 	status := s.reloadStatus
 	if status.State == "" {
 		status.State = "idle"
+	}
+	if status.State == "running" && !status.StartedAt.IsZero() {
+		status.ElapsedMS = time.Since(status.StartedAt).Milliseconds()
 	}
 	status.Pending = s.reloadPending
 	return status

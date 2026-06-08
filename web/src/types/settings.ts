@@ -56,6 +56,7 @@ export interface SaveSettingsResponse {
     started_at?: string
     finished_at?: string
     duration_ms?: number
+    elapsed_ms?: number
     error?: string
     requested_by?: string
     reload_pending?: boolean
@@ -96,6 +97,7 @@ export interface ReloadStatus {
   started_at?: string
   finished_at?: string
   duration_ms?: number
+  elapsed_ms?: number
   error?: string
   requested_by?: string
   reload_pending?: boolean

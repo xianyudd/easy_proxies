@@ -265,7 +265,7 @@ export function SettingsPage() {
       <Clock3 size={18} />
       <div>
         <strong>{reloadState === 'reloading' ? '设置已保存，后台正在生效' : '后台生效失败'}</strong>
-        <span>{reloadState === 'reloading' ? '页面无需等待；代理核心会在后台完成重载，完成后自动刷新状态。' : '配置已经保存，但核心重载失败；请检查日志后再次保存或使用 epctl 重启隔离实例。'}</span>
+        <span>{reloadState === 'reloading' ? `页面无需等待；代理核心会在后台完成重载，已运行 ${Math.floor(Number(reloadStatus.data?.elapsed_ms || 0) / 1000)} 秒，完成后自动刷新状态。` : '配置已经保存，但核心重载失败；请检查日志后再次保存或使用 epctl 重启隔离实例。'}</span>
       </div>
     </div>}
     {freeProxyRefreshState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status">

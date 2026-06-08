@@ -475,6 +475,28 @@ management:
 	}
 }
 
+func TestCurrentReloadStatusReportsElapsedWhileRunning(t *testing.T) {
+	started := time.Now().Add(-150 * time.Millisecond)
+	server := &Server{
+		reloadState: "running",
+		reloadStatus: reloadStatus{
+			State:     "running",
+			StartedAt: started,
+		},
+	}
+
+	status := server.currentReloadStatus()
+	if status.State != "running" {
+		t.Fatalf("state=%q, want running", status.State)
+	}
+	if status.ElapsedMS <= 0 {
+		t.Fatalf("elapsed_ms=%d, want positive elapsed duration", status.ElapsedMS)
+	}
+	if status.DurationMS != 0 {
+		t.Fatalf("duration_ms=%d, want 0 while running", status.DurationMS)
+	}
+}
+
 func TestHandleSettingsQueuesReloadWhenSaveArrivesDuringReload(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
