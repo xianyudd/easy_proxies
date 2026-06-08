@@ -3258,11 +3258,18 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if req.FreeProxyCache != nil && strings.TrimSpace(req.FreeProxyCache.MaxAge) != "" {
-			if _, err := time.ParseDuration(req.FreeProxyCache.MaxAge); err != nil {
+		if req.FreeProxyCache != nil {
+			if req.FreeProxyCache.Workers <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
-				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的免费源缓存时长: %v", err), "code": "invalid_free_proxy_cache_max_age"})
+				writeJSON(w, map[string]any{"error": "无效的免费源缓存并发数", "code": "invalid_free_proxy_cache_workers"})
 				return
+			}
+			if strings.TrimSpace(req.FreeProxyCache.MaxAge) != "" {
+				if _, err := time.ParseDuration(req.FreeProxyCache.MaxAge); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的免费源缓存时长: %v", err), "code": "invalid_free_proxy_cache_max_age"})
+					return
+				}
 			}
 		}
 		var sourceConfigs []nodesource.SourceConfig

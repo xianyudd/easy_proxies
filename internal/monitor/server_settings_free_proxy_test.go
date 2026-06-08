@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -599,6 +600,60 @@ free_proxy_cache:
 	}
 	if reloaded.ExternalIP != "1.1.1.1" || reloaded.FreeProxyCache.Path != originalCache.Path || reloaded.FreeProxyCache.Workers != originalCache.Workers || reloaded.FreeProxyCache.MaxAge != originalCache.MaxAge {
 		t.Fatalf("invalid free proxy cache should not be persisted: external_ip=%q cache=%#v original=%#v", reloaded.ExternalIP, reloaded.FreeProxyCache, originalCache)
+	}
+}
+
+func TestHandleSettingsRejectsInvalidFreeProxyCacheWorkersWithoutMutatingMemory(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+free_proxy_cache:
+  enabled: true
+  path: .cache/free-proxies.txt
+  refresh_on_start: true
+  auto_reload: true
+  workers: 4
+  max_age: 6h
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalCache := cfg.FreeProxyCache
+	server := &Server{cfgSrc: cfg}
+
+	for _, tc := range []struct {
+		name    string
+		workers int
+	}{
+		{name: "zero", workers: 0},
+		{name: "negative", workers: -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"external_ip":"2.2.2.2","free_proxy_cache":{"enabled":true,"path":".cache/other.txt","refresh_on_start":false,"auto_reload":false,"workers":` + strconv.Itoa(tc.workers) + `,"max_age":"6h"}}`
+			req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(body))
+			rec := httptest.NewRecorder()
+
+			server.handleSettings(rec, req)
+
+			assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_free_proxy_cache_workers")
+			if server.cfgSrc.ExternalIP != "1.1.1.1" || server.cfgSrc.FreeProxyCache.Path != originalCache.Path || server.cfgSrc.FreeProxyCache.Workers != originalCache.Workers || server.cfgSrc.FreeProxyCache.MaxAge != originalCache.MaxAge {
+				t.Fatalf("invalid free proxy cache should not mutate memory: external_ip=%q cache=%#v original=%#v", server.cfgSrc.ExternalIP, server.cfgSrc.FreeProxyCache, originalCache)
+			}
+			reloaded, err := config.Load(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.ExternalIP != "1.1.1.1" || reloaded.FreeProxyCache.Path != originalCache.Path || reloaded.FreeProxyCache.Workers != originalCache.Workers || reloaded.FreeProxyCache.MaxAge != originalCache.MaxAge {
+				t.Fatalf("invalid free proxy cache should not be persisted: external_ip=%q cache=%#v original=%#v", reloaded.ExternalIP, reloaded.FreeProxyCache, originalCache)
+			}
+		})
 	}
 }
 
