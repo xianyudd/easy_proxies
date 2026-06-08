@@ -398,6 +398,57 @@ log:
 	}
 }
 
+func TestHandleSettingsPartialPutPreservesBooleanAndNestedConfig(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`skip_cert_verify: true
+external_ip: 9.9.9.9
+management:
+  listen: ` + listen + `
+  probe_target: http://cp.cloudflare.com/generate_204
+geoip:
+  enabled: true
+  database_path: ./GeoLite2-Country.mmdb
+  listen: 127.0.0.1
+  port: 1221
+  auto_update_enabled: true
+  auto_update_interval: 24h
+nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader([]byte(`{"external_ip":"1.2.3.4"}`)))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ExternalIP != "1.2.3.4" {
+		t.Fatalf("external_ip = %q, want updated", reloaded.ExternalIP)
+	}
+	if !reloaded.SkipCertVerify {
+		t.Fatalf("partial PUT cleared skip_cert_verify")
+	}
+	if !reloaded.GeoIP.Enabled || reloaded.GeoIP.DatabasePath == "" || reloaded.GeoIP.Port != 1221 {
+		t.Fatalf("partial PUT corrupted geoip config: %#v", reloaded.GeoIP)
+	}
+}
+
 func TestHandleSettingsStartsCoreReloadAsynchronously(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

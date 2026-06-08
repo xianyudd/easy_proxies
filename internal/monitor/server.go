@@ -2973,7 +2973,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			FreeProxyFilter   *freeProxyFilterRequest         `json:"free_proxy_filter"`
 			FreeProxyCache    *freeProxyCacheRequest          `json:"free_proxy_cache"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		body, err := readJSONBodyMap(r, &req)
+		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			writeJSON(w, map[string]any{"error": "请求格式错误"})
 			return
@@ -2981,10 +2982,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 		extIP := strings.TrimSpace(req.ExternalIP)
 		probeTarget := strings.TrimSpace(req.ProbeTarget)
+		hasExternalIP := hasJSONKey(body, "external_ip")
+		hasProbeTarget := hasJSONKey(body, "probe_target")
+		hasSkipCertVerify := hasJSONKey(body, "skip_cert_verify")
+		hasMode := hasJSONKey(body, "mode")
 
 		logCfg := config.LogConfig{}
 		hasLogCfg := false
 		oldManagementListen := ""
+		savedExternalIP := ""
+		savedProbeTarget := ""
+		savedSkipCertVerify := false
 		if req.Log != nil {
 			logCfg = config.LogConfig{
 				Output:     req.Log.Output,
@@ -3008,15 +3016,23 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		oldCoreSignature := coreReloadSignature(s.cfgSrc)
 		oldFreeProxySignature := freeProxyRefreshSignature(s.cfgSrc)
 
-		s.cfg.ExternalIP = extIP
-		s.cfg.ProbeTarget = probeTarget
-		s.cfg.SkipCertVerify = req.SkipCertVerify
-		s.cfgSrc.ExternalIP = extIP
-		s.cfgSrc.Management.ProbeTarget = probeTarget
-		s.cfgSrc.SkipCertVerify = req.SkipCertVerify
+		if hasExternalIP {
+			s.cfg.ExternalIP = extIP
+			s.cfgSrc.ExternalIP = extIP
+		}
+		if hasProbeTarget {
+			s.cfg.ProbeTarget = probeTarget
+			s.cfgSrc.Management.ProbeTarget = probeTarget
+		}
+		if hasSkipCertVerify {
+			s.cfg.SkipCertVerify = req.SkipCertVerify
+			s.cfgSrc.SkipCertVerify = req.SkipCertVerify
+		}
 
-		geoipEnabled := req.GeoIP != nil && req.GeoIP.Enabled
-		s.cfgSrc.GeoIP.Enabled = geoipEnabled
+		if req.GeoIP != nil {
+			s.cfgSrc.GeoIP.Enabled = req.GeoIP.Enabled
+		}
+		geoipEnabled := s.cfgSrc.GeoIP.Enabled
 		if geoipEnabled && s.cfgSrc.GeoIP.DatabasePath == "" {
 			s.cfgSrc.GeoIP.DatabasePath = "./GeoLite2-Country.mmdb"
 			s.cfgSrc.GeoIP.AutoUpdateEnabled = true
@@ -3035,7 +3051,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			s.cfgSrc.Log.Compress = logCfg.Compress
 		}
-		if req.Mode != "" {
+		if hasMode {
 			s.cfgSrc.Mode = req.Mode
 		}
 		if req.Listener != nil {
@@ -3125,6 +3141,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		needFreeProxyRefresh := oldFreeProxySignature != freeProxyRefreshSignature(s.cfgSrc)
 		needReload := oldCoreSignature != coreReloadSignature(s.cfgSrc)
+		savedExternalIP = s.cfgSrc.ExternalIP
+		savedProbeTarget = s.cfgSrc.Management.ProbeTarget
+		savedSkipCertVerify = s.cfgSrc.SkipCertVerify
 		if needFreeProxyRefresh {
 			// Free-proxy source/filter/cache changes are applied through the
 			// refresh pipeline. That pipeline starts an async reload only when it
@@ -3182,9 +3201,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 		writeJSON(w, map[string]any{
 			"message":                    "设置已保存",
-			"external_ip":                extIP,
-			"probe_target":               probeTarget,
-			"skip_cert_verify":           req.SkipCertVerify,
+			"external_ip":                savedExternalIP,
+			"probe_target":               savedProbeTarget,
+			"skip_cert_verify":           savedSkipCertVerify,
 			"need_reload":                needReload,
 			"reload_started":             reloadStarted,
 			"reload_status":              reloadStatus,
@@ -3232,6 +3251,27 @@ func requestScheme(r *http.Request) string {
 		return "https"
 	}
 	return "http"
+}
+
+func readJSONBodyMap(r *http.Request, v any) (map[string]json.RawMessage, error) {
+	var raw map[string]json.RawMessage
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func hasJSONKey(raw map[string]json.RawMessage, key string) bool {
+	_, ok := raw[key]
+	return ok
 }
 
 // handleSubscriptionStatus returns the current subscription refresh status.
