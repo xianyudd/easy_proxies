@@ -2002,8 +2002,19 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 		}
 		count = parsed
 	}
-	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
-	retryFailed := r.URL.Query().Get("retry_failed") == "1" || strings.EqualFold(r.URL.Query().Get("retry_failed"), "true")
+	includeUnavailable, ok := parseOptionalBoolParam(r.URL.Query(), "include_unavailable")
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid include_unavailable", "code": "invalid_bool"})
+		return
+	}
+	includeUnavailable = includeUnavailable || strings.EqualFold(r.URL.Query().Get("scope"), "all")
+	retryFailed, ok := parseOptionalBoolParam(r.URL.Query(), "retry_failed")
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid retry_failed", "code": "invalid_bool"})
+		return
+	}
 	if !isAllowedMonitorRegion(region) {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "invalid region", "code": "invalid_region"})
@@ -2253,13 +2264,24 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		}
 		count = parsed
 	}
-	retryFailed := r.URL.Query().Get("retry_failed") == "1" || strings.EqualFold(r.URL.Query().Get("retry_failed"), "true")
+	retryFailed, ok := parseOptionalBoolParam(r.URL.Query(), "retry_failed")
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid retry_failed", "code": "invalid_bool"})
+		return
+	}
 	if !isAllowedMonitorRegion(region) {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "invalid region", "code": "invalid_region"})
 		return
 	}
-	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
+	includeUnavailable, ok := parseOptionalBoolParam(r.URL.Query(), "include_unavailable")
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid include_unavailable", "code": "invalid_bool"})
+		return
+	}
+	includeUnavailable = includeUnavailable || strings.EqualFold(r.URL.Query().Get("scope"), "all")
 	if !isAllowedMonitorMode(mode) {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in reputation check", "code": "invalid_mode"})

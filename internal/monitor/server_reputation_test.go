@@ -107,6 +107,36 @@ func TestReputationCheckReturnsStructuredErrorCodes(t *testing.T) {
 	}
 }
 
+func TestQualityCompanionChecksRejectInvalidBoolQuery(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil || srv.srv == nil {
+		t.Fatal("expected server")
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "cloudflare include unavailable", path: "/api/cloudflare/check?region=all&mode=multi-port&count=1&include_unavailable=maybe"},
+		{name: "cloudflare retry failed", path: "/api/cloudflare/check?region=all&mode=multi-port&count=1&retry_failed=maybe"},
+		{name: "reputation include unavailable", path: "/api/reputation/check?region=all&mode=multi-port&count=1&include_unavailable=maybe"},
+		{name: "reputation retry failed", path: "/api/reputation/check?region=all&mode=multi-port&count=1&retry_failed=maybe"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+
+			srv.srv.Handler.ServeHTTP(rec, req)
+
+			assertMonitorAPIErrorCode(t, rec, http.StatusBadRequest, "invalid_bool")
+		})
+	}
+}
+
 func TestQualityCompanionHandlersRejectMethodsWithStructuredCode(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true})
 	if err != nil {
