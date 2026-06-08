@@ -1367,10 +1367,14 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshots := s.mgr.Snapshot()
 	var totalCalls, totalSuccess int64
+	summaryOnly := strings.EqualFold(r.URL.Query().Get("summary_only"), "true") || r.URL.Query().Get("summary_only") == "1"
 	debugNodes := make([]map[string]any, 0, len(snapshots))
 	for _, snap := range snapshots {
 		totalCalls += snap.SuccessCount + int64(snap.FailureCount)
 		totalSuccess += snap.SuccessCount
+		if summaryOnly {
+			continue
+		}
 		debugNodes = append(debugNodes, map[string]any{
 			"tag":                snap.Tag,
 			"name":               snap.Name,
@@ -1391,12 +1395,16 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 	if totalCalls > 0 {
 		successRate = float64(totalSuccess) / float64(totalCalls) * 100
 	}
-	writeJSON(w, map[string]any{
-		"nodes":         debugNodes,
+	resp := map[string]any{
+		"node_count":    len(snapshots),
 		"total_calls":   totalCalls,
 		"total_success": totalSuccess,
 		"success_rate":  successRate,
-	})
+	}
+	if !summaryOnly {
+		resp["nodes"] = debugNodes
+	}
+	writeJSON(w, resp)
 }
 
 func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getNodes, getNodesSummary } from '../api/nodes'
-import { getDebug } from '../api/logs'
+import { getDebugSummary } from '../api/logs'
 import { Badge } from '../components/ui/Badge'
 import { RegionAvailabilityChart, LatencyTopChart, TrafficTrendChart, FailureRankChart } from '../components/charts/NodeCharts'
 
@@ -11,7 +11,7 @@ interface DebugResponse { success_rate?: number; nodes?: DebugNode[]; total_call
 export function StatusPage() {
   const { data = [] } = useQuery({ queryKey:['nodes'], queryFn:getNodes, refetchInterval:10000 })
   const summary = useQuery({ queryKey:['nodes-summary'], queryFn:getNodesSummary, refetchInterval:10000 })
-  const debug = useQuery({ queryKey:['debug-summary'], queryFn:() => getDebug() as Promise<DebugResponse>, refetchInterval:10000 })
+  const debug = useQuery({ queryKey:['debug-summary'], queryFn:() => getDebugSummary() as Promise<DebugResponse>, refetchInterval:10000 })
   const summaryData = summary.data
   const healthyTotal = Object.values(summaryData?.region_healthy || {}).reduce((sum, count) => sum + Number(count || 0), 0)
   const totalNodes = Number(summaryData?.total_nodes || data.length || 0)

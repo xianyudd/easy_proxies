@@ -123,6 +123,34 @@ func TestHandleNodesSummaryOnlyReturnsStatsWithoutRows(t *testing.T) {
 	}
 }
 
+func TestHandleDebugSummaryOnlyOmitsNodeDetails(t *testing.T) {
+	server := newTestNodesServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/debug?summary_only=true", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleDebug(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Nodes        []map[string]any `json:"nodes"`
+		NodeCount    int              `json:"node_count"`
+		TotalCalls   int64            `json:"total_calls"`
+		TotalSuccess int64            `json:"total_success"`
+		SuccessRate  float64          `json:"success_rate"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Nodes) != 0 {
+		t.Fatalf("summary response should omit node details, got %d nodes", len(payload.Nodes))
+	}
+	if payload.NodeCount != 3 || payload.TotalCalls == 0 || payload.TotalSuccess == 0 || payload.SuccessRate <= 0 {
+		t.Fatalf("summary metrics missing: %#v", payload)
+	}
+}
+
 func TestManualProbeFailureMarksNodeUnavailable(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
 	if err != nil {
