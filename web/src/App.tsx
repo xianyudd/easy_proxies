@@ -15,6 +15,7 @@ import { DiagnosticsPage } from './pages/DiagnosticsPage'
 
 const hashTabMap = new Map<string, ReturnType<typeof useAppStore.getState>['activeTab']>([
   ['#extractor', 'extractor'],
+  ['#nodes', 'overview'],
   ['#overview', 'overview'],
   ['#config', 'config'],
   ['#quality', 'quality'],

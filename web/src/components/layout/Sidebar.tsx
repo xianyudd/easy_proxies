@@ -11,12 +11,22 @@ const items = [
   ['diagnostics', Activity, '日志诊断'],
 ] as const
 
+const tabHashes: Record<typeof items[number][0], string> = {
+  extractor: 'extractor',
+  overview: 'nodes',
+  config: 'config',
+  quality: 'quality',
+  status: 'status',
+  settings: 'settings',
+  diagnostics: 'diagnostics',
+}
+
 export function Sidebar() {
   const active = useAppStore(s => s.activeTab)
   const setActive = useAppStore(s => s.setActiveTab)
   const activate = (id: typeof items[number][0]) => {
     setActive(id)
-    window.history.replaceState(null, '', `#${id}`)
+    window.history.replaceState(null, '', `#${tabHashes[id]}`)
   }
   return <aside className="sidebar">
     <div className="brand"><span className="brand-mark">EP</span><strong>Easy Proxies</strong></div>
