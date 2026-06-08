@@ -90,6 +90,20 @@ func TestHandleExtractorRejectsInvalidCount(t *testing.T) {
 	}
 }
 
+func TestHandleExtractorRejectsInvalidReveal(t *testing.T) {
+	srv := &Server{}
+	for _, raw := range []string{"maybe", "2", "yes"} {
+		t.Run(raw, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/extractor?region=all&mode=pool&format=http_url&reveal="+raw, nil)
+			rec := httptest.NewRecorder()
+
+			srv.handleExtractor(rec, req)
+
+			assertExtractorErrorCode(t, rec, http.StatusBadRequest, "invalid_bool")
+		})
+	}
+}
+
 func TestHandleExtractorReturnsStructuredErrorCodes(t *testing.T) {
 	srv := &Server{}
 	cases := []struct {

@@ -2474,7 +2474,12 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = "http_url"
 	}
-	reveal := r.URL.Query().Get("reveal") == "1" || strings.EqualFold(r.URL.Query().Get("reveal"), "true")
+	reveal, ok := parseOptionalBoolParam(r.URL.Query(), "reveal")
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid reveal", "code": "invalid_bool"})
+		return
+	}
 
 	count := 1
 	if rawCount := strings.TrimSpace(r.URL.Query().Get("count")); rawCount != "" {
