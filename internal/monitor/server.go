@@ -2146,6 +2146,16 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckReputation, region, mode, source, count, includeUnavailable, retryFailed); startBackground {
 		return
 	}
+	const maxSyncReputationCount = 5
+	if count > maxSyncReputationCount {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{
+			"error":     fmt.Sprintf("reputation sync count is limited to %d; use background=true for larger scans", maxSyncReputationCount),
+			"code":      "use_background",
+			"max_count": maxSyncReputationCount,
+		})
+		return
+	}
 	maxCount := 50
 	if retryFailed || strings.EqualFold(r.URL.Query().Get("scope"), "all") || includeUnavailable {
 		maxCount = 500

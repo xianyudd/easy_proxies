@@ -3,6 +3,7 @@ package monitor
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,6 +55,27 @@ func TestReputationHTTPHandlers(t *testing.T) {
 	srv.srv.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid region status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReputationCheckRequiresBackgroundForLargeSyncCount(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil || srv.srv == nil {
+		t.Fatal("expected server")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/reputation/check?region=all&mode=multi-port&count=999999", nil)
+	rec := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("large sync count status=%d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "background") {
+		t.Fatalf("large sync count should explain background mode, body=%s", rec.Body.String())
 	}
 }
 
