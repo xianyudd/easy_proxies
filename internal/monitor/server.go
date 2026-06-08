@@ -3476,10 +3476,19 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		// Parse interval
+		// Parse interval before mutating config. Silent fallback makes the UI
+		// report a successful save while using a different interval than the user
+		// submitted.
 		interval, err := time.ParseDuration(req.Interval)
-		if err != nil || interval < 5*time.Minute {
-			interval = 1 * time.Hour // default
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的订阅刷新间隔: %v", err), "code": "invalid_subscription_interval"})
+			return
+		}
+		if interval < 5*time.Minute {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "订阅刷新间隔不能小于 5 分钟", "code": "subscription_interval_too_short"})
+			return
 		}
 
 		// Clean URLs
