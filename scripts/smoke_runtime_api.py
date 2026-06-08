@@ -137,12 +137,29 @@ def check_manual_reload(opener: urllib.request.OpenerDirector) -> None:
     raise RuntimeSmokeError("manual reload did not finish within poll window")
 
 
+def fetch_all_nodes(opener: urllib.request.OpenerDirector) -> tuple[list[dict[str, Any]], int]:
+    page = 1
+    page_size = 500
+    nodes: list[dict[str, Any]] = []
+    expected_total = 0
+    while True:
+        path = f"/api/nodes?availability=all&page={page}&page_size={page_size}"
+        code, payload = request(opener, "GET", path)
+        require(code == 200 and isinstance(payload, dict), f"GET {path} failed HTTP {code}: {payload!r}")
+        page_nodes = payload.get("nodes")
+        require(isinstance(page_nodes, list), f"nodes payload missing list for {path}: {payload!r}")
+        nodes.extend(node for node in page_nodes if isinstance(node, dict))
+        expected_total = int(payload.get("total_filtered") or payload.get("total_nodes") or len(nodes))
+        if not payload.get("has_next"):
+            break
+        page += 1
+        require(page <= 1000, "node pagination exceeded safety limit")
+    return nodes, expected_total
+
+
 def check_port_continuity(opener: urllib.request.OpenerDirector) -> None:
-    code, payload = request(opener, "GET", "/api/nodes?availability=all&page_size=500")
-    require(code == 200 and isinstance(payload, dict), f"GET /api/nodes full page failed HTTP {code}: {payload!r}")
-    nodes = payload.get("nodes")
-    require(isinstance(nodes, list), f"nodes payload missing list: {payload!r}")
-    ports = [int(node.get("port")) for node in nodes if isinstance(node, dict) and node.get("port")]
+    nodes, expected_total = fetch_all_nodes(opener)
+    ports = [int(node.get("port")) for node in nodes if node.get("port")]
     require(len(ports) == len(set(ports)), f"duplicate ports detected: count={len(ports)} unique={len(set(ports))}")
     if not ports:
         print("ports: no node ports reported")
@@ -151,7 +168,6 @@ def check_port_continuity(opener: urllib.request.OpenerDirector) -> None:
     last = max(ports)
     missing = [port for port in range(first, last + 1) if port not in set(ports)]
     require(not missing, f"missing ports in reported range {first}-{last}: {missing}")
-    expected_total = int(payload.get("total_filtered") or payload.get("total_nodes") or len(nodes))
     require(len(ports) == expected_total, f"port count does not match node total: ports={len(ports)} total={expected_total}")
     print(f"ports: contiguous unique range {first}-{last} count={len(ports)}")
 

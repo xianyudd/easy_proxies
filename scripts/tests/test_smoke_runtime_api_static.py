@@ -24,7 +24,9 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
 def test_smoke_script_checks_port_continuity_after_reload():
     text = read_source()
     assert 'check_port_continuity' in text
-    assert '"/api/nodes?availability=all&page_size=500"' in text
+    assert 'fetch_all_nodes' in text
+    assert 'page_size = 500' in text
+    assert 'has_next' in text
     assert 'missing ports' in text
     assert 'duplicate ports' in text
 
