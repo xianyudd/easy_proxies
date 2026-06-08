@@ -491,6 +491,61 @@ free_proxy_filter:
 	}
 }
 
+func TestHandleSettingsRejectsInvalidFreeProxyFilterNumbersWithoutMutatingMemory(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+free_proxy_filter:
+  enabled: true
+  min_tier: simple_web
+  workers: 12
+  timeout: 1500ms
+  max_candidates: 100
+  max_probe_candidates: 50
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "zero workers", body: `{"external_ip":"2.2.2.2","free_proxy_filter":{"enabled":true,"min_tier":"simple_web","workers":0,"timeout":"1500ms","max_candidates":100,"max_probe_candidates":50,"probes":{"http":"http://cp.cloudflare.com/generate_204","https":"https://example.com/"}}}`, code: "invalid_free_proxy_filter_workers"},
+		{name: "negative workers", body: `{"external_ip":"2.2.2.2","free_proxy_filter":{"enabled":true,"min_tier":"simple_web","workers":-1,"timeout":"1500ms","max_candidates":100,"max_probe_candidates":50,"probes":{"http":"http://cp.cloudflare.com/generate_204","https":"https://example.com/"}}}`, code: "invalid_free_proxy_filter_workers"},
+		{name: "negative max candidates", body: `{"external_ip":"2.2.2.2","free_proxy_filter":{"enabled":true,"min_tier":"simple_web","workers":12,"timeout":"1500ms","max_candidates":-1,"max_probe_candidates":50,"probes":{"http":"http://cp.cloudflare.com/generate_204","https":"https://example.com/"}}}`, code: "invalid_free_proxy_filter_max_candidates"},
+		{name: "negative max probe candidates", body: `{"external_ip":"2.2.2.2","free_proxy_filter":{"enabled":true,"min_tier":"simple_web","workers":12,"timeout":"1500ms","max_candidates":100,"max_probe_candidates":-1,"probes":{"http":"http://cp.cloudflare.com/generate_204","https":"https://example.com/"}}}`, code: "invalid_free_proxy_filter_max_probe_candidates"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+
+			server.handleSettings(rec, req)
+
+			assertSettingsErrorCode(t, rec, http.StatusBadRequest, tc.code)
+			if server.cfgSrc.ExternalIP != "1.1.1.1" || server.cfgSrc.FreeProxyFilter.Workers != 12 || server.cfgSrc.FreeProxyFilter.MaxCandidates != 100 || server.cfgSrc.FreeProxyFilter.MaxProbeCandidates != 50 {
+				t.Fatalf("invalid free proxy filter should not mutate memory: external_ip=%q filter=%#v", server.cfgSrc.ExternalIP, server.cfgSrc.FreeProxyFilter)
+			}
+			reloaded, err := config.Load(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.ExternalIP != "1.1.1.1" || reloaded.FreeProxyFilter.Workers != 12 || reloaded.FreeProxyFilter.MaxCandidates != 100 || reloaded.FreeProxyFilter.MaxProbeCandidates != 50 {
+				t.Fatalf("invalid free proxy filter should not be persisted: external_ip=%q filter=%#v", reloaded.ExternalIP, reloaded.FreeProxyFilter)
+			}
+		})
+	}
+}
+
 func TestHandleSettingsRejectsInvalidFreeProxyCacheMaxAgeWithoutMutatingMemory(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

@@ -3234,11 +3234,28 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			geoIPAutoUpdateInterval = d
 		}
-		if req.FreeProxyFilter != nil && strings.TrimSpace(req.FreeProxyFilter.Timeout) != "" {
-			if _, err := time.ParseDuration(req.FreeProxyFilter.Timeout); err != nil {
+		if req.FreeProxyFilter != nil {
+			if req.FreeProxyFilter.Workers <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
-				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的免费源筛选超时: %v", err), "code": "invalid_free_proxy_filter_timeout"})
+				writeJSON(w, map[string]any{"error": "无效的免费源筛选并发数", "code": "invalid_free_proxy_filter_workers"})
 				return
+			}
+			if req.FreeProxyFilter.MaxCandidates < 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的免费源筛选候选上限", "code": "invalid_free_proxy_filter_max_candidates"})
+				return
+			}
+			if req.FreeProxyFilter.MaxProbeCandidates < 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的免费源探测候选上限", "code": "invalid_free_proxy_filter_max_probe_candidates"})
+				return
+			}
+			if strings.TrimSpace(req.FreeProxyFilter.Timeout) != "" {
+				if _, err := time.ParseDuration(req.FreeProxyFilter.Timeout); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的免费源筛选超时: %v", err), "code": "invalid_free_proxy_filter_timeout"})
+					return
+				}
 			}
 		}
 		if req.FreeProxyCache != nil && strings.TrimSpace(req.FreeProxyCache.MaxAge) != "" {
