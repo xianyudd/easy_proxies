@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,5 +49,31 @@ func TestHandleExportOnlyIncludesCheckedAvailableNodes(t *testing.T) {
 		if strings.Contains(body, port) {
 			t.Fatalf("export should not contain unavailable/unchecked/blacklisted port %s: %q", port, body)
 		}
+	}
+}
+
+func TestHandleExportRejectsInvalidSchemeWithStructuredCode(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{mgr: mgr}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/export?scheme=ftp", nil)
+	rec := httptest.NewRecorder()
+	srv.handleExport(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == "" || body.Code != "invalid_scheme" {
+		t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
 	}
 }

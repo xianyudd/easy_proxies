@@ -1732,7 +1732,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 	if scheme != "http" && scheme != "socks5" && scheme != "all" {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "invalid scheme, use http/socks5/all"})
+		writeJSON(w, map[string]any{"error": "invalid scheme, use http/socks5/all", "code": "invalid_scheme"})
 		return
 	}
 
