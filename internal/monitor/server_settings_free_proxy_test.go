@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -655,6 +656,67 @@ quality_check:
 	q := reloaded.QualityCheck.Normalized()
 	if q.CloudflareTimeout != 3*time.Second || q.CloudflareConcurrency != 32 {
 		t.Fatalf("persisted cloudflare settings = %s/%d", q.CloudflareTimeout, q.CloudflareConcurrency)
+	}
+}
+
+func TestHandleSettingsRejectsInvalidQualityNumbersBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+management:
+  listen: ` + listen + `
+quality_check:
+  enabled: true
+  interval: 1h
+  region: all
+  count: 321
+  include_unavailable: true
+  cloudflare_timeout: 5s
+  cloudflare_concurrency: 24
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	server := NewServer(Config{Enabled: true, Listen: listen}, mgr, nil)
+	server.SetConfig(cfg)
+
+	for _, tc := range []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "zero count", body: `{"management":{"listen":"` + listen + `","password":""},"quality_check":{"enabled":true,"interval":"1h","region":"all","count":0,"include_unavailable":true,"cloudflare_timeout":"5s","cloudflare_concurrency":24}}`, code: "invalid_quality_count"},
+		{name: "negative count", body: `{"management":{"listen":"` + listen + `","password":""},"quality_check":{"enabled":true,"interval":"1h","region":"all","count":-1,"include_unavailable":true,"cloudflare_timeout":"5s","cloudflare_concurrency":24}}`, code: "invalid_quality_count"},
+		{name: "zero concurrency", body: `{"management":{"listen":"` + listen + `","password":""},"quality_check":{"enabled":true,"interval":"1h","region":"all","count":321,"include_unavailable":true,"cloudflare_timeout":"5s","cloudflare_concurrency":0}}`, code: "invalid_cloudflare_concurrency"},
+		{name: "negative concurrency", body: `{"management":{"listen":"` + listen + `","password":""},"quality_check":{"enabled":true,"interval":"1h","region":"all","count":321,"include_unavailable":true,"cloudflare_timeout":"5s","cloudflare_concurrency":-1}}`, code: "invalid_cloudflare_concurrency"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+
+			server.handleSettings(rec, req)
+
+			assertSettingsErrorCode(t, rec, http.StatusBadRequest, tc.code)
+			reloaded, err := config.Load(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := reloaded.QualityCheck.Normalized()
+			if q.Count != 321 || q.CloudflareConcurrency != 24 {
+				t.Fatalf("invalid quality numbers should not be persisted: count=%d concurrency=%d", q.Count, q.CloudflareConcurrency)
+			}
+		})
 	}
 }
 

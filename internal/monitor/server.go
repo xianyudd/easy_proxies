@@ -3263,6 +3263,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		var cloudflareTimeout time.Duration
 		hasCloudflareTimeout := false
 		if req.QualityCheck != nil {
+			if req.QualityCheck.Count <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的质量检测数量", "code": "invalid_quality_count"})
+				return
+			}
+			if req.QualityCheck.CloudflareConcurrency <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的 CF 并发数", "code": "invalid_cloudflare_concurrency"})
+				return
+			}
 			if strings.TrimSpace(req.QualityCheck.Interval) != "" {
 				d, err := time.ParseDuration(req.QualityCheck.Interval)
 				if err != nil {
