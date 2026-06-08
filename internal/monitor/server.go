@@ -3359,6 +3359,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasPoolBlacklistDuration := hasNestedJSONKey(body, "pool", "blacklist_duration")
 		hasManagementListen := hasNestedJSONKey(body, "management", "listen")
 		hasManagementPassword := hasNestedJSONKey(body, "management", "password")
+		hasGeoIPEnabled := hasNestedJSONKey(body, "geoip", "enabled")
 		hasGeoIPDatabasePath := hasNestedJSONKey(body, "geoip", "database_path")
 		hasGeoIPListen := hasNestedJSONKey(body, "geoip", "listen")
 		hasGeoIPPort := hasNestedJSONKey(body, "geoip", "port")
@@ -3625,7 +3626,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if req.GeoIP != nil {
-			s.cfgSrc.GeoIP.Enabled = req.GeoIP.Enabled
+			if hasGeoIPEnabled {
+				s.cfgSrc.GeoIP.Enabled = req.GeoIP.Enabled
+			}
 		}
 		geoipEnabled := s.cfgSrc.GeoIP.Enabled
 		if geoipEnabled && s.cfgSrc.GeoIP.DatabasePath == "" {
