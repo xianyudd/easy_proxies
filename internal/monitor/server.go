@@ -3420,7 +3420,7 @@ func (s *Server) handleSubscriptionRefresh(w http.ResponseWriter, r *http.Reques
 
 	if s.subRefresher == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		writeJSON(w, map[string]any{"error": "订阅刷新未启用"})
+		writeJSON(w, map[string]any{"error": "订阅刷新未启用", "code": "subscription_refresh_disabled"})
 		return
 	}
 
@@ -3482,7 +3482,7 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "请求格式错误"})
+			writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 			return
 		}
 
@@ -3534,7 +3534,7 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 			if err := s.cfgSrc.SaveSettings(); err != nil {
 				s.cfgMu.Unlock()
 				w.WriteHeader(http.StatusInternalServerError)
-				writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err)})
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err), "code": "save_subscription_config_failed"})
 				return
 			}
 		}

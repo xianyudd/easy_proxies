@@ -2089,6 +2089,26 @@ func TestHandleSubscriptionRefreshStartsInBackground(t *testing.T) {
 	}
 }
 
+func TestHandleSubscriptionRefreshDisabledReturnsStructuredError(t *testing.T) {
+	server := &Server{}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/refresh", nil)
+	rec := httptest.NewRecorder()
+	server.handleSubscriptionRefresh(rec, req)
+
+	assertSettingsErrorCode(t, rec, http.StatusServiceUnavailable, "subscription_refresh_disabled")
+}
+
+func TestHandleSubscriptionConfigReturnsStructuredErrorCodes(t *testing.T) {
+	server := &Server{}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader([]byte(`{`)))
+	rec := httptest.NewRecorder()
+	server.handleSubscriptionConfig(rec, req)
+
+	assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
+}
+
 func TestHandleSubscriptionRefreshReportsRuntimeSubscriptionNodeCount(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true})
 	if err != nil {
