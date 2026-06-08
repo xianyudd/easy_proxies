@@ -229,6 +229,19 @@ func settingsFreeProxySources(sources []nodesource.SourceConfig) []map[string]an
 	return out
 }
 
+func hasNestedJSONKey(raw map[string]json.RawMessage, objectKey, fieldKey string) bool {
+	data, ok := raw[objectKey]
+	if !ok {
+		return false
+	}
+	var nested map[string]json.RawMessage
+	if err := json.Unmarshal(data, &nested); err != nil {
+		return false
+	}
+	_, ok = nested[fieldKey]
+	return ok
+}
+
 func isAllowedCoreMode(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "pool", "multi-port", "multi_port", "hybrid":
@@ -3292,6 +3305,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasProbeTarget := hasJSONKey(body, "probe_target")
 		hasSkipCertVerify := hasJSONKey(body, "skip_cert_verify")
 		hasMode := hasJSONKey(body, "mode")
+		hasManagementListen := hasNestedJSONKey(body, "management", "listen")
 
 		logCfg := config.LogConfig{}
 		hasLogCfg := false
@@ -3503,7 +3517,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 		oldManagementListen = s.cfg.Listen
 		newManagementListen := ""
-		if req.Management != nil {
+		if req.Management != nil && hasManagementListen {
 			newManagementListen = strings.TrimSpace(req.Management.Listen)
 		}
 		if oldManagementListen != "" && newManagementListen != "" && newManagementListen != strings.TrimSpace(oldManagementListen) {
@@ -3577,7 +3591,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if req.Management != nil {
-			s.cfgSrc.Management.Listen = req.Management.Listen
+			if hasManagementListen && strings.TrimSpace(req.Management.Listen) != "" {
+				s.cfgSrc.Management.Listen = strings.TrimSpace(req.Management.Listen)
+			}
 			s.cfgSrc.Management.Password = req.Management.Password
 		}
 		if req.GeoIP != nil {
@@ -3629,7 +3645,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfg.ProxyUsername = s.cfgSrc.Listener.Username
 			s.cfg.ProxyPassword = s.cfgSrc.Listener.Password
 		}
-		newManagementListen = s.cfgSrc.Management.Listen
+		if hasManagementListen {
+			newManagementListen = s.cfgSrc.Management.Listen
+		}
 		if err := s.cfgSrc.SaveSettings(); err != nil {
 			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)

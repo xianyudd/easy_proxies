@@ -2668,6 +2668,50 @@ func TestSubscriptionConfigRejectsTrailingJSON(t *testing.T) {
 	assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 }
 
+func TestHandleSettingsPreservesManagementListenWhenOmitted(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil {
+		t.Fatal("server is nil")
+	}
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("nodes:\n  - name: base\n    uri: http://127.0.0.1:18080\nmanagement:\n  listen: 127.0.0.1:0\n  password: old-secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetConfig(cfg)
+	if err := srv.startHTTPServer("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	oldListen := srv.cfg.Listen
+	originalManagementListen := cfg.Management.Listen
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
+
+	body := []byte(`{"management":{"password":"new-secret"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	req.Host = oldListen
+	rec := httptest.NewRecorder()
+	srv.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Management.Listen != originalManagementListen || reloaded.Management.Password != "new-secret" {
+		t.Fatalf("management partial update should preserve listen=%q and update password: %#v", originalManagementListen, reloaded.Management)
+	}
+}
+
 func TestHandleSettingsRejectsInvalidManagementListenBeforePersisting(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
 	if err != nil {
