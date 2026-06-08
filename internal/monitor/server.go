@@ -177,6 +177,13 @@ type freeProxyCacheRequest struct {
 	MaxAge         string `json:"max_age"`
 }
 
+func positiveDurationString(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.String()
+}
+
 func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) ([]nodesource.SourceConfig, error) {
 	out := make([]nodesource.SourceConfig, 0, len(in))
 	for _, item := range in {
@@ -3082,12 +3089,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"listen":               cfg.GeoIP.Listen,
 				"port":                 cfg.GeoIP.Port,
 				"auto_update_enabled":  cfg.GeoIP.AutoUpdateEnabled,
-				"auto_update_interval": cfg.GeoIP.AutoUpdateInterval.String(),
+				"auto_update_interval": positiveDurationString(cfg.GeoIP.AutoUpdateInterval),
 			}
 			resp["subscriptions"] = cfg.Subscriptions
 			resp["subscription_refresh"] = map[string]any{
 				"enabled":  cfg.SubscriptionRefresh.Enabled,
-				"interval": cfg.SubscriptionRefresh.Interval.String(),
+				"interval": positiveDurationString(cfg.SubscriptionRefresh.Interval),
 			}
 
 			resp["free_proxy_sources"] = cfg.FreeProxySources
@@ -3111,18 +3118,18 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"refresh_on_start": cache.RefreshOnStartValue(),
 				"auto_reload":      cache.AutoReloadValue(),
 				"workers":          cache.Workers,
-				"max_age":          cache.MaxAge.String(),
+				"max_age":          positiveDurationString(cache.MaxAge),
 			}
 
 			q := cfg.QualityCheck.Normalized()
 			resp["quality_check"] = map[string]any{
 				"enabled":                q.Enabled,
-				"interval":               q.Interval.String(),
+				"interval":               positiveDurationString(q.Interval),
 				"region":                 q.Region,
 				"count":                  q.Count,
 				"include_unavailable":    q.IncludeUnavailable,
 				"retry_failed":           q.RetryFailed,
-				"cloudflare_timeout":     q.CloudflareTimeout.String(),
+				"cloudflare_timeout":     positiveDurationString(q.CloudflareTimeout),
 				"cloudflare_concurrency": q.CloudflareConcurrency,
 			}
 		}
@@ -3222,6 +3229,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的节点池黑名单时长: %v", err), "code": "invalid_pool_blacklist_duration"})
 				return
 			}
+			if d <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "节点池黑名单时长必须大于 0", "code": "invalid_pool_blacklist_duration"})
+				return
+			}
 			poolBlacklistDuration = d
 		}
 		var geoIPAutoUpdateInterval time.Duration
@@ -3230,6 +3242,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的 GeoIP 自动更新间隔: %v", err), "code": "invalid_geoip_auto_update_interval"})
+				return
+			}
+			if d <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "GeoIP 自动更新间隔必须大于 0", "code": "invalid_geoip_auto_update_interval"})
 				return
 			}
 			geoIPAutoUpdateInterval = d
@@ -3316,6 +3333,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的质量检测间隔: %v", err), "code": "invalid_quality_interval"})
 					return
 				}
+				if d <= 0 {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": "质量检测间隔必须大于 0", "code": "invalid_quality_interval"})
+					return
+				}
 				qualityInterval = d
 				hasQualityInterval = true
 			}
@@ -3324,6 +3346,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
 					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的 CF 超时: %v", err), "code": "invalid_cloudflare_timeout"})
+					return
+				}
+				if d <= 0 {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": "CF 超时必须大于 0", "code": "invalid_cloudflare_timeout"})
 					return
 				}
 				cloudflareTimeout = d

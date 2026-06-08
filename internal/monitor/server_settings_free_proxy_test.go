@@ -893,6 +893,83 @@ quality_check:
 	}
 }
 
+func TestHandleSettingsRejectsNonPositiveCoreDurationsBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+management:
+  listen: ` + listen + `
+pool:
+  mode: round_robin
+  failure_threshold: 3
+  blacklist_duration: 5m
+geoip:
+  enabled: true
+  database_path: /tmp/GeoLite2.mmdb
+  listen: 127.0.0.1
+  port: 1221
+  auto_update_enabled: true
+  auto_update_interval: 24h
+quality_check:
+  enabled: true
+  interval: 1h
+  region: all
+  count: 321
+  include_unavailable: true
+  cloudflare_timeout: 5s
+  cloudflare_concurrency: 24
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	server := NewServer(Config{Enabled: true, Listen: listen}, mgr, nil)
+	server.SetConfig(cfg)
+
+	for _, tc := range []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "zero pool blacklist", body: `{"external_ip":"2.2.2.2","pool":{"mode":"least_failures","failure_threshold":9,"blacklist_duration":"0s"}}`, code: "invalid_pool_blacklist_duration"},
+		{name: "negative pool blacklist", body: `{"external_ip":"2.2.2.2","pool":{"mode":"least_failures","failure_threshold":9,"blacklist_duration":"-1s"}}`, code: "invalid_pool_blacklist_duration"},
+		{name: "zero geoip interval", body: `{"external_ip":"2.2.2.2","geoip":{"enabled":true,"database_path":"/tmp/other.mmdb","listen":"127.0.0.1","port":1222,"auto_update_enabled":false,"auto_update_interval":"0s"}}`, code: "invalid_geoip_auto_update_interval"},
+		{name: "negative geoip interval", body: `{"external_ip":"2.2.2.2","geoip":{"enabled":true,"database_path":"/tmp/other.mmdb","listen":"127.0.0.1","port":1222,"auto_update_enabled":false,"auto_update_interval":"-1s"}}`, code: "invalid_geoip_auto_update_interval"},
+		{name: "zero quality interval", body: `{"management":{"listen":"` + listen + `","password":""},"quality_check":{"enabled":true,"interval":"0s","region":"all","count":321,"include_unavailable":true,"cloudflare_timeout":"5s","cloudflare_concurrency":24}}`, code: "invalid_quality_interval"},
+		{name: "negative quality interval", body: `{"management":{"listen":"` + listen + `","password":""},"quality_check":{"enabled":true,"interval":"-1s","region":"all","count":321,"include_unavailable":true,"cloudflare_timeout":"5s","cloudflare_concurrency":24}}`, code: "invalid_quality_interval"},
+		{name: "zero cloudflare timeout", body: `{"management":{"listen":"` + listen + `","password":""},"quality_check":{"enabled":true,"interval":"1h","region":"all","count":321,"include_unavailable":true,"cloudflare_timeout":"0s","cloudflare_concurrency":24}}`, code: "invalid_cloudflare_timeout"},
+		{name: "negative cloudflare timeout", body: `{"management":{"listen":"` + listen + `","password":""},"quality_check":{"enabled":true,"interval":"1h","region":"all","count":321,"include_unavailable":true,"cloudflare_timeout":"-1s","cloudflare_concurrency":24}}`, code: "invalid_cloudflare_timeout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+
+			server.handleSettings(rec, req)
+
+			assertSettingsErrorCode(t, rec, http.StatusBadRequest, tc.code)
+			reloaded, err := config.Load(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := reloaded.QualityCheck.Normalized()
+			if reloaded.ExternalIP != "1.1.1.1" || reloaded.Pool.BlacklistDuration != 5*time.Minute || reloaded.GeoIP.AutoUpdateInterval != 24*time.Hour || q.Interval != time.Hour || q.CloudflareTimeout != 5*time.Second {
+				t.Fatalf("invalid duration should not be persisted: external_ip=%q pool=%#v geoip=%#v quality=%#v", reloaded.ExternalIP, reloaded.Pool, reloaded.GeoIP, q)
+			}
+		})
+	}
+}
+
 func TestHandleSettingsRejectsInvalidQualityDurationBeforePersisting(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
