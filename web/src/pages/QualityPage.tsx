@@ -90,6 +90,7 @@ export function QualityPage() {
   const [cfRows, setCfRows] = useState<CloudflareResult[]>([])
   const [repRows, setRepRows] = useState<ReputationResult[]>([])
   const [jobId, setJobId] = useState('')
+  const [terminalSyncedJobId, setTerminalSyncedJobId] = useState('')
   const [resultPage, setResultPage] = useState(1)
   const [resultPageSize, setResultPageSize] = useState(20)
   const [filter, setFilter] = useState('all')
@@ -130,6 +131,7 @@ export function QualityPage() {
       const job = await mutation.mutateAsync()
       if (!job?.job_id) throw new Error('后台任务响应缺少 job_id')
       setJobId(job.job_id)
+      setTerminalSyncedJobId('')
       setResultPage(1)
       toast(retryFailed ? '失败节点 Pipeline 重试任务已创建' : 'Pipeline 后台扫描任务已创建', 'ok')
     } catch (e) {
@@ -159,6 +161,18 @@ export function QualityPage() {
     }, 1000)
     return () => window.clearInterval(timer)
   }, [jobId, jobQuery.data?.status, resultPage, resultPageSize])
+  useEffect(() => {
+    if (!jobId || terminalSyncedJobId === jobId || !isTerminalJob(jobQuery.data)) return
+    setTerminalSyncedJobId(jobId)
+    void Promise.all([cfCache.refetch(), repCache.refetch()])
+      .then(([cf, rep]) => {
+        setCfRows(prev => mergeCfRows(prev, cf.data?.data || []))
+        setRepRows(prev => mergeRepRows(prev, rep.data?.data || []))
+        if (jobQuery.data?.status === 'completed') toast('后台任务结果已同步到质量缓存', 'ok')
+      })
+      .catch(e => toast(e instanceof Error ? `质量缓存同步失败：${e.message}` : '质量缓存同步失败', 'error'))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, terminalSyncedJobId, jobQuery.data?.status])
 
   const jobRows = useMemo(() => jobResults.data?.data || [], [jobResults.data?.data])
   const jobCfRows = useMemo(() => jobRows.map(cfFromJobRow), [jobRows])

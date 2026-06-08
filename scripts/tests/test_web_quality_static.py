@@ -56,6 +56,18 @@ def test_reputation_check_supports_source_filter():
     assert "q.set('source', source)" in text
 
 
+def test_quality_page_refreshes_cache_when_background_job_finishes():
+    text = read(QUALITY_PAGE)
+    assert "terminalSyncedJobId" in text
+    assert "isTerminalJob(jobQuery.data)" in text
+    assert "setTerminalSyncedJobId(jobId)" in text
+    assert "mergeCfRows" in text
+    assert "mergeRepRows" in text
+    assert "cfCache.refetch()" in text
+    assert "repCache.refetch()" in text
+    assert "后台任务结果已同步到质量缓存" in text
+
+
 if __name__ == "__main__":
     test_api_client_parses_json_text_fallback_for_accepted_jobs()
     test_quality_page_validates_job_id_and_renders_job_panel_path()
@@ -63,3 +75,4 @@ if __name__ == "__main__":
     test_quality_page_caps_sync_cf_sample_count_and_explains_limit()
     test_quality_page_matches_reputation_cache_by_ip_or_exit_ip()
     test_reputation_check_supports_source_filter()
+    test_quality_page_refreshes_cache_when_background_job_finishes()
