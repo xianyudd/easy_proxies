@@ -1,7 +1,6 @@
 package monitor
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -40,7 +39,7 @@ func (s *Server) handleQualityJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var req quality.JobRequest
-	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil {
+	if err := decodeSingleJSONBytes(body, &req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "invalid request body", "code": "invalid_request"})
 		return

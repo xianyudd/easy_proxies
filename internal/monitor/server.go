@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -1723,7 +1724,15 @@ func writeJSON(w http.ResponseWriter, payload any) {
 }
 
 func decodeSingleJSONBody(r *http.Request, v any) error {
-	decoder := json.NewDecoder(r.Body)
+	return decodeSingleJSONReader(r.Body, v)
+}
+
+func decodeSingleJSONBytes(data []byte, v any) error {
+	return decodeSingleJSONReader(bytes.NewReader(data), v)
+}
+
+func decodeSingleJSONReader(reader io.Reader, v any) error {
+	decoder := json.NewDecoder(reader)
 	if err := decoder.Decode(v); err != nil {
 		return err
 	}

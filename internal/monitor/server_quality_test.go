@@ -137,6 +137,20 @@ func TestBackgroundQualityCheckRejectsInvalidMode(t *testing.T) {
 	}
 }
 
+func TestQualityJobRejectsTrailingJSONBody(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(`{"kind":"combined","region":"all","count":2}{"extra":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	assertQualityErrorCode(t, rec, "invalid_request")
+}
+
 func TestQualityJobRejectsNonPositiveExplicitCount(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 
