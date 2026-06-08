@@ -85,6 +85,42 @@ func TestQualityJobAPI(t *testing.T) {
 	}
 }
 
+func TestQualityJobResultsRejectInvalidPagination(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(`{"kind":"combined","region":"all","count":2,"include_unavailable":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		JobID      string `json:"job_id"`
+		ResultsURL string `json:"results_url"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	waitForMonitorQualityJob(t, srv, created.JobID)
+
+	for _, suffix := range []string{
+		"?page=0&page_size=10",
+		"?page=-1&page_size=10",
+		"?page=abc&page_size=10",
+		"?page=1&page_size=0",
+		"?page=1&page_size=-1",
+		"?page=1&page_size=abc",
+	} {
+		req := httptest.NewRequest(http.MethodGet, created.ResultsURL+suffix, nil)
+		rec := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("suffix=%s status=%d, want 400 body=%s", suffix, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestBackgroundQualityCheckRejectsInvalidMode(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 

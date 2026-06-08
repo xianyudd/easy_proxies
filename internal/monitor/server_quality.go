@@ -113,8 +113,14 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": "job not found", "code": "not_found"})
 			return
 		}
-		page := parsePositiveQueryInt(r, "page", 1)
-		pageSize := parsePositiveQueryInt(r, "page_size", 100)
+		page, ok := parsePositiveQueryIntStrict(w, r, "page", 1)
+		if !ok {
+			return
+		}
+		pageSize, ok := parsePositiveQueryIntStrict(w, r, "page_size", 100)
+		if !ok {
+			return
+		}
 		writeJSON(w, s.qualitySvc.ListResults(id, quality.ResultQuery{Page: page, PageSize: pageSize}))
 		return
 	}
@@ -177,6 +183,20 @@ func parsePositiveQueryInt(r *http.Request, key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func parsePositiveQueryIntStrict(w http.ResponseWriter, r *http.Request, key string, fallback int) (int, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return fallback, true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid " + key, "code": "invalid_pagination"})
+		return 0, false
+	}
+	return parsed, true
 }
 
 func qualityJobCreatedResponse(snap quality.JobSnapshot) map[string]any {
