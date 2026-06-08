@@ -1,4 +1,4 @@
-import { api } from './client'
+import { ApiError, api } from './client'
 import type { NodeSnapshot, NodesPage, NodesQuery, NodesSummary } from '../types/node'
 
 interface NodesResponse {
@@ -45,7 +45,15 @@ export async function getNodesSummary() {
   const data = await api.get<NodesSummary>('/api/nodes?summary_only=true')
   return normalizeNodesPage(data)
 }
-export function probeAllNodes() { return api.post('/api/nodes/probe-all') }
+export async function probeAllNodesStream() {
+  const path = '/api/nodes/probe-all'
+  const res = await fetch(path, { method: 'POST', credentials: 'same-origin' })
+  if (!res.ok) {
+    const payload = await res.text().catch(() => '')
+    throw new ApiError(`${path} HTTP ${res.status}${payload ? `: ${payload}` : ''}`, res.status, payload, path)
+  }
+  return res
+}
 export function probeNode(tag: string) { return api.post<{latency_ms?: number; error?: string}>(`/api/nodes/${encodeURIComponent(tag)}/probe`) }
 export function blacklistNode(tag: string) { return api.post(`/api/nodes/${encodeURIComponent(tag)}/blacklist`, { duration: '24h' }) }
 export function releaseNode(tag: string) { return api.post(`/api/nodes/${encodeURIComponent(tag)}/release`) }
