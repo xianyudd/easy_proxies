@@ -13,7 +13,9 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
     assert '"POST", "/api/auth"' in text
     assert '"GET", "/api/settings"' in text
     assert '"PUT", "/api/settings"' in text
+    assert '"POST", "/api/reload"' in text
     assert '"/api/reload/status"' in text
+    assert 'manual reload did not finish within poll window' in text
     assert '"POST", "/api/free-proxy/refresh"' in text
     assert '"/api/free-proxy/refresh/status"' in text
     assert "same-value save unexpectedly triggered reload/refresh" in text

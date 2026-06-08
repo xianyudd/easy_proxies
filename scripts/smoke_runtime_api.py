@@ -32,6 +32,7 @@ BASE_URL = os.environ.get("EP_SMOKE_BASE_URL", "http://127.0.0.1:19093").rstrip(
 PASSWORD = os.environ.get("EP_SMOKE_PASSWORD", os.environ.get("WEBUI_PASSWORD", "runtime-partial-secret"))
 TIMEOUT = float(os.environ.get("EP_SMOKE_TIMEOUT", "20"))
 POLL_SECONDS = float(os.environ.get("EP_SMOKE_POLL_SECONDS", "20"))
+SKIP_RELOAD = os.environ.get("EP_SMOKE_SKIP_RELOAD", "").lower() in {"1", "true", "yes"}
 
 
 def request(opener: urllib.request.OpenerDirector, method: str, path: str, payload: Any | None = None) -> tuple[int, Any]:
@@ -99,6 +100,29 @@ def check_status_endpoints(opener: urllib.request.OpenerDirector) -> None:
         print(f"{path}: HTTP {code}")
 
 
+def check_manual_reload(opener: urllib.request.OpenerDirector) -> None:
+    if SKIP_RELOAD:
+        print("manual-reload: skipped by EP_SMOKE_SKIP_RELOAD")
+        return
+    code, payload = request(opener, "POST", "/api/reload")
+    require(code == 200 and isinstance(payload, dict), f"POST /api/reload failed HTTP {code}: {payload!r}")
+    status = payload.get("reload_status") if isinstance(payload.get("reload_status"), dict) else {}
+    started = bool(payload.get("started"))
+    pending = bool(status.get("reload_pending"))
+    require(started or pending, f"manual reload neither started nor queued: {payload!r}")
+    deadline = time.time() + POLL_SECONDS
+    while time.time() < deadline:
+        code, current = request(opener, "GET", "/api/reload/status")
+        require(code == 200 and isinstance(current, dict), f"GET reload status failed HTTP {code}: {current!r}")
+        state = str(current.get("state", ""))
+        if state in {"succeeded", "failed"}:
+            require(state != "failed", f"manual reload failed: {current!r}")
+            print(f"manual-reload: succeeded duration_ms={current.get('duration_ms')}")
+            return
+        time.sleep(0.5)
+    raise RuntimeSmokeError("manual reload did not finish within poll window")
+
+
 def check_free_proxy_refresh(opener: urllib.request.OpenerDirector) -> None:
     code, payload = request(opener, "POST", "/api/free-proxy/refresh")
     require(code == 200 and isinstance(payload, dict), f"POST /api/free-proxy/refresh failed HTTP {code}: {payload!r}")
@@ -127,6 +151,7 @@ def main() -> int:
         login(opener)
         check_same_value_save(opener)
         check_status_endpoints(opener)
+        check_manual_reload(opener)
         check_free_proxy_refresh(opener)
     except RuntimeSmokeError as exc:
         print(f"SMOKE FAILED: {exc}", file=sys.stderr)
