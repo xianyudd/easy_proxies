@@ -3441,6 +3441,16 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		var cloudflareTimeout time.Duration
 		hasCloudflareTimeout := false
 		if req.QualityCheck != nil {
+			qualityRegion := strings.ToLower(strings.TrimSpace(req.QualityCheck.Region))
+			if qualityRegion == "" {
+				qualityRegion = config.DefaultQualityCheckRegion
+			}
+			if !isAllowedMonitorRegion(qualityRegion) {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的质量检测区域", "code": "invalid_quality_region"})
+				return
+			}
+			req.QualityCheck.Region = qualityRegion
 			if req.QualityCheck.Count <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的质量检测数量", "code": "invalid_quality_count"})

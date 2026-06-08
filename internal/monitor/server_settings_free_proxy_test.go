@@ -918,6 +918,56 @@ quality_check:
 	}
 }
 
+func TestHandleSettingsRejectsInvalidQualityRegionBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+management:
+  listen: ` + listen + `
+quality_check:
+  enabled: true
+  interval: 1h
+  region: all
+  count: 321
+  include_unavailable: true
+  cloudflare_timeout: 5s
+  cloudflare_concurrency: 24
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	server := NewServer(Config{Enabled: true, Listen: listen}, mgr, nil)
+	server.SetConfig(cfg)
+
+	body := `{"external_ip":"2.2.2.2","management":{"listen":"` + listen + `","password":""},"quality_check":{"enabled":true,"interval":"1h","region":"mars","count":321,"include_unavailable":true,"cloudflare_timeout":"5s","cloudflare_concurrency":24}}`
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_quality_region")
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := reloaded.QualityCheck.Normalized()
+	if reloaded.ExternalIP != "1.1.1.1" || q.Region != "all" {
+		t.Fatalf("invalid quality region should not be persisted: external_ip=%q quality=%#v", reloaded.ExternalIP, q)
+	}
+}
+
 func TestHandleSettingsRejectsInvalidQualityNumbersBeforePersisting(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
