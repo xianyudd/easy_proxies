@@ -141,6 +141,24 @@ def check_status_endpoints(opener: urllib.request.OpenerDirector) -> None:
         print(f"{path}: HTTP {code}")
 
 
+def check_extractor_paths(opener: urllib.request.OpenerDirector) -> None:
+    cases = [
+        ("/api/extractor?region=all&mode=multi-port&format=host_port_user_pass&count=3&reveal=true", "multi-port", 3),
+        ("/api/extractor?region=all&mode=pool&format=http_url&count=1&reveal=false", "pool", 1),
+        ("/api/extractor?region=all&mode=android&format=adb_command&count=1&reveal=true", "android", 1),
+    ]
+    for path, want_mode, want_count in cases:
+        code, payload = request(opener, "GET", path)
+        require(code == 200 and isinstance(payload, dict), f"GET {path} failed HTTP {code}: {payload!r}")
+        entries = payload.get("entries")
+        require(isinstance(entries, list), f"extractor payload missing entries for {path}: {payload!r}")
+        require(str(payload.get("mode")) == want_mode, f"extractor mode mismatch for {path}: {payload!r}")
+        require(len(entries) == want_count, f"extractor output count mismatch for {path}: entries={len(entries)} payload={payload!r}")
+    code, payload = request(opener, "GET", "/api/extractor?region=moon&mode=multi-port&format=json&count=1&reveal=true")
+    require(code == 400 and isinstance(payload, dict) and payload.get("code") == "invalid_region", f"invalid extractor request should fail with structured error, got HTTP {code}: {payload!r}")
+    print("extractor: multi-port/pool/android and structured error paths ok")
+
+
 def check_manual_reload(opener: urllib.request.OpenerDirector) -> None:
     if SKIP_RELOAD:
         print("manual-reload: skipped by EP_SMOKE_SKIP_RELOAD")
@@ -295,6 +313,7 @@ def main() -> int:
         check_auth_status_probe(opener, expected_authenticated=True)
         original_settings = check_same_value_save(opener)
         check_status_endpoints(opener)
+        check_extractor_paths(opener)
         check_manual_reload(opener)
         check_port_continuity(opener)
         check_free_proxy_refresh(opener)

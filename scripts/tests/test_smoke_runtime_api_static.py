@@ -11,6 +11,11 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
     text = read_source()
     assert "RuntimeSmokeError" in text
     assert '"POST", "/api/auth"' in text
+    assert "check_extractor_paths" in text
+    assert '"/api/extractor?region=all&mode=multi-port' in text
+    assert '"/api/extractor?region=all&mode=pool' in text
+    assert '"/api/extractor?region=all&mode=android' in text
+    assert 'invalid extractor request should fail with structured error' in text
     assert '"GET", "/api/settings"' in text
     assert '"PUT", "/api/settings"' in text
     assert '"POST", "/api/reload"' in text
