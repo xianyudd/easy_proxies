@@ -21,6 +21,14 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
     assert "same-value save unexpectedly triggered reload/refresh" in text
 
 
+def test_smoke_script_checks_port_continuity_after_reload():
+    text = read_source()
+    assert 'check_port_continuity' in text
+    assert '"/api/nodes?availability=all&page_size=500"' in text
+    assert 'missing ports' in text
+    assert 'duplicate ports' in text
+
+
 def test_smoke_script_checks_auth_negative_paths_by_default():
     text = read_source()
     assert 'EP_SMOKE_ALLOW_NO_PASSWORD' in text
@@ -38,5 +46,6 @@ def test_smoke_script_uses_env_configurable_base_url_and_password():
 
 if __name__ == "__main__":
     test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths()
+    test_smoke_script_checks_port_continuity_after_reload()
     test_smoke_script_checks_auth_negative_paths_by_default()
     test_smoke_script_uses_env_configurable_base_url_and_password()

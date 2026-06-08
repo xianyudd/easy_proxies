@@ -137,6 +137,25 @@ def check_manual_reload(opener: urllib.request.OpenerDirector) -> None:
     raise RuntimeSmokeError("manual reload did not finish within poll window")
 
 
+def check_port_continuity(opener: urllib.request.OpenerDirector) -> None:
+    code, payload = request(opener, "GET", "/api/nodes?availability=all&page_size=500")
+    require(code == 200 and isinstance(payload, dict), f"GET /api/nodes full page failed HTTP {code}: {payload!r}")
+    nodes = payload.get("nodes")
+    require(isinstance(nodes, list), f"nodes payload missing list: {payload!r}")
+    ports = [int(node.get("port")) for node in nodes if isinstance(node, dict) and node.get("port")]
+    require(len(ports) == len(set(ports)), f"duplicate ports detected: count={len(ports)} unique={len(set(ports))}")
+    if not ports:
+        print("ports: no node ports reported")
+        return
+    first = min(ports)
+    last = max(ports)
+    missing = [port for port in range(first, last + 1) if port not in set(ports)]
+    require(not missing, f"missing ports in reported range {first}-{last}: {missing}")
+    expected_total = int(payload.get("total_filtered") or payload.get("total_nodes") or len(nodes))
+    require(len(ports) == expected_total, f"port count does not match node total: ports={len(ports)} total={expected_total}")
+    print(f"ports: contiguous unique range {first}-{last} count={len(ports)}")
+
+
 def check_free_proxy_refresh(opener: urllib.request.OpenerDirector) -> None:
     code, payload = request(opener, "POST", "/api/free-proxy/refresh")
     require(code == 200 and isinstance(payload, dict), f"POST /api/free-proxy/refresh failed HTTP {code}: {payload!r}")
@@ -167,6 +186,7 @@ def main() -> int:
         check_same_value_save(opener)
         check_status_endpoints(opener)
         check_manual_reload(opener)
+        check_port_continuity(opener)
         check_free_proxy_refresh(opener)
     except RuntimeSmokeError as exc:
         print(f"SMOKE FAILED: {exc}", file=sys.stderr)
