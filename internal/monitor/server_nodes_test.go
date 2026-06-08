@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -274,6 +275,67 @@ func TestNodeActionRouteErrorsAreStructured(t *testing.T) {
 			}
 			assertNodeActionErrorCode(t, rr, tc.code)
 		})
+	}
+}
+
+func TestBlacklistRejectsInvalidBodyWithoutMutatingNode(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := mgr.Register(NodeInfo{Tag: "node-a", Name: "Node A", URI: "http://127.0.0.1:1", Region: "us", Source: "free_proxy", Port: 13020})
+	h.MarkInitialCheckDone(true)
+	h.MarkAvailable(true)
+	server := &Server{mgr: mgr}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "bad json", body: `{`, code: "invalid_request"},
+		{name: "bad duration", body: `{"duration":"bad-duration"}`, code: "invalid_blacklist_duration"},
+		{name: "zero duration", body: `{"duration":"0s"}`, code: "invalid_blacklist_duration"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/nodes/node-a/blacklist", strings.NewReader(tc.body))
+			rr := httptest.NewRecorder()
+
+			server.handleNodeAction(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rr.Code, rr.Body.String())
+			}
+			assertNodeActionErrorCode(t, rr, tc.code)
+			snap := mgr.Snapshot()[0]
+			if snap.Blacklisted {
+				t.Fatalf("invalid blacklist request should not mutate node, got %#v", snap)
+			}
+		})
+	}
+}
+
+func TestBlacklistEmptyBodyUsesDefaultDuration(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := mgr.Register(NodeInfo{Tag: "node-a", Name: "Node A", URI: "http://127.0.0.1:1", Region: "us", Source: "free_proxy", Port: 13021})
+	h.MarkInitialCheckDone(true)
+	h.MarkAvailable(true)
+	server := &Server{mgr: mgr}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/nodes/node-a/blacklist", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleNodeAction(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	snap := mgr.Snapshot()[0]
+	if !snap.Blacklisted {
+		t.Fatalf("empty blacklist body should use default duration and blacklist node, got %#v", snap)
 	}
 }
 

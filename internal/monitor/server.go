@@ -1476,12 +1476,22 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Duration string `json:"duration"` // e.g. "1h", "24h", "30m"
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Duration == "" {
+		if r.Body != nil && r.Body != http.NoBody {
+			decoder := json.NewDecoder(r.Body)
+			if err := decoder.Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
+				return
+			}
+		}
+		if strings.TrimSpace(req.Duration) == "" {
 			req.Duration = "24h"
 		}
 		duration, err := time.ParseDuration(req.Duration)
 		if err != nil || duration <= 0 {
-			duration = 24 * time.Hour
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的拉黑时长: %s", req.Duration), "code": "invalid_blacklist_duration"})
+			return
 		}
 		if err := s.mgr.ManualBlacklist(tag, duration); err != nil {
 			w.WriteHeader(http.StatusNotFound)
