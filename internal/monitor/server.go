@@ -1640,14 +1640,14 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 
 // handleAuth 处理登录认证
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
-	// 如果没有配置密码，直接返回成功（不需要token）
-	if s.cfg.Password == "" {
-		writeJSON(w, map[string]any{"message": "无需密码", "no_password": true})
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	// 如果没有配置密码，直接返回成功（不需要token）
+	if s.cfg.Password == "" {
+		writeJSON(w, map[string]any{"message": "无需密码", "no_password": true})
 		return
 	}
 
@@ -3615,6 +3615,11 @@ func (s *Server) streamUnavailableTraffic(r *http.Request, w http.ResponseWriter
 // handleTraffic streams real-time traffic from sing-box Clash API as SSE.
 // Clash API /traffic returns newline-delimited JSON; we convert to SSE for browser EventSource.
 func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
