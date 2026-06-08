@@ -339,6 +339,50 @@ free_proxy_filter:
 	}
 }
 
+func TestHandleSettingsPreservesFreeProxyFilterFieldsWhenPartiallyUpdated(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_filter:
+  enabled: true
+  min_tier: simple_web
+  workers: 123
+  timeout: 1500ms
+  max_candidates: 4567
+  max_probe_candidates: 89
+  probes:
+    http: http://cp.cloudflare.com/generate_204
+    https: https://example.com/
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+
+	body := []byte(`{"free_proxy_filter":{"enabled":false}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := reloaded.FreeProxyFilter
+	if f.Enabled || f.MinTier != "simple_web" || f.Workers != 123 || f.Timeout != 1500*time.Millisecond || f.MaxCandidates != 4567 || f.MaxProbeCandidates != 89 || f.Probes.HTTP != "http://cp.cloudflare.com/generate_204" || f.Probes.HTTPS != "https://example.com/" {
+		t.Fatalf("free_proxy_filter partial update corrupted fields: %#v", f)
+	}
+}
+
 func TestHandleSettingsRejectsInvalidPoolDurationWithoutMutatingMemory(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

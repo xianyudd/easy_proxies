@@ -242,6 +242,27 @@ func hasNestedJSONKey(raw map[string]json.RawMessage, objectKey, fieldKey string
 	return ok
 }
 
+func hasDoubleNestedJSONKey(raw map[string]json.RawMessage, objectKey, nestedKey, fieldKey string) bool {
+	data, ok := raw[objectKey]
+	if !ok {
+		return false
+	}
+	var nested map[string]json.RawMessage
+	if err := json.Unmarshal(data, &nested); err != nil {
+		return false
+	}
+	data, ok = nested[nestedKey]
+	if !ok {
+		return false
+	}
+	var child map[string]json.RawMessage
+	if err := json.Unmarshal(data, &child); err != nil {
+		return false
+	}
+	_, ok = child[fieldKey]
+	return ok
+}
+
 func isAllowedCoreMode(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "pool", "multi-port", "multi_port", "hybrid":
@@ -313,25 +334,37 @@ func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) ([]nodesource.
 	return out, nil
 }
 
-func freeProxyFilterFromRequest(req *freeProxyFilterRequest, fallback nodesource.FilterConfig) nodesource.FilterConfig {
+func freeProxyFilterFromRequest(req *freeProxyFilterRequest, fallback nodesource.FilterConfig, raw map[string]json.RawMessage) nodesource.FilterConfig {
 	if req == nil {
 		return fallback
 	}
-	out := nodesource.FilterConfig{
-		Enabled:            req.Enabled,
-		MinTier:            strings.TrimSpace(req.MinTier),
-		Workers:            req.Workers,
-		Timeout:            fallback.Timeout,
-		MaxCandidates:      req.MaxCandidates,
-		MaxProbeCandidates: req.MaxProbeCandidates,
-		Probes: nodesource.FilterProbes{
-			HTTP:  strings.TrimSpace(req.Probes.HTTP),
-			HTTPS: strings.TrimSpace(req.Probes.HTTPS),
-		},
+	out := fallback
+	if hasNestedJSONKey(raw, "free_proxy_filter", "enabled") {
+		out.Enabled = req.Enabled
 	}
-	if req.Timeout != "" {
+	if hasNestedJSONKey(raw, "free_proxy_filter", "min_tier") {
+		out.MinTier = strings.TrimSpace(req.MinTier)
+	}
+	if hasNestedJSONKey(raw, "free_proxy_filter", "workers") {
+		out.Workers = req.Workers
+	}
+	if hasNestedJSONKey(raw, "free_proxy_filter", "max_candidates") {
+		out.MaxCandidates = req.MaxCandidates
+	}
+	if hasNestedJSONKey(raw, "free_proxy_filter", "max_probe_candidates") {
+		out.MaxProbeCandidates = req.MaxProbeCandidates
+	}
+	if hasNestedJSONKey(raw, "free_proxy_filter", "timeout") && req.Timeout != "" {
 		if d, err := time.ParseDuration(req.Timeout); err == nil {
 			out.Timeout = d
+		}
+	}
+	if hasNestedJSONKey(raw, "free_proxy_filter", "probes") {
+		if hasDoubleNestedJSONKey(raw, "free_proxy_filter", "probes", "http") {
+			out.Probes.HTTP = strings.TrimSpace(req.Probes.HTTP)
+		}
+		if hasDoubleNestedJSONKey(raw, "free_proxy_filter", "probes", "https") {
+			out.Probes.HTTPS = strings.TrimSpace(req.Probes.HTTPS)
 		}
 	}
 	return out
@@ -3334,6 +3367,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasQualityRetryFailed := hasNestedJSONKey(body, "quality_check", "retry_failed")
 		hasQualityCloudflareTimeout := hasNestedJSONKey(body, "quality_check", "cloudflare_timeout")
 		hasQualityCloudflareConcurrency := hasNestedJSONKey(body, "quality_check", "cloudflare_concurrency")
+		hasFreeProxyFilterWorkers := hasNestedJSONKey(body, "free_proxy_filter", "workers")
+		hasFreeProxyFilterTimeout := hasNestedJSONKey(body, "free_proxy_filter", "timeout")
+		hasFreeProxyFilterMaxCandidates := hasNestedJSONKey(body, "free_proxy_filter", "max_candidates")
+		hasFreeProxyFilterMaxProbeCandidates := hasNestedJSONKey(body, "free_proxy_filter", "max_probe_candidates")
 
 		logCfg := config.LogConfig{}
 		hasLogCfg := false
@@ -3419,22 +3456,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.FreeProxyFilter != nil {
-			if req.FreeProxyFilter.Workers <= 0 {
+			if hasFreeProxyFilterWorkers && req.FreeProxyFilter.Workers <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的免费源筛选并发数", "code": "invalid_free_proxy_filter_workers"})
 				return
 			}
-			if req.FreeProxyFilter.MaxCandidates < 0 {
+			if hasFreeProxyFilterMaxCandidates && req.FreeProxyFilter.MaxCandidates < 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的免费源筛选候选上限", "code": "invalid_free_proxy_filter_max_candidates"})
 				return
 			}
-			if req.FreeProxyFilter.MaxProbeCandidates < 0 {
+			if hasFreeProxyFilterMaxProbeCandidates && req.FreeProxyFilter.MaxProbeCandidates < 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的免费源探测候选上限", "code": "invalid_free_proxy_filter_max_probe_candidates"})
 				return
 			}
-			if strings.TrimSpace(req.FreeProxyFilter.Timeout) != "" {
+			if hasFreeProxyFilterTimeout && strings.TrimSpace(req.FreeProxyFilter.Timeout) != "" {
 				d, err := time.ParseDuration(req.FreeProxyFilter.Timeout)
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
@@ -3674,7 +3711,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.FreeProxyMaxNodes = *req.FreeProxyMaxNodes
 		}
 		if req.FreeProxyFilter != nil {
-			s.cfgSrc.FreeProxyFilter = freeProxyFilterFromRequest(req.FreeProxyFilter, s.cfgSrc.FreeProxyFilter)
+			s.cfgSrc.FreeProxyFilter = freeProxyFilterFromRequest(req.FreeProxyFilter, s.cfgSrc.FreeProxyFilter, body)
 		}
 		if req.FreeProxyCache != nil {
 			s.cfgSrc.FreeProxyCache = freeProxyCacheFromRequest(req.FreeProxyCache, s.cfgSrc.FreeProxyCache)
