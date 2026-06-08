@@ -92,6 +92,7 @@ export function NodeConfigPage() {
       toast(reloadStatus.data?.duration_ms ? `节点配置已生效（${reloadStatus.data.duration_ms}ms）` : '节点配置已生效', 'ok')
       void nodesQuery.refetch()
       void queryClient.invalidateQueries({ queryKey: ['nodes-page'] })
+      void queryClient.invalidateQueries({ queryKey: ['nodes-summary'] })
     } else if (state === 'failed') {
       setReloadState('failed')
       toast(reloadStatus.data?.error ? `重载失败：${reloadStatus.data.error}` : '重载失败', 'error')

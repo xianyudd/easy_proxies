@@ -71,8 +71,15 @@ def test_node_config_page_filters_paginates_and_wraps_long_uri():
     assert "node-config-uri" in page
 
 
+def test_node_config_reload_refreshes_runtime_node_caches():
+    page = read(PAGE)
+    assert "queryClient.invalidateQueries({ queryKey: ['nodes-page'] })" in page
+    assert "queryClient.invalidateQueries({ queryKey: ['nodes-summary'] })" in page
+
+
 if __name__ == "__main__":
     test_node_config_page_is_routable_from_react_shell()
     test_node_config_api_client_covers_crud_and_reload()
     test_node_config_page_handles_crud_need_reload_and_reload_polling()
     test_node_config_page_filters_paginates_and_wraps_long_uri()
+    test_node_config_reload_refreshes_runtime_node_caches()
