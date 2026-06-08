@@ -103,7 +103,11 @@ export function QualityPage() {
   const sourceCount = source === 'all' ? (nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0) : Number(sourceStats[source] || 0)
   const scanCount = Math.max(1, count)
   const allCount = Math.max(sourceCount || nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0, source === 'all' ? 500 : 1)
-  const canCreatePipeline = !nodesSummary.isLoading && !hasSummaryError
+  const jobRunning = !!jobId && !isTerminalJob(jobQuery.data)
+  const cacheLoading = cfCache.isFetching || repCache.isFetching
+  const jobProgressLoading = jobQuery.isFetching || jobResults.isFetching
+  const canCreatePipeline = !nodesSummary.isLoading && !hasSummaryError && !jobRunning
+  const canRunSampleCheck = !nodesSummary.isLoading && !hasSummaryError && !jobRunning
   const scanAllLabel = nodesSummary.isLoading ? 'Pipeline 扫描节点（统计加载中）' : hasSummaryError ? 'Pipeline 扫描节点（数量未知）' : `Pipeline 扫描 ${allCount} 个节点`
   const qualitySource = source === 'all' ? undefined : source
   const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { setCfRows(d.data || []); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
@@ -188,7 +192,7 @@ export function QualityPage() {
     {jobId && jobQuery.isError && <QueryErrorBanner title="后台任务状态加载失败" error={jobQuery.error} onRetry={() => { void jobQuery.refetch() }} />}
     {jobId && jobResults.isError && <QueryErrorBanner title="后台任务结果加载失败" error={jobResults.error} onRetry={() => { void jobResults.refetch() }} />}
     <div className="card quality-control-card">
-      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending || (!!jobId && !isTerminalJob(jobQuery.data))} onClick={() => fullScan.mutate()}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canCreatePipeline || retryScan.isPending || (!!jobId && !isTerminalJob(jobQuery.data))} onClick={() => retryScan.mutate()}>{retryScan.isPending ? '重试中...' : 'Pipeline 重试失败节点'}</Button><Button onClick={loadCache}>刷新缓存</Button><Button onClick={() => cfScan.mutate()}>抽样检测 CF</Button></div></div>
+      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => fullScan.mutate()}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canCreatePipeline || retryScan.isPending} onClick={() => retryScan.mutate()}>{retryScan.isPending ? '重试中...' : 'Pipeline 重试失败节点'}</Button><Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button><Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button></div></div>
       <div className="quality-filter-grid modern-filter-grid">
         <div className="field console-field">
           <label>地区范围</label>
@@ -216,7 +220,7 @@ export function QualityPage() {
         </div>
       </div>
       {jobId && <div className="card" style={{ marginTop: 16 }}>
-        <div className="panel-header"><div><div className="panel-title">后台质量检测任务</div><div className="panel-subtitle">{jobId} · {jobQuery.data?.status || 'queued'} · {jobQuery.data?.completed || 0}/{jobQuery.data?.total || 0}</div></div><div className="toolbar"><Button disabled={isTerminalJob(jobQuery.data) || cancelScan.isPending} onClick={() => cancelScan.mutate()}>取消任务</Button><Button onClick={() => { void jobQuery.refetch(); void jobResults.refetch() }}>刷新进度</Button></div></div>
+        <div className="panel-header"><div><div className="panel-title">后台质量检测任务</div><div className="panel-subtitle">{jobId} · {jobQuery.data?.status || 'queued'} · {jobQuery.data?.completed || 0}/{jobQuery.data?.total || 0}</div></div><div className="toolbar"><Button disabled={isTerminalJob(jobQuery.data) || cancelScan.isPending} onClick={() => cancelScan.mutate()}>{cancelScan.isPending ? '取消中...' : '取消任务'}</Button><Button disabled={jobProgressLoading} onClick={() => { void jobQuery.refetch(); void jobResults.refetch() }}>{jobProgressLoading ? '刷新中...' : '刷新进度'}</Button></div></div>
         <Progress percent={Math.round(jobQuery.data?.percent || 0)} status={jobQuery.data?.status === 'failed' ? 'exception' : jobQuery.data?.status === 'completed' ? 'success' : 'active'} />
       </div>}
     </div>

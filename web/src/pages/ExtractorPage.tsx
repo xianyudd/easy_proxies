@@ -20,14 +20,17 @@ export function ExtractorPage() {
   const setResult = useExtractorStore(s => s.setResult)
   const clear = useExtractorStore(s => s.clear)
   const toast = useToast(s => s.show)
-  const geoipEnabled = settings.data ? Boolean((settings.data.geoip as Record<string, unknown> | undefined)?.enabled) : true
+  const settingsReady = !!settings.data && !settings.isError
+  const geoipEnabled = settingsReady ? Boolean((settings.data?.geoip as Record<string, unknown> | undefined)?.enabled) : false
   const mutation = useMutation({ mutationFn: getExtractor, onSuccess: (data) => { setResult(data); toast('代理已生成', 'ok') }, onError: (e) => toast(e instanceof Error ? e.message : '提取失败', 'error') })
   const run = (patch?: Partial<ExtractorParams>) => {
+    if (mutation.isPending) return
     const next = { ...params, ...(patch || {}) }
     setParams(next)
     mutation.mutate(next)
   }
   const runAndCopy = async () => {
+    if (mutation.isPending) return
     const data = await mutation.mutateAsync(params)
     setResult(data)
     const out = entriesToText(data.entries || [])
@@ -43,15 +46,16 @@ export function ExtractorPage() {
       <div className="dashboard-stack">
         <div className="card control-panel">
           <div className="panel-header"><div><div className="panel-title">提取参数</div><div className="panel-subtitle">配置一次后可直接生成或生成并复制。</div></div></div>
+          {settings.isError && <div className="hint">设置加载失败，GeoIP 地区池入口已暂时禁用；普通多端口/默认池提取仍可使用。</div>}
           <ExtractorForm geoipEnabled={geoipEnabled} />
           <div className="control-actions" style={{marginTop: 14}}>
             <Button className="primary-wide" variant="primary" onClick={() => run()} disabled={mutation.isPending}>{mutation.isPending ? '生成中...' : '生成代理'}</Button>
-            <div className="action-row"><Button onClick={runAndCopy}>生成并复制</Button><Button variant="danger" onClick={clear}>清空结果</Button></div>
+            <div className="action-row"><Button onClick={runAndCopy} disabled={mutation.isPending}>{mutation.isPending ? '生成中...' : '生成并复制'}</Button><Button variant="danger" onClick={clear} disabled={mutation.isPending}>清空结果</Button></div>
           </div>
         </div>
         <div className="card">
           <div className="panel-header"><div><div className="panel-title">快速预设</div><div className="panel-subtitle">适合批量导入、地区池和 Android 调试。</div></div></div>
-          <QuickExtractBar run={run} geoipEnabled={geoipEnabled} />
+          <QuickExtractBar run={run} geoipEnabled={geoipEnabled} disabled={mutation.isPending} />
         </div>
       </div>
       <div className="card result-panel">

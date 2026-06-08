@@ -140,6 +140,28 @@ func TestHandleNodesClampsLargePageSize(t *testing.T) {
 	}
 }
 
+func TestHandleNodesAcceptsFrontendDefaultLatencySort(t *testing.T) {
+	server := newTestNodesServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes?page=1&page_size=100&region=all&source=all&availability=available&latency=all&sort=latency", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleNodes(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("frontend default nodes query should be accepted, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Nodes         []Snapshot `json:"nodes"`
+		TotalFiltered int        `json:"total_filtered"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.TotalFiltered != 1 || len(payload.Nodes) != 1 || payload.Nodes[0].Tag != "sub-a" {
+		t.Fatalf("expected available node sorted by latency, got %#v", payload)
+	}
+}
+
 func TestHandleNodesRejectsInvalidSummaryOnly(t *testing.T) {
 	server := newTestNodesServer(t)
 	for _, raw := range []string{"maybe", "2", "yes"} {

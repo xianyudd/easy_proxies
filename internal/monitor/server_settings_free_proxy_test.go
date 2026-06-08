@@ -3146,6 +3146,7 @@ func TestHandleReloadStartsAsyncReload(t *testing.T) {
 		t.Fatalf("manual reload waited for core reload: elapsed=%s delay=%s", elapsed, fake.delay)
 	}
 	var resp struct {
+		Message      string       `json:"message"`
 		Started      bool         `json:"started"`
 		ReloadStatus reloadStatus `json:"reload_status"`
 	}
@@ -3184,6 +3185,7 @@ func TestHandleReloadQueuesWhenReloadAlreadyRunning(t *testing.T) {
 		t.Fatalf("second status = %d, body = %s", second.Code, second.Body.String())
 	}
 	var resp struct {
+		Message      string       `json:"message"`
 		Started      bool         `json:"started"`
 		ReloadStatus reloadStatus `json:"reload_status"`
 	}
@@ -3192,6 +3194,9 @@ func TestHandleReloadQueuesWhenReloadAlreadyRunning(t *testing.T) {
 	}
 	if resp.Started || resp.ReloadStatus.State != "running" || !resp.ReloadStatus.Pending {
 		t.Fatalf("expected queued reload response, got %#v body=%s", resp, second.Body.String())
+	}
+	if !strings.Contains(resp.Message, "已排队") {
+		t.Fatalf("queued reload message should not claim a new reload started: %q body=%s", resp.Message, second.Body.String())
 	}
 	select {
 	case <-fake.reloadCh:

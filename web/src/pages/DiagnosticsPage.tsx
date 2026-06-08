@@ -117,6 +117,7 @@ function highlightKeyword(line: string, keyword: string, caseSensitive: boolean)
 export function DiagnosticsPage() {
   const [auto, setAuto] = useState(true)
   const [logs, setLogs] = useState('')
+  const [manualLogRefreshPending, setManualLogRefreshPending] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [levelFilter, setLevelFilter] = useState<LogFilter>('all')
   const [caseSensitive, setCaseSensitive] = useState(false)
@@ -161,6 +162,20 @@ export function DiagnosticsPage() {
   const issueCount = errorLines + warnLines + (debug.isError ? 1 : 0)
   const download = () => { const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([logs],{type:'text/plain'})); a.download='easy_proxies.log'; a.click(); URL.revokeObjectURL(a.href) }
   const clearFilters = () => { setKeyword(''); setLevelFilter('all'); setCaseSensitive(false) }
+  const refreshLogs = async () => {
+    if (manualLogRefreshPending || logQuery.isFetching) return
+    setManualLogRefreshPending(true)
+    try {
+      const result = await logQuery.refetch()
+      if (result.error) throw result.error
+      setLogs(String(result.data?.logs || ''))
+      toast('日志已刷新','ok')
+    } catch (error) {
+      toast(error instanceof Error ? `日志刷新失败：${error.message}` : '日志刷新失败','error')
+    } finally {
+      setManualLogRefreshPending(false)
+    }
+  }
   return <div className="page diagnostics-page diagnostics-workbench-page">
     <div className="page-header diagnostics-hero diagnostics-workbench-hero"><div><h1>日志诊断</h1><p>实时日志保持终端控制台体验，右侧只保留关键运行态摘要，避免原始数据和重复指标干扰排查。</p></div><div className="toolbar"><Badge tone={auto ? 'good' : 'neutral'}>{auto ? '自动刷新' : '已暂停'}</Badge><Button onClick={()=>setAuto(!auto)}>{auto?'暂停刷新':'自动刷新'}</Button></div></div>
     <div className="diagnostics-metrics summary-grid diagnostics-workbench-metrics">
@@ -173,7 +188,7 @@ export function DiagnosticsPage() {
       <div className="log-console refined-log-console terminal-console-panel diagnostics-log-panel">
         <div className="log-toolbar refined-log-toolbar terminal-toolbar">
           <div><div className="panel-title">实时日志</div><div className="panel-subtitle">{auto ? '每 2 秒自动刷新并滚动到底部' : '自动刷新已暂停'} · 匹配 {filteredLogRows.length}/{logRows.length} 行{hiddenLogRows ? ` · 仅渲染最近 ${LOG_RENDER_LIMIT} 行` : ''}</div></div>
-          <div className="toolbar diagnostics-actions"><Button onClick={()=>logQuery.refetch().then(result=>{ setLogs(String(result.data?.logs || '')); toast('日志已刷新','ok') })}><RefreshCw size={15} />刷新</Button><Button onClick={()=>setLogs('')}><Trash2 size={15} />清屏</Button><Button onClick={download}><Download size={15} />下载</Button></div>
+          <div className="toolbar diagnostics-actions"><Button onClick={() => { void refreshLogs() }} disabled={manualLogRefreshPending || logQuery.isFetching}><RefreshCw size={15} />{manualLogRefreshPending || logQuery.isFetching ? '刷新中...' : '刷新'}</Button><Button onClick={()=>setLogs('')} disabled={manualLogRefreshPending}><Trash2 size={15} />清屏</Button><Button onClick={download} disabled={!logs}><Download size={15} />下载</Button></div>
           <div className="diagnostics-log-filters">
             <input className="diagnostics-log-search" value={keyword} onChange={event=>setKeyword(event.target.value)} placeholder="筛选关键词" aria-label="筛选日志关键词" />
             <select className="diagnostics-log-select" value={levelFilter} onChange={event=>setLevelFilter(event.target.value as LogFilter)} aria-label="筛选日志级别">{LOG_LEVELS.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</select>

@@ -1498,7 +1498,7 @@ func validateNodeListQuery(q url.Values) (string, bool) {
 	if !isAllowedQueryValue(q.Get("latency"), "", "all", "tested", "untested", "fast", "slow") {
 		return "invalid_latency", false
 	}
-	if !isAllowedQueryValue(q.Get("sort"), "", "name", "region", "source", "latency_desc") {
+	if !isAllowedQueryValue(q.Get("sort"), "", "latency", "name", "region", "source", "latency_desc") {
 		return "invalid_sort", false
 	}
 	return "", true
@@ -4386,10 +4386,20 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{
-		"message":       "重载已在后台启动",
+		"message":       reloadStartMessage(started, status),
 		"started":       started,
 		"reload_status": status,
 	})
+}
+
+func reloadStartMessage(started bool, status reloadStatus) string {
+	if started {
+		return "重载已在后台启动"
+	}
+	if status.Pending {
+		return "已有重载在运行，本次请求已排队"
+	}
+	return "已有重载在运行"
 }
 
 func (s *Server) handleReloadStatus(w http.ResponseWriter, r *http.Request) {

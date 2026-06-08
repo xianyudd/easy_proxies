@@ -49,6 +49,11 @@ function regionLabel(region?: string) {
   return REGION_LABELS[code] || code.toUpperCase() || '-'
 }
 
+function latencyLabel(value: unknown) {
+  const ms = Number(value)
+  return Number.isFinite(ms) && ms >= 0 ? `${ms} ms` : '未测速'
+}
+
 export function NodeOverviewPage() {
   const [region, setRegion] = useState('all')
   const [source, setSource] = useState('all')
@@ -60,7 +65,7 @@ export function NodeOverviewPage() {
   const toast = useToast(s => s.show)
 
   const queryParams = { page, page_size: pageSize, region, source, availability, latency, sort: sortKey }
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['nodes-page', queryParams],
     queryFn: () => getNodesPage(queryParams),
     refetchInterval: 10000,
@@ -96,7 +101,7 @@ export function NodeOverviewPage() {
       node.name || node.tag || '-',
       `region=${node.region || '-'}`,
       `port=${node.port || '-'}`,
-      `latency=${Number(node.last_latency_ms) || 0}ms`,
+      `latency=${latencyLabel(node.last_latency_ms)}`,
     ].join(' | ')
     void copyToClipboard(text, toast, '节点信息已复制')
   }
@@ -108,7 +113,7 @@ export function NodeOverviewPage() {
         <p>默认只展示已验证可用节点；如需排查免费源候选、未检测或失败节点，可在状态筛选中切换。</p>
       </div>
       <div className="toolbar">
-        <Button onClick={() => refetch()}>刷新</Button>
+        <Button onClick={() => { void refetch() }} disabled={isFetching}>{isFetching ? '刷新中...' : '刷新'}</Button>
       </div>
     </div>
 
@@ -175,7 +180,7 @@ export function NodeOverviewPage() {
             <td>{regionLabel(node.region)}</td>
             <td>{node.port || '-'}</td>
             <td><Badge tone={levelTone(node)}>{statusLabel(node)}</Badge></td>
-            <td>{Number(node.last_latency_ms) || 0} ms</td>
+            <td>{latencyLabel(node.last_latency_ms)}</td>
             <td>{Number(node.active_connections) || 0}</td>
             <td>{Number(node.failure_count) || 0}</td>
             <td>

@@ -70,12 +70,18 @@ export function SettingsPage() {
   const repCache = useQuery({ queryKey:['rep-cache'], queryFn:getReputationCache })
   const [draft, setDraft] = useState<SettingsResponse>({})
   const [subs, setSubs] = useState('')
+  const [settingsDirty, setSettingsDirty] = useState(false)
+  const [subsDirty, setSubsDirty] = useState(false)
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const [freeProxyRefreshState, setFreeProxyRefreshState] = useState<'idle' | 'refreshing' | 'failed'>('idle')
   const reloadStatus = useQuery({ queryKey:['reload-status'], queryFn:getReloadStatus, enabled: reloadState === 'reloading', refetchInterval: reloadState === 'reloading' ? 800 : false })
   const freeProxyRefreshStatus = useQuery({ queryKey:['free-proxy-refresh-status'], queryFn:getFreeProxyRefreshStatus, refetchInterval: freeProxyRefreshState === 'refreshing' ? 800 : false })
   const toast = useToast(s=>s.show)
-  useEffect(()=>{ if(settings.data){ setDraft(settings.data); setSubs(listValue(settings.data.subscriptions)) } }, [settings.data])
+  useEffect(()=>{
+    if (!settings.data) return
+    if (!settingsDirty) setDraft(settings.data)
+    if (!subsDirty) setSubs(listValue(settings.data.subscriptions))
+  }, [settings.data, settingsDirty, subsDirty])
   useEffect(() => {
     const id = window.location.hash.slice(1)
     if (!id) return
@@ -147,6 +153,8 @@ export function SettingsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const save = useMutation({ mutationFn: saveSettings, onSuccess:(res)=>{
+    setSettingsDirty(false)
+    setSubsDirty(false)
     if (res?.management_rebound && res.management_url_hint) {
       toast('管理端口已热切换，正在跳转到新地址...', 'ok')
       const target = new URL(res.management_url_hint)
@@ -158,9 +166,7 @@ export function SettingsPage() {
     }
     void settings.refetch()
     if (res?.subscription_refresh_started) {
-      toast('设置已保存，订阅后台刷新已启动...', 'ok')
       void subStatus.refetch()
-      return
     }
     if (res?.free_proxy_refresh_needed) {
       if (res.free_proxy_refresh_error) {
@@ -168,7 +174,8 @@ export function SettingsPage() {
         toast(`设置已保存，但免费源扫描启动失败：${res.free_proxy_refresh_error}`, 'error')
         return
       }
-      toast(res.free_proxy_refresh_started ? '设置已保存，免费源开始后台扫描...' : '设置已保存，已有免费源扫描在运行...', 'ok')
+      const prefix = res?.subscription_refresh_started ? '设置已保存，订阅后台刷新已启动；' : '设置已保存，'
+      toast(res.free_proxy_refresh_started ? `${prefix}免费源开始后台扫描...` : `${prefix}已有免费源扫描在运行...`, 'ok')
       setFreeProxyRefreshState('refreshing')
       void freeProxyRefreshStatus.refetch()
       return
@@ -179,11 +186,12 @@ export function SettingsPage() {
         toast(`设置已保存，但后台生效启动失败：${res.reload_error}`, 'error')
         return
       }
-      toast(res.reload_status?.reload_pending ? '设置已保存，已排队等待当前后台生效完成后继续生效...' : res.reload_started ? '设置已保存，后台正在生效...' : '设置已保存，已有后台生效任务在运行...', 'ok')
+      const prefix = res?.subscription_refresh_started ? '设置已保存，订阅后台刷新已启动；' : '设置已保存，'
+      toast(res.reload_status?.reload_pending ? `${prefix}已排队等待当前后台生效完成后继续生效...` : res.reload_started ? `${prefix}后台正在生效...` : `${prefix}已有后台生效任务在运行...`, 'ok')
       setReloadState('reloading')
       void reloadStatus.refetch()
     } else {
-      toast('设置已保存，已立即生效', 'ok')
+      toast(res?.subscription_refresh_started ? '设置已保存，订阅后台刷新已启动' : '设置已保存，已立即生效', 'ok')
       setReloadState('idle')
     }
   }, onError:e=>toast(e instanceof Error ? e.message:'保存失败','error') })
@@ -195,7 +203,9 @@ export function SettingsPage() {
     setFreeProxyRefreshState(started || statusState === 'running' ? 'refreshing' : 'idle')
     void freeProxyRefreshStatus.refetch()
   }, onError:e=>toast(e instanceof Error ? e.message:'免费源刷新启动失败','error') })
-  const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:(res)=>{ const changed = res.config_changed !== false; const refreshed = !!res.refresh_triggered; toast(refreshed ? '订阅配置已保存，后台刷新已启动' : changed ? '订阅配置已保存，调度已更新' : '订阅配置未变化，已保持当前状态', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
+  const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:(res)=>{ const changed = res.config_changed !== false; const refreshed = !!res.refresh_triggered; setSubsDirty(false); toast(refreshed ? '订阅配置已保存，后台刷新已启动' : changed ? '订阅配置已保存，调度已更新' : '订阅配置未变化，已保持当前状态', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
+  const updateDraft = (next: SettingsResponse) => { setSettingsDirty(true); setDraft(next) }
+  const updateSubsDraft = (next: string) => { setSubsDirty(true); setSubs(next) }
   const input = (label:string, value:string, onChange:(v:string)=>void, type='text') => <div className="field settings-form-item"><label>{label}</label><Input className="settings-input" aria-label={label} type={type} autoComplete={type === 'password' ? 'current-password' : label.includes('用户名') ? 'username' : undefined} value={value} onChange={e=>onChange(e.target.value)} /></div>
   const toggle = (label:string, checked:boolean, onChange:(v:boolean)=>void) => <Checkbox className="settings-checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}>{label}</Checkbox>
   const listener = (draft.listener || {}) as Record<string, unknown>
@@ -227,15 +237,15 @@ export function SettingsPage() {
   const freeRefreshFilterEnabled = freeRefresh?.filter_enabled ?? freeFilter.enabled === true
   const isPublicAdmin = String(mgmt.listen || '').startsWith('0.0.0.0') && !String(mgmt.password || '').trim()
   const isPublicProxy = isWideOpen(listener.address) || isWideOpen(mp.address) || isWideOpen(android.listen)
-  const updateSub = (idx: number, value: string) => setSubs(subItems.map((item, i) => i === idx ? value : item).join('\n'))
-  const removeSub = (idx: number) => setSubs(subItems.filter((_, i) => i !== idx).join('\n'))
-  const addSub = () => setSubs([...subItems, ''].join('\n'))
-  const updateFreeSource = (idx: number, patch: Partial<FreeProxySource>) => setDraft({...draft, free_proxy_sources: freeSources.map((item, i) => i === idx ? {...item, ...patch} : item)})
-  const removeFreeSource = (idx: number) => setDraft({...draft, free_proxy_sources: freeSources.filter((_, i) => i !== idx)})
-  const addFreeSource = () => setDraft({...draft, free_proxy_sources: [...freeSources, { name: 'new-free-source', enabled: true, url: '', format: 'text', default_scheme: 'http' }]})
+  const updateSub = (idx: number, value: string) => updateSubsDraft(subItems.map((item, i) => i === idx ? value : item).join('\n'))
+  const removeSub = (idx: number) => updateSubsDraft(subItems.filter((_, i) => i !== idx).join('\n'))
+  const addSub = () => updateSubsDraft([...subItems, ''].join('\n'))
+  const updateFreeSource = (idx: number, patch: Partial<FreeProxySource>) => updateDraft({...draft, free_proxy_sources: freeSources.map((item, i) => i === idx ? {...item, ...patch} : item)})
+  const removeFreeSource = (idx: number) => updateDraft({...draft, free_proxy_sources: freeSources.filter((_, i) => i !== idx)})
+  const addFreeSource = () => updateDraft({...draft, free_proxy_sources: [...freeSources, { name: 'new-free-source', enabled: true, url: '', format: 'text', default_scheme: 'http' }]})
   const freeSourceIssues = freeSources.map((src, idx) => ({idx, issue: !String(src.url || src.file || '').trim() ? `#${idx + 1} 请填写 URL 或文件路径` : ''})).filter(item => item.issue)
-  const updateFreeFilter = (patch: Partial<FreeProxyFilter>) => setDraft({...draft, free_proxy_filter: {...freeFilter, ...patch}})
-  const updateFreeCache = (patch: Partial<FreeProxyCache>) => setDraft({...draft, free_proxy_cache: {...freeCache, ...patch}})
+  const updateFreeFilter = (patch: Partial<FreeProxyFilter>) => updateDraft({...draft, free_proxy_filter: {...freeFilter, ...patch}})
+  const updateFreeCache = (patch: Partial<FreeProxyCache>) => updateDraft({...draft, free_proxy_cache: {...freeCache, ...patch}})
   const saveAllSettings = () => {
     if (freeSourceIssues.length > 0) {
       toast('请先补全免费代理源的 URL 或文件路径', 'error')
@@ -254,6 +264,36 @@ export function SettingsPage() {
     enabled: subRefresh.enabled !== false,
     interval: String(subRefresh.interval || '1h0m0s'),
   })
+  const qualityCacheLoading = cfCache.isFetching || repCache.isFetching
+  const refreshQualityCache = async () => {
+    if (qualityCacheLoading) return
+    try {
+      const [cf, rep] = await Promise.all([cfCache.refetch(), repCache.refetch()])
+      const failed = [cf.error, rep.error].find(Boolean)
+      if (failed) throw failed
+      toast('质量缓存状态已刷新', 'ok')
+    } catch (error) {
+      toast(error instanceof Error ? `质量缓存状态刷新失败：${error.message}` : '质量缓存状态刷新失败', 'error')
+    }
+  }
+
+  if (!settings.data && (settings.isLoading || settings.isError)) {
+    return <div className="page settings-page">
+      <div className="page-header settings-hero">
+        <div>
+          <h1>系统设置</h1>
+          <p>{settings.isError ? '当前配置加载失败，修复前不会展示可编辑空表单，避免误覆盖已有设置。' : '正在加载当前配置，加载完成前不会展示可编辑空表单，避免误覆盖已有设置。'}</p>
+        </div>
+        <div className="toolbar"><Button variant="primary" disabled><Save size={16} />{settings.isError ? '不可保存' : '加载中...'}</Button></div>
+      </div>
+      {settings.isError
+        ? <QueryErrorBanner title="设置加载失败" error={settings.error} onRetry={() => { void settings.refetch() }} />
+        : <div className="card settings-section" role="status">
+          <div className="panel-title">正在读取设置</div>
+          <div className="panel-subtitle">请稍候，系统正在从后端加载订阅、免费源、端口和质量检测配置。</div>
+        </div>}
+    </div>
+  }
 
   return <div className="page settings-page">
     <div className="page-header settings-hero">
@@ -266,6 +306,7 @@ export function SettingsPage() {
     {repCache.isError && <QueryErrorBanner title="IP 风险缓存状态加载失败" error={repCache.error} onRetry={() => { void repCache.refetch() }} />}
     {reloadStatus.isError && <QueryErrorBanner title="设置生效状态加载失败" error={reloadStatus.error} onRetry={() => { void reloadStatus.refetch() }} />}
     {freeProxyRefreshStatus.isError && <QueryErrorBanner title="免费源刷新状态加载失败" error={freeProxyRefreshStatus.error} onRetry={() => { void freeProxyRefreshStatus.refetch() }} />}
+    {(settingsDirty || subsDirty) && <div className="settings-inline-note" role="status"><Badge tone="warn">有未保存更改</Badge><span>后台状态刷新不会覆盖当前表单草稿；保存后才会同步最新配置。</span></div>}
     {(isPublicAdmin || isPublicProxy) && <div className="settings-alert modern-settings-alert" role="alert">
       <AlertCircle size={18} />
       <div>
@@ -304,7 +345,7 @@ export function SettingsPage() {
       </div>
       <div className="settings-stack refined-settings-stack">
         <section className="card settings-section settings-section-featured" id="subscriptions">
-          <div className="panel-header settings-section-header"><div><div className="panel-title">订阅</div><div className="panel-subtitle">每条订阅独立编辑，长 URL 不再挤在一个文本框里。</div></div><div className="toolbar"><Button onClick={addSub}><Plus size={16} />新增订阅</Button><Button variant="primary" onClick={saveSubscriptions} disabled={saveSub.isPending}><Save size={16} />{saveSub.isPending ? '保存中...' : '保存订阅'}</Button></div></div>
+          <div className="panel-header settings-section-header"><div><div className="panel-title">订阅</div><div className="panel-subtitle">每条订阅独立编辑，长 URL 不再挤在一个文本框里。</div></div><div className="toolbar"><Button onClick={addSub}><Plus size={16} />新增订阅</Button><Button variant="primary" onClick={saveSubscriptions} disabled={saveSub.isPending || settingsUnavailable}><Save size={16} />{saveSub.isPending ? '保存中...' : '保存订阅'}</Button></div></div>
           <div className="settings-status-grid">
             <div className="status-card"><Database size={16} /><span>订阅条目</span><strong>{cleanSubItems.length}</strong></div>
             <div className="status-card"><Wifi size={16} /><span>刷新状态</span><strong>{subStatusUnavailable ? '加载失败' : boolValue(status.is_refreshing) ? '刷新中' : '空闲'}</strong></div>
@@ -312,13 +353,13 @@ export function SettingsPage() {
             <div className="status-card"><Database size={16} /><span>最近节点数</span><strong>{subStatusUnavailable ? '-' : Number(status.node_count || 0)}</strong></div>
           </div>
           <div className="subscription-controls">
-            {toggle('启用订阅刷新', subRefresh.enabled !== false, v=>setDraft({...draft, subscription_refresh:{...subRefresh,enabled:v}}))}
-            {input('刷新间隔', String(subRefresh.interval || '1h0m0s'), v=>setDraft({...draft, subscription_refresh:{...subRefresh,interval:v}}))}
+            {toggle('启用订阅刷新', subRefresh.enabled !== false, v=>updateDraft({...draft, subscription_refresh:{...subRefresh,enabled:v}}))}
+            {input('刷新间隔', String(subRefresh.interval || '1h0m0s'), v=>updateDraft({...draft, subscription_refresh:{...subRefresh,interval:v}}))}
           </div>
           <div className="subscription-list">
             {subItems.length ? subItems.map((url, idx) => <div className="subscription-item modern-subscription-item" key={`${idx}-${url.slice(0, 16)}`}><div className="subscription-index">#{idx + 1}</div><Input className="settings-input mono subscription-url-input" value={url} title={url} onChange={e=>updateSub(idx, e.target.value)} /><Button variant="danger" onClick={()=>removeSub(idx)}><Trash2 size={15} />删除</Button></div>) : <div className="empty-state compact-empty"><strong>暂无订阅 URL</strong><span>点击“新增订阅”添加一条订阅地址。</span></div>}
           </div>
-          <details className="raw-editor"><summary>批量编辑原始文本</summary><label htmlFor="subscriptions-raw-editor">批量编辑订阅原始文本</label><Input.TextArea id="subscriptions-raw-editor" className="settings-input mono subscription-textarea" rows={4} value={subs} onChange={e=>setSubs(e.target.value)} /></details>
+          <details className="raw-editor"><summary>批量编辑原始文本</summary><label htmlFor="subscriptions-raw-editor">批量编辑订阅原始文本</label><Input.TextArea id="subscriptions-raw-editor" className="settings-input mono subscription-textarea" rows={4} value={subs} onChange={e=>updateSubsDraft(e.target.value)} /></details>
           <div className="settings-inline-note"><Badge tone={boolValue(status.enabled) ? 'good' : 'neutral'}>{boolValue(status.enabled) ? '已启用' : '未启用'}</Badge><span>上次刷新：{shortDate(status.last_refresh)}</span><span>刷新次数：{Number(status.refresh_count || 0)}</span>{String(status.last_error || '') && <span className="danger-text">错误：{String(status.last_error)}</span>}</div>
         </section>
 
@@ -345,7 +386,7 @@ export function SettingsPage() {
             </div>
           <div className="form-grid-3 compact-form-grid">
             <div className="field settings-form-item"><label>最低等级</label><Select className="settings-input" value={String(freeFilter.min_tier || 'http_basic')} onChange={v=>updateFreeFilter({min_tier:v})} options={[{value:'http_basic',label:'HTTP 基础可用'}, {value:'simple_web',label:'普通 Web 可用'}]} /></div>
-            {input('入池上限（0=不限）', String(draft.free_proxy_max_nodes || 0), v=>setDraft({...draft, free_proxy_max_nodes:Number(v)||0}), 'number')}
+            {input('入池上限（0=不限）', String(draft.free_proxy_max_nodes || 0), v=>updateDraft({...draft, free_proxy_max_nodes:Number(v)||0}), 'number')}
             {input('解析上限（0=全量）', String(freeFilter.max_candidates || 0), v=>updateFreeFilter({max_candidates:Number(v)||0}), 'number')}
             {input('探测预算（0=全量）', String(freeFilter.max_probe_candidates || 0), v=>updateFreeFilter({max_probe_candidates:Number(v)||0}), 'number')}
               {input('筛选并发', String(freeFilter.workers || 200), v=>updateFreeFilter({workers:Number(v)||200}), 'number')}
@@ -383,16 +424,16 @@ export function SettingsPage() {
 
 
         <section className="settings-card-grid">
-          <div className="card settings-section" id="pool"><div className="panel-header"><div><div className="panel-title">默认代理池</div><div className="panel-subtitle">常规入口和基础认证。</div></div></div><form className="form-grid-2 compact-form-grid" onSubmit={e=>e.preventDefault()}>{input('监听地址', String(listener.address || ''), v=>setDraft({...draft, listener:{...listener,address:v}}))}{input('端口', String(listener.port || ''), v=>setDraft({...draft, listener:{...listener,port:Number(v)||0}}), 'number')}{input('用户名', String(listener.username||''), v=>setDraft({...draft, listener:{...listener,username:v}}))}{input('密码', String(listener.password||''), v=>setDraft({...draft, listener:{...listener,password:v}}), 'password')}</form></div>
-          <div className="card settings-section" id="multi-port"><div className="panel-header"><div><div className="panel-title">多端口</div><div className="panel-subtitle">批量分配独立出口。</div></div></div><form className="form-grid-2 compact-form-grid" onSubmit={e=>e.preventDefault()}>{input('监听地址', String(mp.address || ''), v=>setDraft({...draft, multi_port:{...mp,address:v}}))}{input('起始端口', String(mp.base_port || ''), v=>setDraft({...draft, multi_port:{...mp,base_port:Number(v)||0}}), 'number')}{input('用户名', String(mp.username||''), v=>setDraft({...draft, multi_port:{...mp,username:v}}))}{input('密码', String(mp.password||''), v=>setDraft({...draft, multi_port:{...mp,password:v}}), 'password')}</form></div>
+          <div className="card settings-section" id="pool"><div className="panel-header"><div><div className="panel-title">默认代理池</div><div className="panel-subtitle">常规入口和基础认证。</div></div></div><form className="form-grid-2 compact-form-grid" onSubmit={e=>e.preventDefault()}>{input('监听地址', String(listener.address || ''), v=>updateDraft({...draft, listener:{...listener,address:v}}))}{input('端口', String(listener.port || ''), v=>updateDraft({...draft, listener:{...listener,port:Number(v)||0}}), 'number')}{input('用户名', String(listener.username||''), v=>updateDraft({...draft, listener:{...listener,username:v}}))}{input('密码', String(listener.password||''), v=>updateDraft({...draft, listener:{...listener,password:v}}), 'password')}</form></div>
+          <div className="card settings-section" id="multi-port"><div className="panel-header"><div><div className="panel-title">多端口</div><div className="panel-subtitle">批量分配独立出口。</div></div></div><form className="form-grid-2 compact-form-grid" onSubmit={e=>e.preventDefault()}>{input('监听地址', String(mp.address || ''), v=>updateDraft({...draft, multi_port:{...mp,address:v}}))}{input('起始端口', String(mp.base_port || ''), v=>updateDraft({...draft, multi_port:{...mp,base_port:Number(v)||0}}), 'number')}{input('用户名', String(mp.username||''), v=>updateDraft({...draft, multi_port:{...mp,username:v}}))}{input('密码', String(mp.password||''), v=>updateDraft({...draft, multi_port:{...mp,password:v}}), 'password')}</form></div>
         </section>
 
         <section className="settings-card-grid">
-          <div className="card settings-section" id="routing"><div className="panel-header"><div><div className="panel-title">地区路由 / Android</div><div className="panel-subtitle">GeoIP 路由和移动端代理端口。</div></div></div><div className="form-grid-2 compact-form-grid">{input('GeoIP listen', String(geo.listen || ''), v=>setDraft({...draft, geoip:{...geo,listen:v}}))}{input('GeoIP port', String(geo.port || ''), v=>setDraft({...draft, geoip:{...geo,port:Number(v)||0}}))}{input('Android listen', String(android.listen || ''), v=>setDraft({...draft, android_proxy:{...android,listen:v}}))}{input('Android base port', String(android.base_port || ''), v=>setDraft({...draft, android_proxy:{...android,base_port:Number(v)||0}}))}</div></div>
-          <div className="card settings-section" id="quality-check"><div className="panel-header"><div><div className="panel-title">质量检测定时任务</div><div className="panel-subtitle">自动刷新 CF 评分和 IP 风险缓存。</div></div><div className="toolbar"><Button onClick={() => { void cfCache.refetch(); void repCache.refetch() }}>刷新缓存状态</Button></div></div><div className="settings-status-grid quality-cache-grid"><div className="status-card"><Database size={16} /><span>CF 缓存</span><strong>{cfCacheUnavailable ? '加载失败' : cfRows.length}</strong></div><div className="status-card"><Database size={16} /><span>IP 风险缓存</span><strong>{repCacheUnavailable ? '加载失败' : repRows.length}</strong></div><div className="status-card"><Clock3 size={16} /><span>CF 最近检测</span><strong>{cfCacheUnavailable ? '-' : latestCheckedAt(cfRows)}</strong></div><div className="status-card"><Clock3 size={16} /><span>IP 最近检测</span><strong>{repCacheUnavailable ? '-' : latestCheckedAt(repRows)}</strong></div></div><div className="quality-toggle-row">{toggle('启用定时检测', boolValue(quality.enabled), v=>setDraft({...draft, quality_check:{...quality,enabled:v}}))}{toggle('包含不可用节点', quality.include_unavailable !== false, v=>setDraft({...draft, quality_check:{...quality,include_unavailable:v}}))}{toggle('优先重试失败节点', boolValue(quality.retry_failed), v=>setDraft({...draft, quality_check:{...quality,retry_failed:v}}))}</div><div className="form-grid-3 compact-form-grid">{input('检测间隔', String(quality.interval || '24h'), v=>setDraft({...draft, quality_check:{...quality,interval:v}}))}{input('地区范围', String(quality.region || 'all'), v=>setDraft({...draft, quality_check:{...quality,region:v}}))}{input('检测数量（1-500）', String(quality.count || 500), v=>setDraft({...draft, quality_check:{...quality,count:clampNumber(v, 500, 1, 500)}}), 'number')}{input('CF 超时', String(quality.cloudflare_timeout || '5s'), v=>setDraft({...draft, quality_check:{...quality,cloudflare_timeout:v}}))}{input('CF 并发', String(quality.cloudflare_concurrency || 24), v=>setDraft({...draft, quality_check:{...quality,cloudflare_concurrency:Number(v)||24}}), 'number')}</div><div className="settings-inline-note">建议间隔不要低于 1 小时；检测数量上限为 500；CF 超时越短扫描越快但失败率可能升高，并发建议 24-32。</div></div>
+          <div className="card settings-section" id="routing"><div className="panel-header"><div><div className="panel-title">地区路由 / Android</div><div className="panel-subtitle">GeoIP 路由和移动端代理端口。</div></div></div><div className="form-grid-2 compact-form-grid">{input('GeoIP listen', String(geo.listen || ''), v=>updateDraft({...draft, geoip:{...geo,listen:v}}))}{input('GeoIP port', String(geo.port || ''), v=>updateDraft({...draft, geoip:{...geo,port:Number(v)||0}}))}{input('Android listen', String(android.listen || ''), v=>updateDraft({...draft, android_proxy:{...android,listen:v}}))}{input('Android base port', String(android.base_port || ''), v=>updateDraft({...draft, android_proxy:{...android,base_port:Number(v)||0}}))}</div></div>
+          <div className="card settings-section" id="quality-check"><div className="panel-header"><div><div className="panel-title">质量检测定时任务</div><div className="panel-subtitle">自动刷新 CF 评分和 IP 风险缓存。</div></div><div className="toolbar"><Button onClick={() => { void refreshQualityCache() }} disabled={qualityCacheLoading}>{qualityCacheLoading ? '刷新中...' : '刷新缓存状态'}</Button></div></div><div className="settings-status-grid quality-cache-grid"><div className="status-card"><Database size={16} /><span>CF 缓存</span><strong>{cfCacheUnavailable ? '加载失败' : cfRows.length}</strong></div><div className="status-card"><Database size={16} /><span>IP 风险缓存</span><strong>{repCacheUnavailable ? '加载失败' : repRows.length}</strong></div><div className="status-card"><Clock3 size={16} /><span>CF 最近检测</span><strong>{cfCacheUnavailable ? '-' : latestCheckedAt(cfRows)}</strong></div><div className="status-card"><Clock3 size={16} /><span>IP 最近检测</span><strong>{repCacheUnavailable ? '-' : latestCheckedAt(repRows)}</strong></div></div><div className="quality-toggle-row">{toggle('启用定时检测', boolValue(quality.enabled), v=>updateDraft({...draft, quality_check:{...quality,enabled:v}}))}{toggle('包含不可用节点', quality.include_unavailable !== false, v=>updateDraft({...draft, quality_check:{...quality,include_unavailable:v}}))}{toggle('优先重试失败节点', boolValue(quality.retry_failed), v=>updateDraft({...draft, quality_check:{...quality,retry_failed:v}}))}</div><div className="form-grid-3 compact-form-grid">{input('检测间隔', String(quality.interval || '24h'), v=>updateDraft({...draft, quality_check:{...quality,interval:v}}))}{input('地区范围', String(quality.region || 'all'), v=>updateDraft({...draft, quality_check:{...quality,region:v}}))}{input('检测数量（1-500）', String(quality.count || 500), v=>updateDraft({...draft, quality_check:{...quality,count:clampNumber(v, 500, 1, 500)}}), 'number')}{input('CF 超时', String(quality.cloudflare_timeout || '5s'), v=>updateDraft({...draft, quality_check:{...quality,cloudflare_timeout:v}}))}{input('CF 并发', String(quality.cloudflare_concurrency || 24), v=>updateDraft({...draft, quality_check:{...quality,cloudflare_concurrency:Number(v)||24}}), 'number')}</div><div className="settings-inline-note">建议间隔不要低于 1 小时；检测数量上限为 500；CF 超时越短扫描越快但失败率可能升高，并发建议 24-32。</div></div>
         </section>
 
-        <section className="card settings-section" id="management"><div className="panel-header"><div><div className="panel-title">管理与日志</div><div className="panel-subtitle">控制面入口和日志滚动策略。</div></div></div><div className="form-grid-2 compact-form-grid">{input('管理 listen', String(mgmt.listen || ''), v=>setDraft({...draft, management:{...mgmt,listen:v}}))}{input('管理 password', String(mgmt.password||''), v=>setDraft({...draft, management:{...mgmt,password:v}}))}{input('日志 output', String(log.output || ''), v=>setDraft({...draft, log:{...log,output:v}}))}{input('日志 max size', String(log.max_size || ''), v=>setDraft({...draft, log:{...log,max_size:Number(v)||0}}))}</div></section>
+        <section className="card settings-section" id="management"><div className="panel-header"><div><div className="panel-title">管理与日志</div><div className="panel-subtitle">控制面入口和日志滚动策略。</div></div></div><div className="form-grid-2 compact-form-grid">{input('管理 listen', String(mgmt.listen || ''), v=>updateDraft({...draft, management:{...mgmt,listen:v}}))}{input('管理 password', String(mgmt.password||''), v=>updateDraft({...draft, management:{...mgmt,password:v}}))}{input('日志 output', String(log.output || ''), v=>updateDraft({...draft, log:{...log,output:v}}))}{input('日志 max size', String(log.max_size || ''), v=>updateDraft({...draft, log:{...log,max_size:Number(v)||0}}))}</div></section>
       </div>
     </div>
   </div>
