@@ -249,9 +249,18 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 		}
 		if err = instance.Start(); err != nil {
 			_ = instance.Close()
-			// Check if it's a port conflict error
+			// Check if it's a port conflict error. During reload the old sing-box
+			// process has just been closed; some systems keep sockets reserved for a
+			// short window. Retrying the same config first avoids permanently moving a
+			// node to a new port and creating gaps in the multi-port range.
 			if conflictPort := extractPortFromBindError(err); conflictPort > 0 {
-				m.logger.Warnf("port %d is in use, reassigning and retrying...", conflictPort)
+				if shouldRetryTransientPortConflict(retry) {
+					m.logger.Warnf("port %d is still being released, retrying before reassignment...", conflictPort)
+					time.Sleep(transientPortConflictBackoff)
+					pool.ResetSharedStateStore()
+					continue
+				}
+				m.logger.Warnf("port %d is still in use after retries, reassigning and retrying...", conflictPort)
 				if reassigned := reassignConflictingPort(newCfg, conflictPort); reassigned {
 					pool.ResetSharedStateStore()
 					continue
@@ -893,6 +902,14 @@ func (m *Manager) CurrentPortMap() map[string]uint16 {
 
 // portBindErrorRegex matches "listen tcp4 0.0.0.0:24282: bind: address already in use"
 var portBindErrorRegex = regexp.MustCompile(`listen tcp[46]? [^:]+:(\d+): bind: address already in use`)
+
+const transientPortConflictRetries = 3
+
+var transientPortConflictBackoff = 200 * time.Millisecond
+
+func shouldRetryTransientPortConflict(retry int) bool {
+	return retry < transientPortConflictRetries
+}
 
 // extractPortFromBindError extracts the port number from a bind error message.
 func extractPortFromBindError(err error) uint16 {

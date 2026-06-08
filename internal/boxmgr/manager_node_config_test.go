@@ -38,3 +38,14 @@ func TestUpdateNodeRejectsInvalidURI(t *testing.T) {
 		t.Fatalf("node URI changed after rejected update: %q", got)
 	}
 }
+
+func TestPortConflictRetriesBeforeReassign(t *testing.T) {
+	for retry := 0; retry < transientPortConflictRetries; retry++ {
+		if !shouldRetryTransientPortConflict(retry) {
+			t.Fatalf("retry %d should wait before permanent reassignment", retry)
+		}
+	}
+	if shouldRetryTransientPortConflict(transientPortConflictRetries) {
+		t.Fatalf("retry %d should allow reassignment", transientPortConflictRetries)
+	}
+}
