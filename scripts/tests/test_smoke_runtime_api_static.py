@@ -39,6 +39,22 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
     assert 'quality job response missing job_id' in text
 
 
+def test_smoke_script_retries_reload_status_during_control_plane_rebind():
+    text = read_source()
+    assert "retry_connect" in text
+    assert "urllib.error.URLError" in text
+    assert 'request(opener, "GET", "/api/reload/status", retry_connect=True)' in text
+    assert "time.sleep(0.5 * attempt)" in text
+
+
+def test_smoke_script_waits_for_webui_ready_before_checks():
+    text = read_source()
+    assert "wait_for_webui_ready" in text
+    assert '"GET", "/api/auth/status", retry_connect=True' in text
+    assert "WebUI did not become ready" in text
+    assert "wait_for_webui_ready()" in text
+
+
 def test_smoke_script_checks_port_continuity_after_reload():
     text = read_source()
     assert 'check_port_continuity' in text
@@ -91,6 +107,8 @@ def test_smoke_script_checks_config_node_crud_without_auto_reload():
 
 if __name__ == "__main__":
     test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths()
+    test_smoke_script_retries_reload_status_during_control_plane_rebind()
+    test_smoke_script_waits_for_webui_ready_before_checks()
     test_smoke_script_checks_config_node_crud_without_auto_reload()
     test_smoke_script_checks_port_continuity_after_reload()
     test_smoke_script_checks_auth_negative_paths_by_default()

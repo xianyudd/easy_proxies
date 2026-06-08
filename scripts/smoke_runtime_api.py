@@ -39,18 +39,25 @@ ALLOW_NO_PASSWORD = os.environ.get("EP_SMOKE_ALLOW_NO_PASSWORD", "").lower() in 
 FREE_PROXY_FIXTURE = os.environ.get("EP_SMOKE_FREE_PROXY_FIXTURE", "").lower() in {"1", "true", "yes"}
 
 
-def request(opener: urllib.request.OpenerDirector, method: str, path: str, payload: Any | None = None) -> tuple[int, Any]:
+def request(opener: urllib.request.OpenerDirector, method: str, path: str, payload: Any | None = None, *, retry_connect: bool = False) -> tuple[int, Any]:
     url = f"{BASE_URL}{path}"
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with opener.open(req, timeout=TIMEOUT) as resp:
-            body = resp.read()
-            return resp.status, parse_body(resp.headers.get("Content-Type", ""), body)
-    except urllib.error.HTTPError as exc:
-        body = exc.read()
-        return exc.code, parse_body(exc.headers.get("Content-Type", ""), body)
+    attempts = 4 if retry_connect else 1
+    for attempt in range(1, attempts + 1):
+        try:
+            with opener.open(req, timeout=TIMEOUT) as resp:
+                body = resp.read()
+                return resp.status, parse_body(resp.headers.get("Content-Type", ""), body)
+        except urllib.error.HTTPError as exc:
+            body = exc.read()
+            return exc.code, parse_body(exc.headers.get("Content-Type", ""), body)
+        except urllib.error.URLError as exc:
+            if not retry_connect or attempt >= attempts:
+                raise
+            time.sleep(0.5 * attempt)
+    raise RuntimeSmokeError(f"request retry exhausted: {method} {path}")
 
 
 def parse_body(content_type: str, body: bytes) -> Any:
@@ -66,6 +73,22 @@ def parse_body(content_type: str, body: bytes) -> Any:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeSmokeError(message)
+
+
+def wait_for_webui_ready() -> None:
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+    deadline = time.time() + POLL_SECONDS
+    last_error: Exception | None = None
+    while time.time() < deadline:
+        try:
+            code, payload = request(opener, "GET", "/api/auth/status", retry_connect=True)
+            if code == 200 and isinstance(payload, dict):
+                return
+            last_error = RuntimeSmokeError(f"unexpected ready probe HTTP {code}: {payload!r}")
+        except urllib.error.URLError as exc:
+            last_error = exc
+        time.sleep(0.5)
+    raise RuntimeSmokeError(f"WebUI did not become ready within {POLL_SECONDS}s: {last_error!r}")
 
 
 def login(opener: urllib.request.OpenerDirector) -> None:
@@ -274,7 +297,7 @@ def check_manual_reload(opener: urllib.request.OpenerDirector) -> None:
     require(started or pending, f"manual reload neither started nor queued: {payload!r}")
     deadline = time.time() + POLL_SECONDS
     while time.time() < deadline:
-        code, current = request(opener, "GET", "/api/reload/status")
+        code, current = request(opener, "GET", "/api/reload/status", retry_connect=True)
         require(code == 200 and isinstance(current, dict), f"GET reload status failed HTTP {code}: {current!r}")
         state = str(current.get("state", ""))
         if state in {"succeeded", "failed"}:
@@ -411,6 +434,7 @@ def main() -> int:
     original_settings: dict[str, Any] | None = None
     exit_code = 0
     try:
+        wait_for_webui_ready()
         check_auth_negative_paths()
         login(opener)
         check_auth_status_probe(opener, expected_authenticated=True)

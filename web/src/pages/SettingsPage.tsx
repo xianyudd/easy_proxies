@@ -66,7 +66,6 @@ function freeProxyRefreshDescription(state: 'idle' | 'refreshing' | 'failed', st
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const settings = useQuery({ queryKey:['settings'], queryFn:getSettings })
-  const subStatus = useQuery({ queryKey:['sub-status'], queryFn:getSubscriptionStatus })
   const cfCache = useQuery({ queryKey:['cf-cache'], queryFn:getCloudflareCache })
   const repCache = useQuery({ queryKey:['rep-cache'], queryFn:getReputationCache })
   const [draft, setDraft] = useState<SettingsResponse>({})
@@ -74,8 +73,11 @@ export function SettingsPage() {
   const [settingsDirty, setSettingsDirty] = useState(false)
   const [subsDirty, setSubsDirty] = useState(false)
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
+  const [subscriptionRefreshState, setSubscriptionRefreshState] = useState<'idle' | 'refreshing'>('idle')
+  const [subscriptionRefreshObservedRunning, setSubscriptionRefreshObservedRunning] = useState(false)
   const [freeProxyRefreshState, setFreeProxyRefreshState] = useState<'idle' | 'refreshing' | 'failed'>('idle')
   const reloadStatus = useQuery({ queryKey:['reload-status'], queryFn:getReloadStatus, enabled: reloadState === 'reloading', refetchInterval: reloadState === 'reloading' ? 800 : false })
+  const subStatus = useQuery({ queryKey:['sub-status'], queryFn:getSubscriptionStatus, refetchInterval: subscriptionRefreshState === 'refreshing' ? 800 : false })
   const freeProxyRefreshStatus = useQuery({ queryKey:['free-proxy-refresh-status'], queryFn:getFreeProxyRefreshStatus, refetchInterval: freeProxyRefreshState === 'refreshing' ? 800 : false })
   const toast = useToast(s=>s.show)
   const refreshRuntimeNodeCaches = () => {
@@ -89,6 +91,18 @@ export function SettingsPage() {
     if (!settingsDirty) setDraft(settings.data)
     if (!subsDirty) setSubs(listValue(settings.data.subscriptions))
   }, [settings.data, settingsDirty, subsDirty])
+  useEffect(() => {
+    if (subscriptionRefreshState !== 'refreshing') return
+    if (subStatus.data?.is_refreshing === true) {
+      setSubscriptionRefreshObservedRunning(true)
+      return
+    }
+    if (!subscriptionRefreshObservedRunning) return
+    setSubscriptionRefreshState('idle')
+    setSubscriptionRefreshObservedRunning(false)
+    if (subStatus.data?.nodes_modified) refreshRuntimeNodeCaches()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscriptionRefreshState, subscriptionRefreshObservedRunning, subStatus.data?.is_refreshing, subStatus.data?.nodes_modified])
   useEffect(() => {
     const id = window.location.hash.slice(1)
     if (!id) return
@@ -175,6 +189,8 @@ export function SettingsPage() {
     }
     void settings.refetch()
     if (res?.subscription_refresh_started) {
+      setSubscriptionRefreshState('refreshing')
+      setSubscriptionRefreshObservedRunning(false)
       void subStatus.refetch()
     }
     if (res?.free_proxy_refresh_needed) {
@@ -212,7 +228,7 @@ export function SettingsPage() {
     setFreeProxyRefreshState(started || statusState === 'running' ? 'refreshing' : 'idle')
     void freeProxyRefreshStatus.refetch()
   }, onError:e=>toast(e instanceof Error ? e.message:'免费源刷新启动失败','error') })
-  const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:(res)=>{ const changed = res.config_changed !== false; const refreshed = !!res.refresh_triggered; setSubsDirty(false); toast(refreshed ? '订阅配置已保存，后台刷新已启动' : changed ? '订阅配置已保存，调度已更新' : '订阅配置未变化，已保持当前状态', 'ok'); setReloadState('idle'); void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
+  const saveSub = useMutation({ mutationFn: saveSubscriptionConfig, onSuccess:(res)=>{ const changed = res.config_changed !== false; const refreshed = !!res.refresh_triggered; setSubsDirty(false); toast(refreshed ? '订阅配置已保存，后台刷新已启动' : changed ? '订阅配置已保存，调度已更新' : '订阅配置未变化，已保持当前状态', 'ok'); setReloadState('idle'); if (refreshed) { setSubscriptionRefreshState('refreshing'); setSubscriptionRefreshObservedRunning(false) }; void settings.refetch(); void subStatus.refetch() }, onError:e=>toast(e instanceof Error ? e.message:'订阅保存失败','error') })
   const updateDraft = (next: SettingsResponse) => { setSettingsDirty(true); setDraft(next) }
   const updateSubsDraft = (next: string) => { setSubsDirty(true); setSubs(next) }
   const input = (label:string, value:string, onChange:(v:string)=>void, type='text') => <div className="field settings-form-item"><label>{label}</label><Input className="settings-input" aria-label={label} type={type} autoComplete={type === 'password' ? 'current-password' : label.includes('用户名') ? 'username' : undefined} value={value} onChange={e=>onChange(e.target.value)} /></div>

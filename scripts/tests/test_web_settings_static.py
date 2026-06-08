@@ -45,8 +45,20 @@ def test_settings_page_refreshes_runtime_node_caches_after_background_changes():
     assert "refreshRuntimeNodeCaches" in text
 
 
+def test_settings_page_polls_subscription_refresh_and_refreshes_node_caches():
+    text = read(SETTINGS_PAGE)
+    assert "subscriptionRefreshState" in text
+    assert "subscriptionRefreshObservedRunning" in text
+    assert "refetchInterval: subscriptionRefreshState === 'refreshing' ? 800 : false" in text
+    assert "setSubscriptionRefreshState('refreshing')" in text
+    assert "setSubscriptionRefreshObservedRunning(false)" in text
+    assert "nodes_modified" in text
+    assert "refreshRuntimeNodeCaches()" in text
+
+
 if __name__ == "__main__":
     test_settings_page_does_not_overwrite_dirty_draft_on_refetch()
     test_settings_page_tracks_reload_and_free_proxy_refresh_status()
     test_disabled_only_free_proxy_source_changes_do_not_trigger_refresh()
     test_settings_page_refreshes_runtime_node_caches_after_background_changes()
+    test_settings_page_polls_subscription_refresh_and_refreshes_node_caches()
