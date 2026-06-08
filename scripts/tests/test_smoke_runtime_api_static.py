@@ -35,6 +35,9 @@ def test_smoke_script_checks_auth_negative_paths_by_default():
     text = read_source()
     assert 'EP_SMOKE_ALLOW_NO_PASSWORD' in text
     assert 'check_auth_negative_paths' in text
+    assert 'check_auth_status_probe' in text
+    assert '"/api/auth/status"' in text
+    assert 'auth status probe should not return 401' in text
     assert 'unauthenticated settings access should be rejected' in text
     assert 'wrong password should be rejected' in text
 

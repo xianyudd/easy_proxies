@@ -45,6 +45,70 @@ func TestHandleAuthReturnsStructuredErrorCodes(t *testing.T) {
 	}
 }
 
+func TestHandleAuthStatusReportsSessionStateWithout401(t *testing.T) {
+	server := &Server{cfg: Config{Password: "secret"}, sessions: make(map[string]*Session), sessionTTL: time.Hour}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	rec := httptest.NewRecorder()
+	server.handleAuthStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unauthenticated status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var anonymous struct {
+		Authenticated   bool `json:"authenticated"`
+		PasswordRequired bool `json:"password_required"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &anonymous); err != nil {
+		t.Fatal(err)
+	}
+	if anonymous.Authenticated || !anonymous.PasswordRequired {
+		t.Fatalf("unexpected anonymous auth status: %#v body=%s", anonymous, rec.Body.String())
+	}
+
+	session, err := server.createSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: session.Token})
+	rec = httptest.NewRecorder()
+	server.handleAuthStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("authenticated status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var authed struct {
+		Authenticated bool `json:"authenticated"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &authed); err != nil {
+		t.Fatal(err)
+	}
+	if !authed.Authenticated {
+		t.Fatalf("expected authenticated status, got %#v body=%s", authed, rec.Body.String())
+	}
+}
+
+func TestHandleAuthStatusAllowsPasswordlessMode(t *testing.T) {
+	server := &Server{cfg: Config{Password: ""}}
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	rec := httptest.NewRecorder()
+
+	server.handleAuthStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Authenticated   bool `json:"authenticated"`
+		PasswordRequired bool `json:"password_required"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Authenticated || body.PasswordRequired {
+		t.Fatalf("unexpected passwordless auth status: %#v body=%s", body, rec.Body.String())
+	}
+}
+
 func TestWithAuthReturnsStructuredUnauthorizedError(t *testing.T) {
 	server := &Server{cfg: Config{Password: "secret"}}
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes", nil)

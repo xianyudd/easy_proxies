@@ -76,10 +76,21 @@ def login(opener: urllib.request.OpenerDirector) -> None:
     print(f"auth: HTTP {code} {payload.get('message', '')}")
 
 
+def check_auth_status_probe(opener: urllib.request.OpenerDirector | None = None, *, expected_authenticated: bool) -> None:
+    probe = opener or urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+    code, payload = request(probe, "GET", "/api/auth/status")
+    require(code == 200, f"auth status probe should not return 401 or other errors, got HTTP {code}: {payload!r}")
+    require(isinstance(payload, dict), f"auth status returned non-object payload: {payload!r}")
+    actual = bool(payload.get("authenticated"))
+    require(actual is expected_authenticated, f"auth status authenticated={actual}, want {expected_authenticated}: {payload!r}")
+    print(f"auth-status: authenticated={actual}")
+
+
 def check_auth_negative_paths() -> None:
     if ALLOW_NO_PASSWORD:
         print("auth-negative: skipped by EP_SMOKE_ALLOW_NO_PASSWORD")
         return
+    check_auth_status_probe(expected_authenticated=False)
     anonymous = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
     code, payload = request(anonymous, "GET", "/api/settings")
     require(code == 401, f"unauthenticated settings access should be rejected, got HTTP {code}: {payload!r}")
@@ -281,6 +292,7 @@ def main() -> int:
     try:
         check_auth_negative_paths()
         login(opener)
+        check_auth_status_probe(opener, expected_authenticated=True)
         original_settings = check_same_value_save(opener)
         check_status_endpoints(opener)
         check_manual_reload(opener)

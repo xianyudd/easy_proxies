@@ -492,6 +492,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/auth", s.handleAuth)
+	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
 	mux.HandleFunc("/api/settings", s.withAuth(s.handleSettings))
 	mux.HandleFunc("/api/nodes", s.withAuth(s.handleNodes))
 	mux.HandleFunc("/api/nodes/config", s.withAuth(s.handleConfigNodes))
@@ -1953,6 +1954,37 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 		w.WriteHeader(http.StatusUnauthorized)
 		writeJSON(w, map[string]any{"error": "未授权，请先登录", "code": "unauthorized"})
 	}
+}
+
+// handleAuthStatus reports whether the current browser already has a valid
+// session. It intentionally returns 200 for anonymous users so the SPA can
+// decide whether to show the login screen without generating noisy 401 console
+// errors from protected endpoints during first paint.
+func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
+		return
+	}
+	if s.cfg.Password == "" {
+		writeJSON(w, map[string]any{
+			"authenticated":     true,
+			"password_required": false,
+			"no_password":       true,
+		})
+		return
+	}
+	authenticated := false
+	if cookie, err := r.Cookie("session_token"); err == nil && s.validateSession(cookie.Value) {
+		authenticated = true
+	} else if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		authenticated = s.validateSession(token)
+	}
+	writeJSON(w, map[string]any{
+		"authenticated":     authenticated,
+		"password_required": true,
+	})
 }
 
 // handleAuth 处理登录认证
