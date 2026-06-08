@@ -3918,12 +3918,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err), "code": "save_settings_failed"})
 			return
 		}
-		needFreeProxyRefresh := oldFreeProxySignature != freeProxyRefreshSignature(s.cfgSrc)
+		freeProxySignatureChanged := oldFreeProxySignature != freeProxyRefreshSignature(s.cfgSrc)
+		needFreeProxyRefresh := freeProxySignatureChanged && hasEnabledFreeProxySourceConfigs(s.cfgSrc.FreeProxySources)
 		needReload := oldCoreSignature != coreReloadSignature(s.cfgSrc)
 		savedExternalIP = s.cfgSrc.ExternalIP
 		savedProbeTarget = s.cfgSrc.Management.ProbeTarget
 		savedSkipCertVerify = s.cfgSrc.SkipCertVerify
-		if needFreeProxyRefresh {
+		if freeProxySignatureChanged {
 			// Free-proxy source/filter/cache changes are applied through the
 			// refresh pipeline. That pipeline starts an async reload only when it
 			// actually writes a new cache. Reporting need_reload=true here would

@@ -339,6 +339,62 @@ free_proxy_filter:
 	}
 }
 
+func TestHandleSettingsDoesNotRefreshForDisabledOnlyFreeProxySource(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_filter:
+  enabled: true
+free_proxy_cache:
+  enabled: true
+  path: .cache/free-proxies.txt
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	body := []byte(`{
+		"free_proxy_sources": [
+			{"name":"disabled-doc","url":"https://example.test/proxies.txt","default_scheme":"http","format":"text","enabled":false,"max_nodes":0}
+		]
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedReload                  bool `json:"need_reload"`
+		ReloadStarted              bool `json:"reload_started"`
+		FreeProxyRefreshNeeded     bool `json:"free_proxy_refresh_needed"`
+		FreeProxyRefreshStarted    bool `json:"free_proxy_refresh_started"`
+		SubscriptionRefreshStarted bool `json:"subscription_refresh_started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.NeedReload || resp.ReloadStarted || resp.FreeProxyRefreshNeeded || resp.FreeProxyRefreshStarted || resp.SubscriptionRefreshStarted {
+		t.Fatalf("disabled-only free proxy source should persist without reload/refresh, got %#v body=%s", resp, rec.Body.String())
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.FreeProxySources) != 1 || reloaded.FreeProxySources[0].EnabledValue() {
+		t.Fatalf("disabled free proxy source was not persisted as disabled: %#v", reloaded.FreeProxySources)
+	}
+}
+
 func TestHandleSettingsPreservesFreeProxyFilterFieldsWhenPartiallyUpdated(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
