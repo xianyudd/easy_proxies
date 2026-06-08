@@ -775,7 +775,7 @@ status_service() {
   ss -ltnp 2>/dev/null | grep -E "$listen_re" || true
   echo
   if [ "$web" = "200" ]; then
-    node_json="$(webui_api_optional GET "/api/nodes" || true)"
+    node_json="$(webui_api_optional GET "/api/nodes?availability=all&page_size=500" || true)"
     if command -v jq >/dev/null 2>&1 && [ -n "$node_json" ]; then
       echo "$node_json" | jq '{total_nodes, visible_nodes:((.nodes // [])|length), available:([(.nodes // [])[] | select(.available==true)] | length), source_stats, region_stats, port_range: (([(.nodes // [])[].port? // empty] | sort) as $p | if ($p|length)>0 then {first:$p[0], last:$p[-1]} else null end)}' || true
     elif [ -n "$node_json" ]; then

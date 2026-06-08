@@ -22,7 +22,7 @@ def test_readiness_warning_reports_node_availability_separately():
 def test_status_uses_authenticated_optional_api_and_null_safe_jq():
     text = read_source()
     assert 'webui_api_optional()' in text
-    assert 'node_json="$(webui_api_optional GET "/api/nodes" || true)"' in text
+    assert 'node_json="$(webui_api_optional GET "/api/nodes?availability=all&page_size=500" || true)"' in text
     assert 'settings_json="$(webui_api_optional GET "/api/settings" || true)"' in text
     assert '.nodes // []' in text
     assert 'WebUI API summary unavailable' in text
@@ -36,8 +36,14 @@ def test_isolated_foreground_run_command_exists_for_sandbox_runtime_verification
     assert 'isolated:run|service:isolated:run) EP_PROFILE=isolated; run_service_foreground ;;' in text
 
 
+def test_status_fetches_all_nodes_for_full_port_range_summary():
+    text = read_source()
+    assert 'node_json="$(webui_api_optional GET "/api/nodes?availability=all&page_size=500" || true)"' in text
+
+
 if __name__ == "__main__":
     test_isolated_startup_does_not_require_available_nodes_by_default()
     test_readiness_warning_reports_node_availability_separately()
     test_status_uses_authenticated_optional_api_and_null_safe_jq()
     test_isolated_foreground_run_command_exists_for_sandbox_runtime_verification()
+    test_status_fetches_all_nodes_for_full_port_range_summary()
