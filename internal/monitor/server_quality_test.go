@@ -265,6 +265,34 @@ func TestQualityJobItemMethodLimits(t *testing.T) {
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("%s %s status=%d, want 405 body=%s", tc.method, tc.path, rec.Code, rec.Body.String())
 		}
+		assertQualityErrorCode(t, rec, "method_not_allowed")
+	}
+}
+
+func TestQualityJobsRejectsWrongCollectionMethodWithStructuredCode(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/quality/jobs", nil)
+	rec := httptest.NewRecorder()
+
+	srv.srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d, want 405 body=%s", rec.Code, rec.Body.String())
+	}
+	assertQualityErrorCode(t, rec, "method_not_allowed")
+}
+
+func assertQualityErrorCode(t *testing.T, rec *httptest.ResponseRecorder, code string) {
+	t.Helper()
+	var body struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == "" || body.Code != code {
+		t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
 	}
 }
 

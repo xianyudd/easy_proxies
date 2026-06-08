@@ -19,6 +19,7 @@ func (s *Server) handleQualityJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	body, err := io.ReadAll(r.Body)
@@ -91,6 +92,7 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 	id := parts[0]
 	if len(parts) == 1 && r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	if len(parts) == 1 {
@@ -105,6 +107,7 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "results" && r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	if len(parts) == 2 && parts[1] == "results" {
@@ -126,6 +129,7 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "cancel" && r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	if len(parts) == 2 && parts[1] == "cancel" {
