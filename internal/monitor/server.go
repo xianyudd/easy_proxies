@@ -3321,6 +3321,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasGeoIPListen := hasNestedJSONKey(body, "geoip", "listen")
 		hasGeoIPPort := hasNestedJSONKey(body, "geoip", "port")
 		hasGeoIPAutoUpdateEnabled := hasNestedJSONKey(body, "geoip", "auto_update_enabled")
+		hasLogOutput := hasNestedJSONKey(body, "log", "output")
+		hasLogMaxSize := hasNestedJSONKey(body, "log", "max_size")
+		hasLogMaxBackups := hasNestedJSONKey(body, "log", "max_backups")
+		hasLogMaxAge := hasNestedJSONKey(body, "log", "max_age")
+		hasLogCompress := hasNestedJSONKey(body, "log", "compress")
 
 		logCfg := config.LogConfig{}
 		hasLogCfg := false
@@ -3329,17 +3334,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		savedProbeTarget := ""
 		savedSkipCertVerify := false
 		if req.Log != nil {
-			if req.Log.MaxSize <= 0 {
+			if hasLogMaxSize && req.Log.MaxSize <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的日志文件大小", "code": "invalid_log_max_size"})
 				return
 			}
-			if req.Log.MaxBackups <= 0 {
+			if hasLogMaxBackups && req.Log.MaxBackups <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的日志备份数量", "code": "invalid_log_max_backups"})
 				return
 			}
-			if req.Log.MaxAge <= 0 {
+			if hasLogMaxAge && req.Log.MaxAge <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的日志保留天数", "code": "invalid_log_max_age"})
 				return
@@ -3571,17 +3576,21 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.GeoIP.AutoUpdateInterval = 24 * time.Hour
 		}
 		if hasLogCfg {
-			s.cfgSrc.Log.Output = logCfg.Output
-			if logCfg.MaxSize > 0 {
+			if hasLogOutput {
+				s.cfgSrc.Log.Output = logCfg.Output
+			}
+			if hasLogMaxSize && logCfg.MaxSize > 0 {
 				s.cfgSrc.Log.MaxSize = logCfg.MaxSize
 			}
-			if logCfg.MaxBackups > 0 {
+			if hasLogMaxBackups && logCfg.MaxBackups > 0 {
 				s.cfgSrc.Log.MaxBackups = logCfg.MaxBackups
 			}
-			if logCfg.MaxAge > 0 {
+			if hasLogMaxAge && logCfg.MaxAge > 0 {
 				s.cfgSrc.Log.MaxAge = logCfg.MaxAge
 			}
-			s.cfgSrc.Log.Compress = logCfg.Compress
+			if hasLogCompress {
+				s.cfgSrc.Log.Compress = logCfg.Compress
+			}
 		}
 		if hasMode {
 			s.cfgSrc.Mode = normalizeCoreMode(req.Mode)
