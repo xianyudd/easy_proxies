@@ -39,6 +39,17 @@ def test_smoke_script_checks_auth_negative_paths_by_default():
     assert 'wrong password should be rejected' in text
 
 
+def test_smoke_script_can_exercise_local_free_proxy_fixture_safely():
+    text = read_source()
+    assert 'EP_SMOKE_FREE_PROXY_FIXTURE' in text
+    assert 'check_free_proxy_refresh_with_fixture' in text
+    assert 'tempfile.TemporaryDirectory' in text
+    assert 'restore_settings' in text
+    assert 'finally:' in text
+    assert 'local-smoke-free-proxy' in text
+    assert 'cache file should contain accepted fixture proxies' in text
+
+
 def test_smoke_script_uses_env_configurable_base_url_and_password():
     text = read_source()
     assert 'EP_SMOKE_BASE_URL' in text
@@ -50,4 +61,5 @@ if __name__ == "__main__":
     test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths()
     test_smoke_script_checks_port_continuity_after_reload()
     test_smoke_script_checks_auth_negative_paths_by_default()
+    test_smoke_script_can_exercise_local_free_proxy_fixture_safely()
     test_smoke_script_uses_env_configurable_base_url_and_password()

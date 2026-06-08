@@ -16,10 +16,12 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from http.cookiejar import CookieJar
 from typing import Any
 
@@ -34,6 +36,7 @@ TIMEOUT = float(os.environ.get("EP_SMOKE_TIMEOUT", "20"))
 POLL_SECONDS = float(os.environ.get("EP_SMOKE_POLL_SECONDS", "20"))
 SKIP_RELOAD = os.environ.get("EP_SMOKE_SKIP_RELOAD", "").lower() in {"1", "true", "yes"}
 ALLOW_NO_PASSWORD = os.environ.get("EP_SMOKE_ALLOW_NO_PASSWORD", "").lower() in {"1", "true", "yes"}
+FREE_PROXY_FIXTURE = os.environ.get("EP_SMOKE_FREE_PROXY_FIXTURE", "").lower() in {"1", "true", "yes"}
 
 
 def request(opener: urllib.request.OpenerDirector, method: str, path: str, payload: Any | None = None) -> tuple[int, Any]:
@@ -105,6 +108,19 @@ def check_same_value_save(opener: urllib.request.OpenerDirector) -> dict[str, An
     require(not triggered, f"same-value save unexpectedly triggered reload/refresh: {triggered} payload={saved!r}")
     print("settings: same-value save did not trigger reload/refresh")
     return settings
+
+
+def save_settings(opener: urllib.request.OpenerDirector, settings: dict[str, Any]) -> dict[str, Any]:
+    code, saved = request(opener, "PUT", "/api/settings", settings)
+    require(code == 200 and isinstance(saved, dict), f"PUT /api/settings failed HTTP {code}: {saved!r}")
+    return saved
+
+
+def restore_settings(opener: urllib.request.OpenerDirector, original: dict[str, Any]) -> None:
+    saved = save_settings(opener, original)
+    error = saved.get("free_proxy_refresh_error") or saved.get("reload_error")
+    require(not error, f"restoring settings reported error: {saved!r}")
+    print("settings: restored original runtime configuration")
 
 
 def check_status_endpoints(opener: urllib.request.OpenerDirector) -> None:
@@ -194,21 +210,96 @@ def check_free_proxy_refresh(opener: urllib.request.OpenerDirector) -> None:
     raise RuntimeSmokeError("free proxy refresh did not finish within poll window")
 
 
+def wait_for_free_proxy_refresh(opener: urllib.request.OpenerDirector, context: str) -> dict[str, Any]:
+    deadline = time.time() + POLL_SECONDS
+    while time.time() < deadline:
+        code, current = request(opener, "GET", "/api/free-proxy/refresh/status")
+        require(code == 200 and isinstance(current, dict), f"GET free refresh status failed HTTP {code}: {current!r}")
+        state = str(current.get("state", ""))
+        if state in {"succeeded", "failed", "idle", "disabled"}:
+            require(state == "succeeded", f"{context} free proxy refresh did not succeed: {current!r}")
+            return current
+        time.sleep(0.5)
+    raise RuntimeSmokeError(f"{context} free proxy refresh did not finish within poll window")
+
+
+def check_free_proxy_refresh_with_fixture(opener: urllib.request.OpenerDirector, original: dict[str, Any]) -> None:
+    if not FREE_PROXY_FIXTURE:
+        print("free-proxy-fixture: skipped by default")
+        return
+    with tempfile.TemporaryDirectory(prefix="easy-proxies-smoke-") as tmp:
+        tmp_path = Path(tmp)
+        source_path = tmp_path / "local-free-proxies.txt"
+        cache_path = tmp_path / "cache.txt"
+        fixture_uris = [
+            "http://127.0.0.1:18080",
+            "http://127.0.0.1:18081",
+        ]
+        source_path.write_text("\n".join(fixture_uris) + "\n", encoding="utf-8")
+        fixture_settings = dict(original)
+        fixture_settings["free_proxy_sources"] = [{
+            "name": "local-smoke-free-proxy",
+            "enabled": True,
+            "file": str(source_path),
+            "url": "",
+            "format": "txt",
+            "default_scheme": "http",
+            "max_nodes": 0,
+            "max_bytes": 0,
+        }]
+        fixture_settings["free_proxy_cache"] = {
+            **dict(original.get("free_proxy_cache") or {}),
+            "enabled": True,
+            "path": str(cache_path),
+            "refresh_on_start": False,
+            "auto_reload": False,
+            "workers": 1,
+            "max_age": "1ns",
+        }
+        fixture_settings["free_proxy_filter"] = {
+            **dict(original.get("free_proxy_filter") or {}),
+            "enabled": False,
+        }
+        fixture_settings["free_proxy_max_nodes"] = 0
+
+        saved = save_settings(opener, fixture_settings)
+        require(saved.get("free_proxy_refresh_needed"), f"fixture settings should trigger free proxy refresh: {saved!r}")
+        require(saved.get("free_proxy_refresh_started"), f"fixture free proxy refresh did not start: {saved!r}")
+        status = wait_for_free_proxy_refresh(opener, "fixture")
+        require(int(status.get("accepted") or 0) == len(fixture_uris), f"fixture accepted count mismatch: {status!r}")
+        require(cache_path.exists(), f"fixture cache was not written: {cache_path}")
+        cached = cache_path.read_text(encoding="utf-8")
+        missing = [uri for uri in fixture_uris if uri not in cached]
+        require(not missing, f"cache file should contain accepted fixture proxies, missing={missing}, content={cached!r}")
+        print(f"free-proxy-fixture: succeeded accepted={status.get('accepted')} cache={cache_path}")
+
+
 def main() -> int:
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+    original_settings: dict[str, Any] | None = None
+    exit_code = 0
     try:
         check_auth_negative_paths()
         login(opener)
-        check_same_value_save(opener)
+        original_settings = check_same_value_save(opener)
         check_status_endpoints(opener)
         check_manual_reload(opener)
         check_port_continuity(opener)
         check_free_proxy_refresh(opener)
+        check_free_proxy_refresh_with_fixture(opener, original_settings)
     except RuntimeSmokeError as exc:
         print(f"SMOKE FAILED: {exc}", file=sys.stderr)
-        return 1
-    print("runtime API smoke: ok")
-    return 0
+        exit_code = 1
+    finally:
+        if original_settings is not None and FREE_PROXY_FIXTURE:
+            try:
+                restore_settings(opener, original_settings)
+            except RuntimeSmokeError as exc:
+                print(f"SMOKE RESTORE FAILED: {exc}", file=sys.stderr)
+                exit_code = 1
+    if exit_code == 0:
+        print("runtime API smoke: ok")
+    return exit_code
 
 
 if __name__ == "__main__":
