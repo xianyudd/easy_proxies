@@ -3392,19 +3392,11 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 			shouldRefresh := req.Enabled && len(cleanURLs) > 0 && (urlsChanged || enabledChanged)
 			if shouldRefresh {
 				refreshTriggered = true
-				if err := s.subRefresher.UpdateConfigAndRefresh(cleanURLs, req.Enabled, interval); err != nil {
-					// Config was saved but refresh failed — report partial success
-					writeJSON(w, map[string]any{
-						"message":           fmt.Sprintf("订阅配置已保存，但刷新失败: %v", err),
-						"subscriptions":     cleanURLs,
-						"enabled":           req.Enabled,
-						"interval":          interval.String(),
-						"config_changed":    configChanged,
-						"refresh_triggered": refreshTriggered,
-						"refresh_error":     err.Error(),
-					})
-					return
-				}
+				go func(urls []string, enabled bool, interval time.Duration) {
+					if err := s.subRefresher.UpdateConfigAndRefresh(urls, enabled, interval); err != nil && s.logger != nil {
+						s.logger.Printf("❌ subscription config refresh failed: %v", err)
+					}
+				}(copyStringSlice(cleanURLs), req.Enabled, interval)
 			} else if urlsChanged || enabledChanged || intervalChanged {
 				s.subRefresher.UpdateConfig(cleanURLs, req.Enabled, interval)
 			}
@@ -3417,8 +3409,14 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 				nodeCount = status.NodeCount
 			}
 		}
+		message := "订阅配置已保存"
+		if refreshTriggered {
+			message = "订阅配置已保存，刷新已在后台启动"
+		} else if configChanged {
+			message = "订阅配置已保存，调度已更新"
+		}
 		writeJSON(w, map[string]any{
-			"message":           "订阅配置已更新并生效",
+			"message":           message,
 			"subscriptions":     cleanURLs,
 			"enabled":           req.Enabled,
 			"interval":          interval.String(),

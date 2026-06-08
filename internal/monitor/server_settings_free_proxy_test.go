@@ -1481,15 +1481,17 @@ func (f fakeSubscriptionRefresher) UpdateConfigAndRefresh(urls []string, enabled
 }
 
 type recordingSubscriptionRefresher struct {
-	status             SubscriptionStatus
-	refreshCalls       int
-	refreshStarted     chan struct{}
-	refreshBlock       chan struct{}
-	updateCalls        int
-	updateRefreshCalls int
-	lastURLs           []string
-	lastEnabled        bool
-	lastInterval       time.Duration
+	status               SubscriptionStatus
+	refreshCalls         int
+	refreshStarted       chan struct{}
+	refreshBlock         chan struct{}
+	updateCalls          int
+	updateRefreshCalls   int
+	updateRefreshStarted chan struct{}
+	updateRefreshBlock   chan struct{}
+	lastURLs             []string
+	lastEnabled          bool
+	lastInterval         time.Duration
 }
 
 func (f *recordingSubscriptionRefresher) RefreshNow() error {
@@ -1511,6 +1513,12 @@ func (f *recordingSubscriptionRefresher) UpdateConfig(urls []string, enabled boo
 }
 func (f *recordingSubscriptionRefresher) UpdateConfigAndRefresh(urls []string, enabled bool, interval time.Duration) error {
 	f.updateRefreshCalls++
+	if f.updateRefreshStarted != nil {
+		f.updateRefreshStarted <- struct{}{}
+	}
+	if f.updateRefreshBlock != nil {
+		<-f.updateRefreshBlock
+	}
 	f.lastURLs = append([]string(nil), urls...)
 	f.lastEnabled = enabled
 	f.lastInterval = interval
@@ -1688,6 +1696,74 @@ subscription_refresh:
 	}
 }
 
+func TestHandleSubscriptionConfigURLChangeRefreshesInBackground(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+subscriptions:
+  - https://example.test/sub-a
+subscription_refresh:
+  enabled: true
+  interval: 1h
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresher := &recordingSubscriptionRefresher{
+		status:               SubscriptionStatus{NodeCount: 9},
+		updateRefreshStarted: make(chan struct{}, 1),
+		updateRefreshBlock:   make(chan struct{}),
+	}
+	server := &Server{cfgSrc: cfg}
+	server.SetSubscriptionRefresher(refresher)
+
+	body := []byte(`{"subscriptions":["https://example.test/sub-b"],"enabled":true,"interval":"1h"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		server.handleSubscriptionConfig(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		close(refresher.updateRefreshBlock)
+		t.Fatal("subscription config save blocked waiting for refresh completion")
+	}
+	close(refresher.updateRefreshBlock)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ConfigChanged    bool `json:"config_changed"`
+		RefreshTriggered bool `json:"refresh_triggered"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.ConfigChanged || !resp.RefreshTriggered {
+		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
+	}
+
+	select {
+	case <-refresher.updateRefreshStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("background config refresh was not triggered")
+	}
+	if refresher.updateRefreshCalls != 1 {
+		t.Fatalf("updateRefreshCalls=%d, want 1", refresher.updateRefreshCalls)
+	}
+}
+
 func TestHandleSubscriptionConfigRefreshesWhenURLsChange(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
@@ -1707,7 +1783,7 @@ subscription_refresh:
 	if err != nil {
 		t.Fatal(err)
 	}
-	refresher := &recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 9}}
+	refresher := &recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 9}, updateRefreshStarted: make(chan struct{}, 1)}
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
@@ -1717,6 +1793,11 @@ subscription_refresh:
 	server.handleSubscriptionConfig(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-refresher.updateRefreshStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("background config refresh was not triggered")
 	}
 	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 1 {
 		t.Fatalf("url change should refresh: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
@@ -1800,7 +1881,7 @@ subscription_refresh:
 	if err != nil {
 		t.Fatal(err)
 	}
-	refresher := &recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 9}}
+	refresher := &recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 9}, updateRefreshStarted: make(chan struct{}, 1)}
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
@@ -1810,6 +1891,11 @@ subscription_refresh:
 	server.handleSubscriptionConfig(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-refresher.updateRefreshStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("background config refresh was not triggered")
 	}
 	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 1 {
 		t.Fatalf("enable should refresh existing URLs: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
