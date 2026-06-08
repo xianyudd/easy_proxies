@@ -1498,6 +1498,59 @@ nodes:
 	}
 }
 
+func TestHandleSettingsPreservesListenerPortsWhenCredentialsOnly(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`mode: hybrid
+listener:
+  address: 127.0.0.1
+  port: 18080
+  username: old-listener-user
+  password: old-listener-pass
+multi_port:
+  address: 127.0.0.1
+  base_port: 35000
+  username: old-multi-user
+  password: old-multi-pass
+nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+management:
+  listen: ` + listen + `
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	body := []byte(`{
+		"listener": {"username":"new-listener-user","password":"new-listener-pass"},
+		"multi_port": {"username":"new-multi-user","password":"new-multi-pass"}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Listener.Address != "127.0.0.1" || reloaded.Listener.Port != 18080 || reloaded.Listener.Username != "new-listener-user" || reloaded.Listener.Password != "new-listener-pass" {
+		t.Fatalf("listener credential-only update corrupted listener: %#v", reloaded.Listener)
+	}
+	if reloaded.MultiPort.Address != "127.0.0.1" || reloaded.MultiPort.BasePort != 35000 || reloaded.MultiPort.Username != "new-multi-user" || reloaded.MultiPort.Password != "new-multi-pass" {
+		t.Fatalf("multi_port credential-only update corrupted multi_port: %#v", reloaded.MultiPort)
+	}
+}
+
 func TestHandleSettingsStartsCoreReloadAsynchronously(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

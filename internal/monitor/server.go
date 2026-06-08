@@ -3305,6 +3305,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasProbeTarget := hasJSONKey(body, "probe_target")
 		hasSkipCertVerify := hasJSONKey(body, "skip_cert_verify")
 		hasMode := hasJSONKey(body, "mode")
+		hasListenerAddress := hasNestedJSONKey(body, "listener", "address")
+		hasListenerPort := hasNestedJSONKey(body, "listener", "port")
+		hasListenerUsername := hasNestedJSONKey(body, "listener", "username")
+		hasListenerPassword := hasNestedJSONKey(body, "listener", "password")
+		hasMultiPortAddress := hasNestedJSONKey(body, "multi_port", "address")
+		hasMultiPortBasePort := hasNestedJSONKey(body, "multi_port", "base_port")
+		hasMultiPortUsername := hasNestedJSONKey(body, "multi_port", "username")
+		hasMultiPortPassword := hasNestedJSONKey(body, "multi_port", "password")
 		hasManagementListen := hasNestedJSONKey(body, "management", "listen")
 
 		logCfg := config.LogConfig{}
@@ -3572,16 +3580,32 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.Mode = normalizeCoreMode(req.Mode)
 		}
 		if req.Listener != nil {
-			s.cfgSrc.Listener.Address = req.Listener.Address
-			s.cfgSrc.Listener.Port = req.Listener.Port
-			s.cfgSrc.Listener.Username = req.Listener.Username
-			s.cfgSrc.Listener.Password = req.Listener.Password
+			if hasListenerAddress {
+				s.cfgSrc.Listener.Address = req.Listener.Address
+			}
+			if hasListenerPort {
+				s.cfgSrc.Listener.Port = req.Listener.Port
+			}
+			if hasListenerUsername {
+				s.cfgSrc.Listener.Username = req.Listener.Username
+			}
+			if hasListenerPassword {
+				s.cfgSrc.Listener.Password = req.Listener.Password
+			}
 		}
 		if req.MultiPort != nil {
-			s.cfgSrc.MultiPort.Address = req.MultiPort.Address
-			s.cfgSrc.MultiPort.BasePort = req.MultiPort.BasePort
-			s.cfgSrc.MultiPort.Username = req.MultiPort.Username
-			s.cfgSrc.MultiPort.Password = req.MultiPort.Password
+			if hasMultiPortAddress {
+				s.cfgSrc.MultiPort.Address = req.MultiPort.Address
+			}
+			if hasMultiPortBasePort {
+				s.cfgSrc.MultiPort.BasePort = req.MultiPort.BasePort
+			}
+			if hasMultiPortUsername {
+				s.cfgSrc.MultiPort.Username = req.MultiPort.Username
+			}
+			if hasMultiPortPassword {
+				s.cfgSrc.MultiPort.Password = req.MultiPort.Password
+			}
 		}
 		if req.Pool != nil {
 			s.cfgSrc.Pool.Mode = req.Pool.Mode
