@@ -3418,6 +3418,11 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 		for _, u := range req.Subscriptions {
 			u = strings.TrimSpace(u)
 			if u != "" {
+				if err := validateSubscriptionURL(u); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_subscription_url"})
+					return
+				}
 				cleanURLs = append(cleanURLs, u)
 			}
 		}
@@ -3495,6 +3500,19 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func validateSubscriptionURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("无效的订阅地址: %s", raw)
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("订阅地址只支持 http/https: %s", raw)
 	}
 }
 

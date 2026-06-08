@@ -1769,6 +1769,48 @@ subscription_refresh:
 	}
 }
 
+func TestHandleSubscriptionConfigRejectsInvalidURLBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+subscriptions:
+  - https://example.test/sub-a
+subscription_refresh:
+  enabled: true
+  interval: 1h
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresher := &recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 7}}
+	server := &Server{cfgSrc: cfg}
+	server.SetSubscriptionRefresher(refresher)
+
+	body := []byte(`{"subscriptions":["https://example.test/sub-a","not-a-url"],"enabled":true,"interval":"1h"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSubscriptionConfig(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 0 {
+		t.Fatalf("invalid config should not update refresher: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != "https://example.test/sub-a" {
+		t.Fatalf("invalid config should not be persisted: %#v", reloaded.Subscriptions)
+	}
+}
+
 func TestHandleSubscriptionConfigURLChangeRefreshesInBackground(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
