@@ -1326,6 +1326,13 @@ func parseOptionalScopeAllParam(q url.Values) (bool, bool) {
 }
 
 func validateNodeListQuery(q url.Values) (string, bool) {
+	region := strings.ToLower(strings.TrimSpace(q.Get("region")))
+	if region != "" && !isAllowedMonitorRegion(region) {
+		return "invalid_region", false
+	}
+	if !isAllowedQueryValue(q.Get("source"), "", "all", "subscription", "free_proxy", "inline", "nodes_file", "unknown") {
+		return "invalid_source", false
+	}
 	if !isAllowedQueryValue(q.Get("availability"), "", "all", "available", "healthy", "unavailable", "failed", "blacklisted", "unchecked") {
 		return "invalid_availability", false
 	}

@@ -164,6 +164,8 @@ func TestHandleNodesRejectsInvalidFiltersAndSort(t *testing.T) {
 		path string
 		code string
 	}{
+		{name: "region", path: "/api/nodes?page=1&region=moon", code: "invalid_region"},
+		{name: "source", path: "/api/nodes?page=1&source=bad", code: "invalid_source"},
 		{name: "availability", path: "/api/nodes?page=1&availability=bad", code: "invalid_availability"},
 		{name: "latency", path: "/api/nodes?page=1&latency=bad", code: "invalid_latency"},
 		{name: "sort", path: "/api/nodes?page=1&sort=bad", code: "invalid_sort"},
