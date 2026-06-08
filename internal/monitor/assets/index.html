@@ -1173,7 +1173,7 @@
                 </div>
                 <div class="form-group">
                   <label>数量</label>
-                  <input id="repCount" type="number" min="1" max="50" value="10" class="setting-input" />
+                  <input id="repCount" type="number" min="1" max="5" value="5" class="setting-input" />
                 </div>
                 <button class="btn btn-primary" onclick="checkReputation()">开始检查</button>
               </div>
@@ -2810,9 +2810,9 @@
 
     async function checkReputation() {
       const region = document.getElementById('repRegion').value;
-      const count = document.getElementById('repCount').value || 10;
+      const count = Math.min(5, Math.max(1, Number(document.getElementById('repCount').value) || 5));
       const status = document.getElementById('repStatus');
-      status.textContent = '检查中，请稍候...';
+      status.textContent = '同步检查最多 5 条；更多节点请使用后台质量任务。';
       try {
         const res = await fetch(`/api/reputation/check?region=${encodeURIComponent(region)}&mode=multi-port&count=${encodeURIComponent(count)}`);
         const data = await res.json();

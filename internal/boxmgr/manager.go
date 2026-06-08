@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1024,6 +1025,9 @@ func (m *Manager) prepareNodeLocked(node config.NodeConfig, currentName string) 
 	if node.URI == "" {
 		return config.NodeConfig{}, fmt.Errorf("%w: URI 不能为空", monitor.ErrInvalidNode)
 	}
+	if !isValidNodeURI(node.URI) {
+		return config.NodeConfig{}, fmt.Errorf("%w: URI 格式无效", monitor.ErrInvalidNode)
+	}
 
 	// Extract name from URI if not provided
 	if node.Name == "" {
@@ -1059,6 +1063,23 @@ func (m *Manager) prepareNodeLocked(node config.NodeConfig, currentName string) 
 	}
 
 	return node, nil
+}
+
+func isValidNodeURI(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if !config.IsProxyURI(raw) {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "socks", "socks5", "ss", "ssr", "vmess", "vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic", "anytls":
+		return parsed.Host != "" || parsed.Opaque != ""
+	default:
+		return false
+	}
 }
 
 func androidRegionOrder() []string {
