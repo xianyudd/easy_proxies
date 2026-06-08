@@ -64,6 +64,7 @@ export interface SaveSettingsResponse {
   reload_error?: string
   free_proxy_refresh_needed?: boolean
   free_proxy_refresh_started?: boolean
+  subscription_refresh_started?: boolean
   free_proxy_refresh_status?: FreeProxyRefreshStatus
   free_proxy_refresh_error?: string
   external_ip?: string

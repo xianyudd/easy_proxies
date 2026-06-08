@@ -157,6 +157,11 @@ export function SettingsPage() {
       return
     }
     void settings.refetch()
+    if (res?.subscription_refresh_started) {
+      toast('设置已保存，订阅后台刷新已启动...', 'ok')
+      void subStatus.refetch()
+      return
+    }
     if (res?.free_proxy_refresh_needed) {
       if (res.free_proxy_refresh_error) {
         setFreeProxyRefreshState('failed')
@@ -234,7 +239,11 @@ export function SettingsPage() {
       return
     }
     const serverSources = Array.isArray(settings.data?.free_proxy_sources) ? settings.data.free_proxy_sources as FreeProxySource[] : []
-    const normalizedDraft = {...draft, free_proxy_sources: normalizeFreeSourcesForSave(freeSources, serverSources)}
+    const normalizedDraft = {
+      ...draft,
+      subscriptions: cleanSubItems,
+      free_proxy_sources: normalizeFreeSourcesForSave(freeSources, serverSources),
+    }
     save.mutate(normalizedDraft)
   }
   const saveSubscriptions = () => saveSub.mutate({

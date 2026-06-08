@@ -1873,6 +1873,70 @@ nodes:
 	}
 }
 
+func TestHandleSettingsPersistsSubscriptionsFields(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`subscriptions:
+  - https://example.test/sub-a
+subscription_refresh:
+  enabled: true
+  interval: 1h
+nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresher := &recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 1}, updateRefreshStarted: make(chan struct{}, 1)}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+	server.SetSubscriptionRefresher(refresher)
+
+	body := []byte(`{"subscriptions":["https://example.test/sub-b","  ","https://example.test/sub-c"],"subscription_refresh":{"enabled":true,"interval":"1h"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedReload                 bool `json:"need_reload"`
+		SubscriptionRefreshStarted bool `json:"subscription_refresh_started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.NeedReload {
+		t.Fatalf("subscription URL settings should not require core reload: body=%s", rec.Body.String())
+	}
+	if !resp.SubscriptionRefreshStarted {
+		t.Fatalf("subscription URL settings should report background refresh start: body=%s", rec.Body.String())
+	}
+	select {
+	case <-refresher.updateRefreshStarted:
+	case <-time.After(time.Second):
+		t.Fatalf("settings save should start background subscription refresh")
+	}
+	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 1 {
+		t.Fatalf("settings save should refresh changed subscription URLs in background: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
+	}
+	if got := strings.Join(refresher.lastURLs, ","); got != "https://example.test/sub-b,https://example.test/sub-c" {
+		t.Fatalf("refresher URLs = %q", got)
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Subscriptions) != 2 || reloaded.Subscriptions[0] != "https://example.test/sub-b" || reloaded.Subscriptions[1] != "https://example.test/sub-c" {
+		t.Fatalf("subscriptions update not persisted: %#v", reloaded.Subscriptions)
+	}
+}
+
 func TestHandleSettingsPersistsSubscriptionRefreshFields(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

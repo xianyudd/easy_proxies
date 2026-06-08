@@ -636,7 +636,6 @@ func coreReloadSignature(cfg *config.Config) string {
 		FreeProxyFilter   nodesource.FilterConfig
 		FreeProxyCache    config.FreeProxyCacheConfig
 		NodesFile         string
-		Subscriptions     []string
 		SkipCertVerify    bool
 		UpstreamProxy     string
 		ClashAPIListen    string
@@ -655,7 +654,6 @@ func coreReloadSignature(cfg *config.Config) string {
 		FreeProxyFilter:   cfg.FreeProxyFilter,
 		FreeProxyCache:    cfg.FreeProxyCache,
 		NodesFile:         cfg.NodesFile,
-		Subscriptions:     copyStringSlice(cfg.Subscriptions),
 		SkipCertVerify:    cfg.SkipCertVerify,
 		UpstreamProxy:     cfg.UpstreamProxy,
 		ClashAPIListen:    cfg.Management.ClashAPIListen,
@@ -3332,6 +3330,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				CloudflareTimeout     string `json:"cloudflare_timeout"`
 				CloudflareConcurrency int    `json:"cloudflare_concurrency"`
 			} `json:"quality_check"`
+			Subscriptions       []string `json:"subscriptions"`
 			SubscriptionRefresh *struct {
 				Enabled  bool   `json:"enabled"`
 				Interval string `json:"interval"`
@@ -3353,6 +3352,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasExternalIP := hasJSONKey(body, "external_ip")
 		hasProbeTarget := hasJSONKey(body, "probe_target")
 		hasSkipCertVerify := hasJSONKey(body, "skip_cert_verify")
+		hasSubscriptions := hasJSONKey(body, "subscriptions")
 		hasMode := hasJSONKey(body, "mode")
 		hasListenerAddress := hasNestedJSONKey(body, "listener", "address")
 		hasListenerPort := hasNestedJSONKey(body, "listener", "port")
@@ -3601,6 +3601,21 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				hasCloudflareTimeout = true
 			}
 		}
+		var cleanSubscriptions []string
+		if hasSubscriptions {
+			for _, u := range req.Subscriptions {
+				u = strings.TrimSpace(u)
+				if u == "" {
+					continue
+				}
+				if err := validateSubscriptionURL(u); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_subscription_url"})
+					return
+				}
+				cleanSubscriptions = append(cleanSubscriptions, u)
+			}
+		}
 		if req.SubscriptionRefresh != nil && hasSubscriptionRefreshInterval && strings.TrimSpace(req.SubscriptionRefresh.Interval) != "" {
 			d, err := time.ParseDuration(req.SubscriptionRefresh.Interval)
 			if err != nil {
@@ -3765,6 +3780,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				s.cfgSrc.GeoIP.AutoUpdateInterval = geoIPAutoUpdateInterval
 			}
 		}
+		oldSubscriptions := copyStringSlice(s.cfgSrc.Subscriptions)
+		if hasSubscriptions {
+			s.cfgSrc.Subscriptions = cleanSubscriptions
+		}
 		if req.FreeProxySources != nil {
 			s.cfgSrc.FreeProxySources = sourceConfigs
 		}
@@ -3805,7 +3824,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			s.cfgSrc.QualityCheck = resolvedQuality.Normalized()
 		}
-		subscriptionRefreshChanged := false
+		subscriptionURLsChanged := hasSubscriptions && !stringSlicesEqual(oldSubscriptions, s.cfgSrc.Subscriptions)
+		subscriptionConfigChanged := subscriptionURLsChanged
+		oldSubscriptionEnabled := s.cfgSrc.SubscriptionRefresh.Enabled
 		if req.SubscriptionRefresh != nil {
 			oldSubscriptionRefresh := s.cfgSrc.SubscriptionRefresh
 			if hasSubscriptionRefreshEnabled {
@@ -3814,7 +3835,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			if hasSubscriptionRefreshIntervalValue {
 				s.cfgSrc.SubscriptionRefresh.Interval = subscriptionRefreshInterval
 			}
-			subscriptionRefreshChanged = oldSubscriptionRefresh.Enabled != s.cfgSrc.SubscriptionRefresh.Enabled || oldSubscriptionRefresh.Interval != s.cfgSrc.SubscriptionRefresh.Interval
+			subscriptionConfigChanged = subscriptionConfigChanged || oldSubscriptionRefresh.Enabled != s.cfgSrc.SubscriptionRefresh.Enabled || oldSubscriptionRefresh.Interval != s.cfgSrc.SubscriptionRefresh.Interval
 		}
 		if s.cfgSrc.Mode == "multi-port" || s.cfgSrc.Mode == "hybrid" {
 			s.cfg.ProxyUsername = s.cfgSrc.MultiPort.Username
@@ -3867,8 +3888,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		s.applyQualityRuntimeConfig(s.cfgSrc)
 		s.ensureQualityScheduler()
-		if subscriptionRefreshChanged && s.subRefresher != nil && s.cfgSrc != nil {
-			s.subRefresher.UpdateConfig(copyStringSlice(s.cfgSrc.Subscriptions), s.cfgSrc.SubscriptionRefresh.Enabled, s.cfgSrc.SubscriptionRefresh.Interval)
+		subscriptionRefreshStarted := false
+		if subscriptionConfigChanged && s.subRefresher != nil && s.cfgSrc != nil {
+			urls := copyStringSlice(s.cfgSrc.Subscriptions)
+			enabled := s.cfgSrc.SubscriptionRefresh.Enabled
+			interval := s.cfgSrc.SubscriptionRefresh.Interval
+			shouldRefreshSubscriptions := enabled && len(urls) > 0 && (subscriptionURLsChanged || oldSubscriptionEnabled != enabled)
+			if shouldRefreshSubscriptions {
+				subscriptionRefreshStarted = true
+				go func() {
+					if err := s.subRefresher.UpdateConfigAndRefresh(urls, enabled, interval); err != nil && s.logger != nil {
+						s.logger.Printf("❌ subscription settings refresh failed: %v", err)
+					}
+				}()
+			} else {
+				s.subRefresher.UpdateConfig(urls, enabled, interval)
+			}
 		}
 
 		reloadStarted := false
@@ -3896,21 +3931,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeJSON(w, map[string]any{
-			"message":                    "设置已保存",
-			"external_ip":                savedExternalIP,
-			"probe_target":               savedProbeTarget,
-			"skip_cert_verify":           savedSkipCertVerify,
-			"need_reload":                needReload,
-			"reload_started":             reloadStarted,
-			"reload_status":              reloadStatus,
-			"reload_error":               reloadError,
-			"free_proxy_refresh_needed":  needFreeProxyRefresh,
-			"free_proxy_refresh_started": freeProxyRefreshStarted,
-			"free_proxy_refresh_status":  freeProxyRefreshStatus,
-			"free_proxy_refresh_error":   freeProxyRefreshError,
-			"management_rebound":         managementRebound,
-			"management_listen":          reboundListen,
-			"management_url_hint":        managementURLHint(r, reboundListen),
+			"message":                      "设置已保存",
+			"external_ip":                  savedExternalIP,
+			"probe_target":                 savedProbeTarget,
+			"skip_cert_verify":             savedSkipCertVerify,
+			"need_reload":                  needReload,
+			"reload_started":               reloadStarted,
+			"reload_status":                reloadStatus,
+			"reload_error":                 reloadError,
+			"free_proxy_refresh_needed":    needFreeProxyRefresh,
+			"free_proxy_refresh_started":   freeProxyRefreshStarted,
+			"subscription_refresh_started": subscriptionRefreshStarted,
+			"free_proxy_refresh_status":    freeProxyRefreshStatus,
+			"free_proxy_refresh_error":     freeProxyRefreshError,
+			"management_rebound":           managementRebound,
+			"management_listen":            reboundListen,
+			"management_url_hint":          managementURLHint(r, reboundListen),
 		})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
