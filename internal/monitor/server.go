@@ -370,19 +370,27 @@ func freeProxyFilterFromRequest(req *freeProxyFilterRequest, fallback nodesource
 	return out
 }
 
-func freeProxyCacheFromRequest(req *freeProxyCacheRequest, fallback config.FreeProxyCacheConfig) config.FreeProxyCacheConfig {
+func freeProxyCacheFromRequest(req *freeProxyCacheRequest, fallback config.FreeProxyCacheConfig, raw map[string]json.RawMessage) config.FreeProxyCacheConfig {
 	if req == nil {
 		return fallback
 	}
-	out := config.FreeProxyCacheConfig{
-		Enabled:        req.Enabled,
-		Path:           strings.TrimSpace(req.Path),
-		RefreshOnStart: req.RefreshOnStart,
-		AutoReload:     req.AutoReload,
-		Workers:        req.Workers,
-		MaxAge:         fallback.MaxAge,
+	out := fallback
+	if hasNestedJSONKey(raw, "free_proxy_cache", "enabled") {
+		out.Enabled = req.Enabled
 	}
-	if req.MaxAge != "" {
+	if hasNestedJSONKey(raw, "free_proxy_cache", "path") {
+		out.Path = strings.TrimSpace(req.Path)
+	}
+	if hasNestedJSONKey(raw, "free_proxy_cache", "refresh_on_start") {
+		out.RefreshOnStart = req.RefreshOnStart
+	}
+	if hasNestedJSONKey(raw, "free_proxy_cache", "auto_reload") {
+		out.AutoReload = req.AutoReload
+	}
+	if hasNestedJSONKey(raw, "free_proxy_cache", "workers") {
+		out.Workers = req.Workers
+	}
+	if hasNestedJSONKey(raw, "free_proxy_cache", "max_age") && req.MaxAge != "" {
 		if d, err := time.ParseDuration(req.MaxAge); err == nil {
 			out.MaxAge = d
 		}
@@ -3371,6 +3379,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasFreeProxyFilterTimeout := hasNestedJSONKey(body, "free_proxy_filter", "timeout")
 		hasFreeProxyFilterMaxCandidates := hasNestedJSONKey(body, "free_proxy_filter", "max_candidates")
 		hasFreeProxyFilterMaxProbeCandidates := hasNestedJSONKey(body, "free_proxy_filter", "max_probe_candidates")
+		hasFreeProxyCacheWorkers := hasNestedJSONKey(body, "free_proxy_cache", "workers")
+		hasFreeProxyCacheMaxAge := hasNestedJSONKey(body, "free_proxy_cache", "max_age")
 
 		logCfg := config.LogConfig{}
 		hasLogCfg := false
@@ -3486,12 +3496,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if req.FreeProxyCache != nil {
-			if req.FreeProxyCache.Workers <= 0 {
+			if hasFreeProxyCacheWorkers && req.FreeProxyCache.Workers <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的免费源缓存并发数", "code": "invalid_free_proxy_cache_workers"})
 				return
 			}
-			if strings.TrimSpace(req.FreeProxyCache.MaxAge) != "" {
+			if hasFreeProxyCacheMaxAge && strings.TrimSpace(req.FreeProxyCache.MaxAge) != "" {
 				d, err := time.ParseDuration(req.FreeProxyCache.MaxAge)
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
@@ -3714,7 +3724,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.FreeProxyFilter = freeProxyFilterFromRequest(req.FreeProxyFilter, s.cfgSrc.FreeProxyFilter, body)
 		}
 		if req.FreeProxyCache != nil {
-			s.cfgSrc.FreeProxyCache = freeProxyCacheFromRequest(req.FreeProxyCache, s.cfgSrc.FreeProxyCache)
+			s.cfgSrc.FreeProxyCache = freeProxyCacheFromRequest(req.FreeProxyCache, s.cfgSrc.FreeProxyCache, body)
 		}
 		if req.QualityCheck != nil {
 			resolvedQuality := s.cfgSrc.QualityCheck

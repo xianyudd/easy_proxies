@@ -711,6 +711,47 @@ free_proxy_cache:
 	}
 }
 
+func TestHandleSettingsPreservesFreeProxyCacheFieldsWhenPartiallyUpdated(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: .cache/free-proxies.txt
+  refresh_on_start: true
+  auto_reload: true
+  workers: 4
+  max_age: 6h
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+
+	body := []byte(`{"free_proxy_cache":{"enabled":false}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := reloaded.FreeProxyCache
+	if c.EnabledValue() || c.Path != filepath.Join(tmp, ".cache", "free-proxies.txt") || !c.RefreshOnStartValue() || !c.AutoReloadValue() || c.Workers != 4 || c.MaxAge != 6*time.Hour {
+		t.Fatalf("free_proxy_cache partial update corrupted fields: %#v", c)
+	}
+}
+
 func TestHandleSettingsRejectsInvalidFreeProxyCacheWorkersWithoutMutatingMemory(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
