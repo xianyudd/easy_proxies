@@ -1336,6 +1336,8 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		if page > totalPages {
 			page = totalPages
 		}
+	} else {
+		page = 1
 	}
 	summaryOnly, ok := parseOptionalBoolParam(q, "summary_only")
 	if !ok {

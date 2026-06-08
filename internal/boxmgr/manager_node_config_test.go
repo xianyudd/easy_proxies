@@ -39,6 +39,16 @@ func TestUpdateNodeRejectsInvalidURI(t *testing.T) {
 	}
 }
 
+func TestTriggerReloadWithNilConfigReturnsError(t *testing.T) {
+	mgr := New(nil, monitor.Config{})
+
+	err := mgr.TriggerReload(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "config is not initialized") {
+		t.Fatalf("TriggerReload error = %v, want config unavailable", err)
+	}
+}
+
 func TestPortConflictRetriesBeforeReassign(t *testing.T) {
 	for retry := 0; retry < transientPortConflictRetries; retry++ {
 		if !shouldRetryTransientPortConflict(retry) {

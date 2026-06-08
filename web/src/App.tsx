@@ -45,7 +45,8 @@ export default function App() {
   const authenticated = useAppStore(s => s.authenticated)
   const setAuthenticated = useAppStore(s => s.setAuthenticated)
   const setActiveTab = useAppStore(s => s.setActiveTab)
-  const authProbe = useQuery({ queryKey: ['auth-probe'], queryFn: getAuthStatus, retry: false, enabled: authenticated === 'unknown' || authenticated === 'authenticated' })
+  const authProbe = useQuery({ queryKey: ['auth-probe'], queryFn: getAuthStatus, retry: false, enabled: authenticated !== 'unauthenticated' })
+  const verifyingAuth = authenticated === 'authenticated' && (authProbe.isLoading || authProbe.isFetching)
   useEffect(() => {
     const syncHash = () => {
       const tab = hashTabMap.get(window.location.hash)
@@ -63,7 +64,7 @@ export default function App() {
       setAuthenticated('unauthenticated')
     }
   }, [authProbe.data?.authenticated, authProbe.isError, authProbe.isSuccess, authenticated, setAuthenticated])
-  if (authenticated === 'unknown') return <LoginPage />
+  if (authenticated === 'unknown' || verifyingAuth) return <LoginPage />
   if (authenticated === 'unauthenticated') return <LoginPage />
   return <AppLayout>
     {activeTab === 'extractor' && <ExtractorPage />}

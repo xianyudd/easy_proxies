@@ -14,5 +14,15 @@ def test_node_overview_labels_all_backend_regions():
         assert f"{code}:" in text
 
 
+def test_node_overview_reconciles_server_clamped_page_and_copies_stable_tag():
+    text = read_source()
+    assert "useEffect" in text
+    assert "data.page !== page" in text
+    assert "setPage(data.page)" in text
+    assert "`tag=${node.tag || '-'}" in text
+    assert "node.name || node.tag || '-'" in text
+
+
 if __name__ == "__main__":
     test_node_overview_labels_all_backend_regions()
+    test_node_overview_reconciles_server_clamped_page_and_copies_stable_tag()

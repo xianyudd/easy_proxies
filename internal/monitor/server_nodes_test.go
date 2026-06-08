@@ -95,6 +95,35 @@ func TestHandleNodesPagedClampsOutOfRangePageAndReportsTotalPages(t *testing.T) 
 	}
 }
 
+func TestHandleNodesZeroResultHugePageDoesNotPanic(t *testing.T) {
+	server := newTestNodesServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes?page=9223372036854775807&page_size=500&region=ca", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleNodes(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Nodes         []Snapshot `json:"nodes"`
+		TotalFiltered int        `json:"total_filtered"`
+		Page          int        `json:"page"`
+		PageSize      int        `json:"page_size"`
+		TotalPages    int        `json:"total_pages"`
+		HasNext       bool       `json:"has_next"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.TotalFiltered != 0 || len(payload.Nodes) != 0 || payload.Page != 1 || payload.TotalPages != 0 || payload.HasNext {
+		t.Fatalf("zero-result huge page should return empty first page without next page: %#v", payload)
+	}
+	if payload.PageSize != 500 {
+		t.Fatalf("page_size=%d, want 500", payload.PageSize)
+	}
+}
+
 func TestHandleNodesRejectsInvalidPagination(t *testing.T) {
 	server := newTestNodesServer(t)
 	for _, tc := range []struct {

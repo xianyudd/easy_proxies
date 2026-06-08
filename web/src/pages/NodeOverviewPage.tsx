@@ -1,5 +1,5 @@
 import { Pagination, Select } from 'antd'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getNodesPage } from '../api/nodes'
 import { Badge } from '../components/ui/Badge'
@@ -81,6 +81,12 @@ export function NodeOverviewPage() {
 
   const rows = data?.nodes || []
 
+  useEffect(() => {
+    if (data?.page && data.page !== page) {
+      setPage(data.page)
+    }
+  }, [data?.page, page])
+
   const regions = useMemo(() => {
     const stats = data?.region_stats || {}
     return Object.entries(stats).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -107,6 +113,7 @@ export function NodeOverviewPage() {
   const copyNode = (node: NodeSnapshot) => {
     const text = [
       node.name || node.tag || '-',
+      `tag=${node.tag || '-'}`,
       `region=${node.region || '-'}`,
       `port=${node.port || '-'}`,
       `latency=${latencyLabel(node.last_latency_ms)}`,
