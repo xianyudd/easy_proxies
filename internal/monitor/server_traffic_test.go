@@ -3,6 +3,7 @@ package monitor
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,27 @@ import (
 
 	"easy_proxies/internal/config"
 )
+
+type nonFlushingResponseWriter struct {
+	header http.Header
+	status int
+	body   strings.Builder
+}
+
+func (w *nonFlushingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = http.Header{}
+	}
+	return w.header
+}
+
+func (w *nonFlushingResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *nonFlushingResponseWriter) Write(data []byte) (int, error) {
+	return w.body.Write(data)
+}
 
 func readFirstSSEData(t *testing.T, handler http.HandlerFunc) string {
 	t.Helper()
@@ -39,6 +61,40 @@ func readFirstSSEData(t *testing.T, handler http.HandlerFunc) string {
 		t.Fatalf("read first SSE line: %v", err)
 	}
 	return line
+}
+
+func TestSSEHandlersReturnStructuredErrorWithoutFlusher(t *testing.T) {
+	server := &Server{}
+	for _, tc := range []struct {
+		name    string
+		method  string
+		path    string
+		handler http.HandlerFunc
+	}{
+		{name: "traffic", method: http.MethodGet, path: "/api/traffic", handler: server.handleTraffic},
+		{name: "probe all", method: http.MethodPost, path: "/api/nodes/probe-all", handler: server.handleProbeAll},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			w := &nonFlushingResponseWriter{}
+
+			tc.handler(w, req)
+
+			if w.status != http.StatusInternalServerError {
+				t.Fatalf("status=%d, want 500 body=%s", w.status, w.body.String())
+			}
+			var body struct {
+				Error string `json:"error"`
+				Code  string `json:"code"`
+			}
+			if err := json.Unmarshal([]byte(w.body.String()), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error == "" || body.Code != "sse_not_supported" {
+				t.Fatalf("unexpected body: %#v raw=%s", body, w.body.String())
+			}
+		})
+	}
 }
 
 func TestHandleTrafficUnavailableFlushesInitialSSE(t *testing.T) {

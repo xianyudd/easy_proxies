@@ -1501,7 +1501,9 @@ func (s *Server) handleProbeAll(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "SSE not supported", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(w, map[string]any{"error": "SSE not supported", "code": "sse_not_supported"})
 		return
 	}
 
@@ -3835,7 +3837,9 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(w, map[string]any{"error": "SSE not supported", "code": "sse_not_supported"})
 		return
 	}
 
