@@ -801,6 +801,15 @@ func (s *Server) runAsyncReload(started time.Time) {
 	}
 }
 
+func hasEnabledFreeProxySourceConfigs(sources []nodesource.SourceConfig) bool {
+	for _, source := range sources {
+		if source.EnabledValue() {
+			return true
+		}
+	}
+	return false
+}
+
 func countFreeProxyCacheFile(path string) (int, bool) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -884,6 +893,10 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 	cache := cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)
 	if !cache.EnabledValue() {
 		status := freeProxyRefreshStatus{State: "disabled", RequestedBy: requestedBy}
+		return s.enrichFreeProxyRefreshStatus(status), false, nil
+	}
+	if !hasEnabledFreeProxySourceConfigs(cfg.FreeProxySources) {
+		status := freeProxyRefreshStatus{State: "idle", RequestedBy: requestedBy}
 		return s.enrichFreeProxyRefreshStatus(status), false, nil
 	}
 
