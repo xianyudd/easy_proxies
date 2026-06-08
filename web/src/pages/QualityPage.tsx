@@ -121,7 +121,12 @@ export function QualityPage() {
   const canRunSampleCheck = !nodesSummary.isLoading && !hasSummaryError && !jobRunning
   const scanAllLabel = nodesSummary.isLoading ? 'Pipeline 扫描节点（统计加载中）' : hasSummaryError ? 'Pipeline 扫描节点（数量未知）' : `Pipeline 扫描 ${allCount} 个节点`
   const qualitySource = source === 'all' ? undefined : source
-  const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { setCfRows(d.data || []); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
+  const showCacheMode = () => {
+    setJobId('')
+    setTerminalSyncedJobId('')
+    setResultPage(1)
+  }
+  const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { showCacheMode(); setCfRows(d.data || []); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
   const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true }) })
   const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true, retry_failed: true, replace: true }) })
   const cancelScan = useMutation({ mutationFn: () => cancelQualityJob(jobId), onSuccess: () => { void jobQuery.refetch(); void jobResults.refetch(); toast('后台任务已取消', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '取消任务失败', 'error') })
@@ -143,6 +148,7 @@ export function QualityPage() {
       const [cf, rep] = await Promise.all([cfCache.refetch(), repCache.refetch()])
       const failed = [cf.error, rep.error].find(Boolean)
       if (failed) throw failed
+      showCacheMode()
       setCfRows(cf.data?.data || [])
       setRepRows(rep.data?.data || [])
       toast('缓存结果已加载', 'ok')

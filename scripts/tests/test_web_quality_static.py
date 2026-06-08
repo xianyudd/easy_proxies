@@ -68,6 +68,15 @@ def test_quality_page_refreshes_cache_when_background_job_finishes():
     assert "后台任务结果已同步到质量缓存" in text
 
 
+def test_quality_page_sample_and_cache_refresh_exit_job_result_mode():
+    text = read(QUALITY_PAGE)
+    assert "setJobId('')" in text
+    assert "setTerminalSyncedJobId('')" in text
+    assert "setResultPage(1)" in text
+    assert "CF 检测完成" in text
+    assert "缓存结果已加载" in text
+
+
 if __name__ == "__main__":
     test_api_client_parses_json_text_fallback_for_accepted_jobs()
     test_quality_page_validates_job_id_and_renders_job_panel_path()
@@ -76,3 +85,4 @@ if __name__ == "__main__":
     test_quality_page_matches_reputation_cache_by_ip_or_exit_ip()
     test_reputation_check_supports_source_filter()
     test_quality_page_refreshes_cache_when_background_job_finishes()
+    test_quality_page_sample_and_cache_refresh_exit_job_result_mode()
