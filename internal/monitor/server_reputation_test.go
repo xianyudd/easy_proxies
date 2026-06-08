@@ -107,6 +107,36 @@ func TestReputationCheckReturnsStructuredErrorCodes(t *testing.T) {
 	}
 }
 
+func TestQualityCompanionHandlersRejectMethodsWithStructuredCode(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil || srv.srv == nil {
+		t.Fatal("expected server")
+	}
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "cloudflare check", method: http.MethodPost, path: "/api/cloudflare/check"},
+		{name: "cloudflare cache", method: http.MethodPatch, path: "/api/cloudflare/cache"},
+		{name: "reputation ip", method: http.MethodPost, path: "/api/reputation/ip"},
+		{name: "reputation check", method: http.MethodPost, path: "/api/reputation/check"},
+		{name: "reputation cache", method: http.MethodPatch, path: "/api/reputation/cache"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rec := httptest.NewRecorder()
+			srv.srv.Handler.ServeHTTP(rec, req)
+			assertMonitorAPIErrorCode(t, rec, http.StatusMethodNotAllowed, "method_not_allowed")
+		})
+	}
+}
+
 func TestSummarizeCloudflare(t *testing.T) {
 	got := summarizeCloudflare([]cloudflarecheck.Result{
 		{Level: "excellent"},

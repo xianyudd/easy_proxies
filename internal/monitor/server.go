@@ -1897,12 +1897,14 @@ func (s *Server) handleCloudflareCache(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"message": "cache cleared"})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 	}
 }
 
 func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
@@ -2118,6 +2120,7 @@ func isAllowedMonitorMode(mode string) bool {
 func (s *Server) handleReputationIP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
@@ -2145,12 +2148,14 @@ func (s *Server) handleReputationCache(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"message": "cache cleared"})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 	}
 }
 
 func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
