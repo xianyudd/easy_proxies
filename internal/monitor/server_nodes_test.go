@@ -140,6 +140,23 @@ func TestHandleNodesClampsLargePageSize(t *testing.T) {
 	}
 }
 
+func TestHandleNodesRejectsInvalidSummaryOnly(t *testing.T) {
+	server := newTestNodesServer(t)
+	for _, raw := range []string{"maybe", "2", "yes"} {
+		t.Run(raw, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/nodes?summary_only="+raw, nil)
+			rr := httptest.NewRecorder()
+
+			server.handleNodes(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rr.Code, rr.Body.String())
+			}
+			assertNodeActionErrorCode(t, rr, "invalid_bool")
+		})
+	}
+}
+
 func TestHandleNodesSummaryOnlyReturnsStatsWithoutRows(t *testing.T) {
 	server := newTestNodesServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes?summary_only=true", nil)

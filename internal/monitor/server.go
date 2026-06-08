@@ -1171,7 +1171,13 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 			page = totalPages
 		}
 	}
-	if strings.EqualFold(q.Get("summary_only"), "true") || q.Get("summary_only") == "1" {
+	summaryOnly, ok := parseOptionalBoolParam(q, "summary_only")
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid summary_only", "code": "invalid_bool"})
+		return
+	}
+	if summaryOnly {
 		filtered = nil
 	} else {
 		start := (page - 1) * pageSize
@@ -1285,6 +1291,21 @@ func parsePositiveIntParam(q url.Values, key string, fallback int) (int, bool) {
 		return 0, false
 	}
 	return value, true
+}
+
+func parseOptionalBoolParam(q url.Values, key string) (bool, bool) {
+	raw := strings.TrimSpace(q.Get(key))
+	if raw == "" {
+		return false, true
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true":
+		return true, true
+	case "0", "false":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func filterNodeSnapshots(nodes []Snapshot, q url.Values) []Snapshot {
