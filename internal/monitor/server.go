@@ -3294,6 +3294,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				Username string `json:"username"`
 				Password string `json:"password"`
 			} `json:"multi_port,omitempty"`
+			AndroidProxy *struct {
+				Enabled     bool              `json:"enabled"`
+				Listen      string            `json:"listen"`
+				BasePort    uint16            `json:"base_port"`
+				RegionPorts map[string]uint16 `json:"region_ports"`
+			} `json:"android_proxy,omitempty"`
 			Pool *struct {
 				Mode              string `json:"mode"`
 				FailureThreshold  int    `json:"failure_threshold"`
@@ -3354,6 +3360,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasMultiPortBasePort := hasNestedJSONKey(body, "multi_port", "base_port")
 		hasMultiPortUsername := hasNestedJSONKey(body, "multi_port", "username")
 		hasMultiPortPassword := hasNestedJSONKey(body, "multi_port", "password")
+		hasAndroidProxyEnabled := hasNestedJSONKey(body, "android_proxy", "enabled")
+		hasAndroidProxyListen := hasNestedJSONKey(body, "android_proxy", "listen")
+		hasAndroidProxyBasePort := hasNestedJSONKey(body, "android_proxy", "base_port")
+		hasAndroidProxyRegionPorts := hasNestedJSONKey(body, "android_proxy", "region_ports")
 		hasPoolMode := hasNestedJSONKey(body, "pool", "mode")
 		hasPoolFailureThreshold := hasNestedJSONKey(body, "pool", "failure_threshold")
 		hasPoolBlacklistDuration := hasNestedJSONKey(body, "pool", "blacklist_duration")
@@ -3682,6 +3692,20 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if hasMultiPortPassword {
 				s.cfgSrc.MultiPort.Password = req.MultiPort.Password
+			}
+		}
+		if req.AndroidProxy != nil {
+			if hasAndroidProxyEnabled {
+				s.cfgSrc.AndroidProxy.Enabled = req.AndroidProxy.Enabled
+			}
+			if hasAndroidProxyListen {
+				s.cfgSrc.AndroidProxy.Listen = req.AndroidProxy.Listen
+			}
+			if hasAndroidProxyBasePort {
+				s.cfgSrc.AndroidProxy.BasePort = req.AndroidProxy.BasePort
+			}
+			if hasAndroidProxyRegionPorts {
+				s.cfgSrc.AndroidProxy.RegionPorts = req.AndroidProxy.RegionPorts
 			}
 		}
 		if req.Pool != nil {

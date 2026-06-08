@@ -1835,6 +1835,45 @@ management:
 	}
 }
 
+func TestHandleSettingsPersistsAndroidProxyFields(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`android_proxy:
+  enabled: true
+  listen: 127.0.0.1
+  base_port: 13001
+  region_ports:
+    US: 13010
+nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+
+	body := []byte(`{"android_proxy":{"listen":"0.0.0.0","base_port":14001}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.AndroidProxy.Enabled || reloaded.AndroidProxy.Listen != "0.0.0.0" || reloaded.AndroidProxy.BasePort != 14001 || reloaded.AndroidProxy.RegionPorts["US"] != 13010 {
+		t.Fatalf("android proxy update not persisted or corrupted fields: %#v", reloaded.AndroidProxy)
+	}
+}
+
 func TestHandleSettingsStartsCoreReloadAsynchronously(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

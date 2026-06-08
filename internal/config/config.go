@@ -1603,6 +1603,7 @@ func (c *Config) SaveSettings() error {
 	saveCfg.Mode = c.Mode
 	saveCfg.Listener = c.Listener
 	saveCfg.MultiPort = c.MultiPort
+	saveCfg.AndroidProxy = c.AndroidProxy
 	saveCfg.Pool = c.Pool
 	saveCfg.Management = c.Management
 
