@@ -24,6 +24,12 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
     assert '"POST", "/api/free-proxy/refresh"' in text
     assert '"/api/free-proxy/refresh/status"' in text
     assert "same-value save unexpectedly triggered reload/refresh" in text
+    assert "check_debug_and_logs" in text
+    assert '"/api/debug?summary_only=true"' in text
+    assert '"/api/debug"' in text
+    assert '"/api/logs"' in text
+    assert '"nodes" not in summary' in text
+    assert 'invalid debug summary_only should fail with structured error' in text
 
 
 def test_smoke_script_checks_port_continuity_after_reload():

@@ -31,7 +31,8 @@ function normalizeNodesPage(data: Partial<NodesPage>): NodesPage {
 export async function getNodesPage(params: NodesQuery = {}) {
   const search = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === '' || value === 'all') return
+    if (value === undefined || value === null || value === '') return
+    if (value === 'all' && key !== 'availability') return
     search.set(key, String(value))
   })
   if (!search.has('page')) search.set('page', String(params.page || 1))

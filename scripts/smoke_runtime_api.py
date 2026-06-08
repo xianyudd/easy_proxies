@@ -141,6 +141,22 @@ def check_status_endpoints(opener: urllib.request.OpenerDirector) -> None:
         print(f"{path}: HTTP {code}")
 
 
+def check_debug_and_logs(opener: urllib.request.OpenerDirector) -> None:
+    code, summary = request(opener, "GET", "/api/debug?summary_only=true")
+    require(code == 200 and isinstance(summary, dict), f"GET debug summary failed HTTP {code}: {summary!r}")
+    require("nodes" not in summary, f"debug summary should not include full nodes payload: {summary!r}")
+    require("node_count" in summary and "success_rate" in summary, f"debug summary missing expected fields: {summary!r}")
+    code, debug = request(opener, "GET", "/api/debug")
+    require(code == 200 and isinstance(debug, dict), f"GET debug failed HTTP {code}: {debug!r}")
+    require(isinstance(debug.get("nodes"), list), f"debug payload missing nodes list: {debug!r}")
+    code, logs = request(opener, "GET", "/api/logs")
+    require(code == 200 and isinstance(logs, dict), f"GET logs failed HTTP {code}: {logs!r}")
+    require(isinstance(logs.get("logs"), str), f"logs payload missing logs string: {logs!r}")
+    code, invalid = request(opener, "GET", "/api/debug?summary_only=maybe")
+    require(code == 400 and isinstance(invalid, dict) and invalid.get("code") == "invalid_bool", f"invalid debug summary_only should fail with structured error, got HTTP {code}: {invalid!r}")
+    print("debug/logs: summary/full/logs and structured invalid bool ok")
+
+
 def check_extractor_paths(opener: urllib.request.OpenerDirector) -> None:
     cases = [
         ("/api/extractor?region=all&mode=multi-port&format=host_port_user_pass&count=3&reveal=true", "multi-port", 3),
@@ -313,6 +329,7 @@ def main() -> int:
         check_auth_status_probe(opener, expected_authenticated=True)
         original_settings = check_same_value_save(opener)
         check_status_endpoints(opener)
+        check_debug_and_logs(opener)
         check_extractor_paths(opener)
         check_manual_reload(opener)
         check_port_continuity(opener)

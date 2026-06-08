@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getNodes, getNodesSummary } from '../api/nodes'
+import { getNodesPage, getNodesSummary } from '../api/nodes'
 import { getDebugSummary } from '../api/logs'
 import { Badge } from '../components/ui/Badge'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { RegionAvailabilityChart, LatencyTopChart, TrafficTrendChart, FailureRankChart } from '../components/charts/NodeCharts'
+import { regionMeta } from '../components/charts/region'
 
 interface DebugNode { failure_count?: number; success_count?: number }
 interface DebugResponse { success_rate?: number; nodes?: DebugNode[]; total_calls?: number; total_success?: number }
@@ -14,15 +15,19 @@ function latencyLabel(value: unknown) {
   return Number.isFinite(ms) && ms >= 0 ? `${ms} ms` : '未测速'
 }
 
+function regionLabel(region?: string) {
+  return regionMeta(region).label
+}
+
 export function StatusPage() {
-  const nodes = useQuery({ queryKey:['nodes'], queryFn:getNodes, refetchInterval:10000 })
+  const nodes = useQuery({ queryKey:['status-nodes-all'], queryFn:() => getNodesPage({ availability: 'all', page_size: 500 }), refetchInterval:10000 })
   const summary = useQuery({ queryKey:['nodes-summary'], queryFn:getNodesSummary, refetchInterval:10000 })
   const debug = useQuery({ queryKey:['debug-summary'], queryFn:() => getDebugSummary() as Promise<DebugResponse>, refetchInterval:10000 })
-  const data = nodes.data || []
+  const data = nodes.data?.nodes || []
   const summaryData = summary.data
   const dataUnavailable = (nodes.isError && !nodes.data) || (summary.isError && !summary.data)
   const healthyTotal = Object.values(summaryData?.region_healthy || {}).reduce((sum, count) => sum + Number(count || 0), 0)
-  const totalNodes = Number(summaryData?.total_nodes || data.length || 0)
+  const totalNodes = Number(summaryData?.total_nodes || nodes.data?.total_nodes || data.length || 0)
   const stats = useMemo(() => ({
     total: dataUnavailable ? null : totalNodes,
     healthy: dataUnavailable ? null : healthyTotal || data.filter(n=>n.available&&!n.blacklisted).length,
@@ -57,8 +62,8 @@ export function StatusPage() {
         <div className="chart-panel wide"><div className="chart-title">实时流量带宽 <span>Real-time Traffic</span></div><TrafficTrendChart /></div>
       </div>
       <div className="dashboard-stack">
-        <div className="card"><div className="section-title">地区分布</div>{regions.map(([r,c])=><div key={r} className="region-row"><span>{r}</span><strong>{c}</strong></div>)}</div>
-        <div className="card"><div className="section-title">最近异常</div>{recentBad.length ? recentBad.map(n=><div key={String(n.tag||n.name)} className="issue-row"><div><strong>{String(n.name||n.tag||'-')}</strong><span>{String(n.region||'-')} · {latencyLabel(n.last_latency_ms)}</span></div><Badge tone={n.blacklisted?'bad':'warn'}>{n.blacklisted?'拉黑':'失败 '+(n.failure_count||0)}</Badge></div>) : <div className="hint">暂无异常节点</div>}</div>
+        <div className="card"><div className="section-title">地区分布</div>{regions.map(([r,c])=><div key={r} className="region-row"><span>{regionLabel(r)}</span><strong>{c}</strong></div>)}</div>
+        <div className="card"><div className="section-title">最近异常</div>{recentBad.length ? recentBad.map(n=><div key={String(n.tag||n.name)} className="issue-row"><div><strong>{String(n.name||n.tag||'-')}</strong><span>{regionLabel(n.region)} · {latencyLabel(n.last_latency_ms)}</span></div><Badge tone={n.blacklisted?'bad':'warn'}>{n.blacklisted?'拉黑':'失败 '+(n.failure_count||0)}</Badge></div>) : <div className="hint">暂无异常节点</div>}</div>
       </div>
     </div>
   </div>
