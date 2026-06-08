@@ -2533,3 +2533,15 @@ html[data-theme="light"] .logbox {
     justify-self: start;
   }
 }
+
+.node-config-filters {
+  margin: 12px 0 16px;
+}
+
+.node-config-uri {
+  display: inline-block;
+  max-width: min(68vw, 760px);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}

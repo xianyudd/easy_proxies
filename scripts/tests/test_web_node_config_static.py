@@ -57,7 +57,22 @@ def test_node_config_page_handles_crud_need_reload_and_reload_polling():
     assert "uri" in page and "name" in page
 
 
+def test_node_config_page_filters_paginates_and_wraps_long_uri():
+    page = read(PAGE)
+    assert "searchTerm" in page
+    assert "sourceFilter" in page
+    assert "filteredRows" in page
+    assert "pagedRows" in page
+    assert "Pagination" in page
+    assert "pageSizeOptions" in page
+    assert "setPage(1)" in page
+    assert 'aria-label="搜索节点配置"' in page
+    assert 'aria-label="筛选节点来源"' in page
+    assert "node-config-uri" in page
+
+
 if __name__ == "__main__":
     test_node_config_page_is_routable_from_react_shell()
     test_node_config_api_client_covers_crud_and_reload()
     test_node_config_page_handles_crud_need_reload_and_reload_polling()
+    test_node_config_page_filters_paginates_and_wraps_long_uri()
