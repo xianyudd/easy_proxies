@@ -3009,6 +3009,43 @@ func TestHandleSettingsPreservesManagementListenWhenOmitted(t *testing.T) {
 	}
 }
 
+func TestHandleSettingsPreservesManagementPasswordWhenOmitted(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+management:
+  listen: ` + listen + `
+  password: old-secret
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, cfg: Config{Listen: listen}, reloadState: "idle"}
+
+	body := []byte(`{"management":{"listen":"` + listen + `"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Management.Listen != listen || reloaded.Management.Password != "old-secret" {
+		t.Fatalf("management partial update should preserve password: %#v", reloaded.Management)
+	}
+}
+
 func TestHandleSettingsRejectsInvalidManagementListenBeforePersisting(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
 	if err != nil {
