@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,10 @@ type fakeNodeManager struct {
 	mu          sync.Mutex
 	delay       time.Duration
 	err         error
+	listErr     error
+	createErr   error
+	updateErr   error
+	deleteErr   error
 	reloadCalls int
 	done        chan struct{}
 	doneOnce    sync.Once
@@ -48,6 +53,9 @@ func freeLocalListen(t *testing.T) string {
 func (f *fakeNodeManager) ListConfigNodes(ctx context.Context) ([]config.NodeConfig, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	out := make([]config.NodeConfig, len(f.nodes))
 	copy(out, f.nodes)
 	return out, nil
@@ -56,6 +64,9 @@ func (f *fakeNodeManager) ListConfigNodes(ctx context.Context) ([]config.NodeCon
 func (f *fakeNodeManager) CreateNode(ctx context.Context, node config.NodeConfig) (config.NodeConfig, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return config.NodeConfig{}, f.createErr
+	}
 	f.created = append(f.created, node)
 	f.nodes = append(f.nodes, node)
 	return node, nil
@@ -64,6 +75,9 @@ func (f *fakeNodeManager) CreateNode(ctx context.Context, node config.NodeConfig
 func (f *fakeNodeManager) UpdateNode(ctx context.Context, name string, node config.NodeConfig) (config.NodeConfig, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.updateErr != nil {
+		return config.NodeConfig{}, f.updateErr
+	}
 	f.updatedName = name
 	f.updated = append(f.updated, node)
 	for i, existing := range f.nodes {
@@ -79,6 +93,9 @@ func (f *fakeNodeManager) UpdateNode(ctx context.Context, name string, node conf
 func (f *fakeNodeManager) DeleteNode(ctx context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.deleted = append(f.deleted, name)
 	filtered := f.nodes[:0]
 	for _, node := range f.nodes {
@@ -1685,6 +1702,64 @@ func TestHandleConfigNodesCRUDReportsNeedReloadWithoutReloading(t *testing.T) {
 	}
 	if fake.ReloadCalls() != 0 {
 		t.Fatalf("CRUD should not reload automatically, reloadCalls=%d", fake.ReloadCalls())
+	}
+}
+
+func TestHandleConfigNodesRejectsInvalidNodeWithStructuredCode(t *testing.T) {
+	fake := &fakeNodeManager{createErr: fmt.Errorf("%w: URI 格式无效", ErrInvalidNode)}
+	server := &Server{nodeMgr: fake}
+
+	body := []byte(`{"name":"bad","uri":"not-a-uri","port":18080}`)
+	rec := httptest.NewRecorder()
+	server.handleConfigNodes(rec, httptest.NewRequest(http.MethodPost, "/api/nodes/config", bytes.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want=400 body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != "invalid_node" || resp.Error == "" {
+		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
+	}
+	if len(fake.created) != 0 || len(fake.nodes) != 0 {
+		t.Fatalf("invalid node should not be added: created=%#v nodes=%#v", fake.created, fake.nodes)
+	}
+}
+
+func TestHandleConfigNodesReturnsStructuredErrorCodes(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{name: "invalid", err: ErrInvalidNode, status: http.StatusBadRequest, code: "invalid_node"},
+		{name: "conflict", err: ErrNodeConflict, status: http.StatusBadRequest, code: "node_conflict"},
+		{name: "missing", err: ErrNodeNotFound, status: http.StatusNotFound, code: "node_not_found"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := &Server{}
+			rec := httptest.NewRecorder()
+			server.respondNodeError(rec, tc.err)
+			if rec.Code != tc.status {
+				t.Fatalf("status=%d want=%d body=%s", rec.Code, tc.status, rec.Body.String())
+			}
+			var body struct {
+				Error string `json:"error"`
+				Code  string `json:"code"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error == "" || body.Code != tc.code {
+				t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
+			}
+		})
 	}
 }
 

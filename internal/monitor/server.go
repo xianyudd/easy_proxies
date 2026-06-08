@@ -3770,14 +3770,21 @@ func (s *Server) ensureNodeManager(w http.ResponseWriter) bool {
 
 func (s *Server) respondNodeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
+	code := "node_error"
 	switch {
 	case errors.Is(err, ErrNodeNotFound):
 		status = http.StatusNotFound
+		code = "node_not_found"
 	case errors.Is(err, ErrNodeConflict), errors.Is(err, ErrInvalidNode):
 		status = http.StatusBadRequest
+		if errors.Is(err, ErrNodeConflict) {
+			code = "node_conflict"
+		} else {
+			code = "invalid_node"
+		}
 	}
 	w.WriteHeader(status)
-	writeJSON(w, map[string]any{"error": err.Error()})
+	writeJSON(w, map[string]any{"error": err.Error(), "code": code})
 }
 
 func (s *Server) trafficAPIURL() string {
