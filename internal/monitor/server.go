@@ -3329,6 +3329,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			geoIPAutoUpdateInterval = d
 		}
+		if req.FreeProxyMaxNodes != nil && *req.FreeProxyMaxNodes < 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "免费源全局节点上限不能为负数", "code": "invalid_free_proxy_max_nodes"})
+			return
+		}
 		if req.FreeProxyFilter != nil {
 			if req.FreeProxyFilter.Workers <= 0 {
 				w.WriteHeader(http.StatusBadRequest)

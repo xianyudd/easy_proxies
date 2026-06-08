@@ -720,6 +720,39 @@ free_proxy_cache:
 	}
 }
 
+func TestHandleSettingsRejectsNegativeFreeProxyMaxNodesBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+free_proxy_max_nodes: 10
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"external_ip":"2.2.2.2","free_proxy_max_nodes":-1}`))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_free_proxy_max_nodes")
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ExternalIP != "1.1.1.1" || reloaded.FreeProxyMaxNodes != 10 {
+		t.Fatalf("invalid free proxy max nodes should not be persisted: external_ip=%q max=%d", reloaded.ExternalIP, reloaded.FreeProxyMaxNodes)
+	}
+}
+
 func TestHandleSettingsRejectsInvalidFreeProxySourceNumbersBeforePersisting(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
