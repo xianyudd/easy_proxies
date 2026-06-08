@@ -21,6 +21,14 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
     assert "same-value save unexpectedly triggered reload/refresh" in text
 
 
+def test_smoke_script_checks_auth_negative_paths_by_default():
+    text = read_source()
+    assert 'EP_SMOKE_ALLOW_NO_PASSWORD' in text
+    assert 'check_auth_negative_paths' in text
+    assert 'unauthenticated settings access should be rejected' in text
+    assert 'wrong password should be rejected' in text
+
+
 def test_smoke_script_uses_env_configurable_base_url_and_password():
     text = read_source()
     assert 'EP_SMOKE_BASE_URL' in text
@@ -30,4 +38,5 @@ def test_smoke_script_uses_env_configurable_base_url_and_password():
 
 if __name__ == "__main__":
     test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths()
+    test_smoke_script_checks_auth_negative_paths_by_default()
     test_smoke_script_uses_env_configurable_base_url_and_password()

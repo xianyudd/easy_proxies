@@ -33,6 +33,7 @@ PASSWORD = os.environ.get("EP_SMOKE_PASSWORD", os.environ.get("WEBUI_PASSWORD", 
 TIMEOUT = float(os.environ.get("EP_SMOKE_TIMEOUT", "20"))
 POLL_SECONDS = float(os.environ.get("EP_SMOKE_POLL_SECONDS", "20"))
 SKIP_RELOAD = os.environ.get("EP_SMOKE_SKIP_RELOAD", "").lower() in {"1", "true", "yes"}
+ALLOW_NO_PASSWORD = os.environ.get("EP_SMOKE_ALLOW_NO_PASSWORD", "").lower() in {"1", "true", "yes"}
 
 
 def request(opener: urllib.request.OpenerDirector, method: str, path: str, payload: Any | None = None) -> tuple[int, Any]:
@@ -70,6 +71,19 @@ def login(opener: urllib.request.OpenerDirector) -> None:
     require(isinstance(payload, dict), f"auth returned non-object payload: {payload!r}")
     require(payload.get("token") or payload.get("no_password") or payload.get("message"), f"auth payload missing expected fields: {payload!r}")
     print(f"auth: HTTP {code} {payload.get('message', '')}")
+
+
+def check_auth_negative_paths() -> None:
+    if ALLOW_NO_PASSWORD:
+        print("auth-negative: skipped by EP_SMOKE_ALLOW_NO_PASSWORD")
+        return
+    anonymous = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+    code, payload = request(anonymous, "GET", "/api/settings")
+    require(code == 401, f"unauthenticated settings access should be rejected, got HTTP {code}: {payload!r}")
+    wrong = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+    code, payload = request(wrong, "POST", "/api/auth", {"password": f"{PASSWORD}-wrong"})
+    require(code == 401, f"wrong password should be rejected, got HTTP {code}: {payload!r}")
+    print("auth-negative: unauthenticated settings and wrong password rejected")
 
 
 def check_same_value_save(opener: urllib.request.OpenerDirector) -> dict[str, Any]:
@@ -148,6 +162,7 @@ def check_free_proxy_refresh(opener: urllib.request.OpenerDirector) -> None:
 def main() -> int:
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
     try:
+        check_auth_negative_paths()
         login(opener)
         check_same_value_save(opener)
         check_status_endpoints(opener)
