@@ -624,44 +624,42 @@ func coreReloadSignature(cfg *config.Config) string {
 		return ""
 	}
 	type signature struct {
-		Mode                string
-		Listener            config.ListenerConfig
-		MultiPort           config.MultiPortConfig
-		AndroidProxy        config.AndroidProxyConfig
-		Pool                config.PoolConfig
-		GeoIP               config.GeoIPConfig
-		Nodes               []config.NodeConfig
-		FreeProxySources    []nodesource.SourceConfig
-		FreeProxyMaxNodes   int
-		FreeProxyFilter     nodesource.FilterConfig
-		FreeProxyCache      config.FreeProxyCacheConfig
-		NodesFile           string
-		Subscriptions       []string
-		SkipCertVerify      bool
-		UpstreamProxy       string
-		ClashAPIListen      string
-		SubscriptionRefresh config.SubscriptionRefreshConfig
-		LogLevel            string
+		Mode              string
+		Listener          config.ListenerConfig
+		MultiPort         config.MultiPortConfig
+		AndroidProxy      config.AndroidProxyConfig
+		Pool              config.PoolConfig
+		GeoIP             config.GeoIPConfig
+		Nodes             []config.NodeConfig
+		FreeProxySources  []nodesource.SourceConfig
+		FreeProxyMaxNodes int
+		FreeProxyFilter   nodesource.FilterConfig
+		FreeProxyCache    config.FreeProxyCacheConfig
+		NodesFile         string
+		Subscriptions     []string
+		SkipCertVerify    bool
+		UpstreamProxy     string
+		ClashAPIListen    string
+		LogLevel          string
 	}
 	sig := signature{
-		Mode:                cfg.Mode,
-		Listener:            cfg.Listener,
-		MultiPort:           cfg.MultiPort,
-		AndroidProxy:        cfg.AndroidProxy,
-		Pool:                cfg.Pool,
-		GeoIP:               cfg.GeoIP,
-		Nodes:               cloneConfigNodes(cfg.Nodes),
-		FreeProxySources:    copySourceConfigs(cfg.FreeProxySources),
-		FreeProxyMaxNodes:   cfg.FreeProxyMaxNodes,
-		FreeProxyFilter:     cfg.FreeProxyFilter,
-		FreeProxyCache:      cfg.FreeProxyCache,
-		NodesFile:           cfg.NodesFile,
-		Subscriptions:       copyStringSlice(cfg.Subscriptions),
-		SkipCertVerify:      cfg.SkipCertVerify,
-		UpstreamProxy:       cfg.UpstreamProxy,
-		ClashAPIListen:      cfg.Management.ClashAPIListen,
-		SubscriptionRefresh: cfg.SubscriptionRefresh,
-		LogLevel:            cfg.LogLevel,
+		Mode:              cfg.Mode,
+		Listener:          cfg.Listener,
+		MultiPort:         cfg.MultiPort,
+		AndroidProxy:      cfg.AndroidProxy,
+		Pool:              cfg.Pool,
+		GeoIP:             cfg.GeoIP,
+		Nodes:             cloneConfigNodes(cfg.Nodes),
+		FreeProxySources:  copySourceConfigs(cfg.FreeProxySources),
+		FreeProxyMaxNodes: cfg.FreeProxyMaxNodes,
+		FreeProxyFilter:   cfg.FreeProxyFilter,
+		FreeProxyCache:    cfg.FreeProxyCache,
+		NodesFile:         cfg.NodesFile,
+		Subscriptions:     copyStringSlice(cfg.Subscriptions),
+		SkipCertVerify:    cfg.SkipCertVerify,
+		UpstreamProxy:     cfg.UpstreamProxy,
+		ClashAPIListen:    cfg.Management.ClashAPIListen,
+		LogLevel:          cfg.LogLevel,
 	}
 	data, _ := json.Marshal(sig)
 	return string(data)
@@ -3334,6 +3332,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				CloudflareTimeout     string `json:"cloudflare_timeout"`
 				CloudflareConcurrency int    `json:"cloudflare_concurrency"`
 			} `json:"quality_check"`
+			SubscriptionRefresh *struct {
+				Enabled  bool   `json:"enabled"`
+				Interval string `json:"interval"`
+			} `json:"subscription_refresh,omitempty"`
 			FreeProxySources  []nodesourceSourceConfigRequest `json:"free_proxy_sources"`
 			FreeProxyMaxNodes *int                            `json:"free_proxy_max_nodes"`
 			FreeProxyFilter   *freeProxyFilterRequest         `json:"free_proxy_filter"`
@@ -3387,6 +3389,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasQualityRetryFailed := hasNestedJSONKey(body, "quality_check", "retry_failed")
 		hasQualityCloudflareTimeout := hasNestedJSONKey(body, "quality_check", "cloudflare_timeout")
 		hasQualityCloudflareConcurrency := hasNestedJSONKey(body, "quality_check", "cloudflare_concurrency")
+		hasSubscriptionRefreshEnabled := hasNestedJSONKey(body, "subscription_refresh", "enabled")
+		hasSubscriptionRefreshInterval := hasNestedJSONKey(body, "subscription_refresh", "interval")
 		hasFreeProxyFilterWorkers := hasNestedJSONKey(body, "free_proxy_filter", "workers")
 		hasFreeProxyFilterTimeout := hasNestedJSONKey(body, "free_proxy_filter", "timeout")
 		hasFreeProxyFilterMaxCandidates := hasNestedJSONKey(body, "free_proxy_filter", "max_candidates")
@@ -3541,6 +3545,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasQualityInterval := false
 		var cloudflareTimeout time.Duration
 		hasCloudflareTimeout := false
+		var subscriptionRefreshInterval time.Duration
+		hasSubscriptionRefreshIntervalValue := false
 		if req.QualityCheck != nil {
 			if hasQualityRegion {
 				qualityRegion := strings.ToLower(strings.TrimSpace(req.QualityCheck.Region))
@@ -3594,6 +3600,21 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				cloudflareTimeout = d
 				hasCloudflareTimeout = true
 			}
+		}
+		if req.SubscriptionRefresh != nil && hasSubscriptionRefreshInterval && strings.TrimSpace(req.SubscriptionRefresh.Interval) != "" {
+			d, err := time.ParseDuration(req.SubscriptionRefresh.Interval)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的订阅刷新间隔: %v", err), "code": "invalid_subscription_interval"})
+				return
+			}
+			if d < 5*time.Minute {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "订阅刷新间隔不能小于 5 分钟", "code": "subscription_interval_too_short"})
+				return
+			}
+			subscriptionRefreshInterval = d
+			hasSubscriptionRefreshIntervalValue = true
 		}
 
 		s.cfgMu.Lock()
@@ -3784,6 +3805,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			s.cfgSrc.QualityCheck = resolvedQuality.Normalized()
 		}
+		subscriptionRefreshChanged := false
+		if req.SubscriptionRefresh != nil {
+			oldSubscriptionRefresh := s.cfgSrc.SubscriptionRefresh
+			if hasSubscriptionRefreshEnabled {
+				s.cfgSrc.SubscriptionRefresh.Enabled = req.SubscriptionRefresh.Enabled
+			}
+			if hasSubscriptionRefreshIntervalValue {
+				s.cfgSrc.SubscriptionRefresh.Interval = subscriptionRefreshInterval
+			}
+			subscriptionRefreshChanged = oldSubscriptionRefresh.Enabled != s.cfgSrc.SubscriptionRefresh.Enabled || oldSubscriptionRefresh.Interval != s.cfgSrc.SubscriptionRefresh.Interval
+		}
 		if s.cfgSrc.Mode == "multi-port" || s.cfgSrc.Mode == "hybrid" {
 			s.cfg.ProxyUsername = s.cfgSrc.MultiPort.Username
 			s.cfg.ProxyPassword = s.cfgSrc.MultiPort.Password
@@ -3835,6 +3867,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		s.applyQualityRuntimeConfig(s.cfgSrc)
 		s.ensureQualityScheduler()
+		if subscriptionRefreshChanged && s.subRefresher != nil && s.cfgSrc != nil {
+			s.subRefresher.UpdateConfig(copyStringSlice(s.cfgSrc.Subscriptions), s.cfgSrc.SubscriptionRefresh.Enabled, s.cfgSrc.SubscriptionRefresh.Interval)
+		}
 
 		reloadStarted := false
 		reloadStatus := s.currentReloadStatus()

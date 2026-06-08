@@ -1035,7 +1035,6 @@ quality_check:
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-
 	reloaded, err := config.Load(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1871,6 +1870,52 @@ nodes:
 	}
 	if !reloaded.AndroidProxy.Enabled || reloaded.AndroidProxy.Listen != "0.0.0.0" || reloaded.AndroidProxy.BasePort != 14001 || reloaded.AndroidProxy.RegionPorts["US"] != 13010 {
 		t.Fatalf("android proxy update not persisted or corrupted fields: %#v", reloaded.AndroidProxy)
+	}
+}
+
+func TestHandleSettingsPersistsSubscriptionRefreshFields(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`subscription_refresh:
+  enabled: true
+  interval: 1h
+nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Subscriptions = []string{"https://example.test/sub-a"}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+
+	body := []byte(`{"subscription_refresh":{"enabled":false,"interval":"2h"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedReload bool `json:"need_reload"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.NeedReload {
+		t.Fatalf("subscription refresh settings should not require core reload: body=%s", rec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.SubscriptionRefresh.Enabled || reloaded.SubscriptionRefresh.Interval != 2*time.Hour || len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != "https://example.test/sub-a" {
+		t.Fatalf("subscription refresh update not persisted or corrupted fields: refresh=%#v subscriptions=%#v", reloaded.SubscriptionRefresh, reloaded.Subscriptions)
 	}
 }
 
