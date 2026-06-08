@@ -2679,7 +2679,14 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 	}
 	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
 	if mode == "" {
-		mode = "pool"
+		s.cfgMu.RLock()
+		if s.cfgSrc != nil {
+			mode = settingsCoreMode(s.cfgSrc.Mode)
+		}
+		s.cfgMu.RUnlock()
+		if mode == "" {
+			mode = "pool"
+		}
 	}
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
 	if format == "" {

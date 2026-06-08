@@ -67,6 +67,39 @@ func TestExtractorSnapshotMatchesRegionExtendedAliases(t *testing.T) {
 	}
 }
 
+func TestHandleExtractorDefaultsToConfiguredMultiPortMode(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := mgr.Register(NodeInfo{Tag: "node-a", Name: "Node A", URI: "http://1.1.1.1:80", ListenAddress: "127.0.0.1", Port: 31001, Region: "us"})
+	node.MarkInitialCheckDone(true)
+	srv := &Server{
+		mgr: mgr,
+		cfg: Config{ProxyUsername: "user", ProxyPassword: "pass"},
+		cfgSrc: &config.Config{
+			Mode: "multi-port",
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/extractor?region=all&format=json&count=1&reveal=true", nil)
+	rec := httptest.NewRecorder()
+	srv.handleExtractor(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Mode    string                   `json:"mode"`
+		Entries []map[string]interface{} `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Mode != "multi-port" || len(body.Entries) != 1 {
+		t.Fatalf("unexpected extractor response: %#v body=%s", body, rec.Body.String())
+	}
+}
+
 func TestHandleExtractorRejectsInvalidCount(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
 	if err != nil {
