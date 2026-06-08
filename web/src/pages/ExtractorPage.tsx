@@ -43,7 +43,15 @@ export function ExtractorPage() {
   }
   const text = entriesToText(entries)
   const copyAll = async () => { if (!text) return toast('请先生成代理', 'error'); await copyToClipboard(text, toast, '已复制全部') }
-  const download = () => { if (!text) return toast('请先生成代理', 'error'); const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], {type:'text/plain;charset=utf-8'})); a.download = 'proxy_extractor.txt'; a.click(); URL.revokeObjectURL(a.href) }
+  const download = () => {
+    if (!text) return toast('请先生成代理', 'error')
+    const a = document.createElement('a')
+    const url = URL.createObjectURL(new Blob([text], {type:'text/plain;charset=utf-8'}))
+    a.href = url
+    a.download = 'proxy_extractor.txt'
+    a.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
   return <div className="page">
     <div className="page-header"><div><h1>代理提取</h1><p>先选择模式和区域，再生成可复制、可下载的代理结果。常用预设收纳在参数区，减少页面跳动。</p></div></div>
     <div className="workspace-grid">

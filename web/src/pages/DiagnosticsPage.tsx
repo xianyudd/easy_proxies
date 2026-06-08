@@ -161,7 +161,14 @@ export function DiagnosticsPage() {
     ].filter(item => item.value !== '-')
   }, [debugData, debugNodes])
   const issueCount = errorLines + warnLines + (debug.isError ? 1 : 0)
-  const download = () => { const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([logs],{type:'text/plain'})); a.download='easy_proxies.log'; a.click(); URL.revokeObjectURL(a.href) }
+  const download = () => {
+    const a = document.createElement('a')
+    const url = URL.createObjectURL(new Blob([logs], {type:'text/plain'}))
+    a.href = url
+    a.download = 'easy_proxies.log'
+    a.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
   const clearFilters = () => { setKeyword(''); setLevelFilter('all'); setCaseSensitive(false) }
   const clearLogs = () => { setAuto(false); setLogs('') }
   const refreshLogs = async () => {
