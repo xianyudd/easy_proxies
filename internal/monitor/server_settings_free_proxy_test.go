@@ -720,6 +720,58 @@ free_proxy_cache:
 	}
 }
 
+func TestHandleSettingsRejectsInvalidFreeProxySourceNumbersBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+free_proxy_max_nodes: 10
+free_proxy_sources:
+  - name: good-source
+    url: https://example.test/proxies.txt
+    format: txt
+    timeout: 5s
+    max_nodes: 100
+    max_bytes: 1024
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "zero timeout", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","url":"https://example.test/proxies.txt","format":"txt","timeout":"0s","max_nodes":100,"max_bytes":1024}]}`},
+		{name: "negative timeout", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","url":"https://example.test/proxies.txt","format":"txt","timeout":"-1s","max_nodes":100,"max_bytes":1024}]}`},
+		{name: "negative max nodes", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","url":"https://example.test/proxies.txt","format":"txt","timeout":"5s","max_nodes":-1,"max_bytes":1024}]}`},
+		{name: "negative max bytes", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","url":"https://example.test/proxies.txt","format":"txt","timeout":"5s","max_nodes":100,"max_bytes":-1}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+
+			server.handleSettings(rec, req)
+
+			assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_free_proxy_source")
+			reloaded, err := config.Load(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.ExternalIP != "1.1.1.1" || reloaded.FreeProxyMaxNodes != 10 || len(reloaded.FreeProxySources) != 1 || reloaded.FreeProxySources[0].Name != "good-source" {
+				t.Fatalf("invalid free proxy source numbers should not be persisted: external_ip=%q max=%d sources=%#v", reloaded.ExternalIP, reloaded.FreeProxyMaxNodes, reloaded.FreeProxySources)
+			}
+		})
+	}
+}
+
 func TestHandleSettingsRejectsInvalidFreeProxySourceURLBeforePersisting(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

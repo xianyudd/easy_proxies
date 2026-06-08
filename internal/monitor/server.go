@@ -103,14 +103,17 @@ var (
 // nanosecond representation produced when time.Duration is marshaled as JSON.
 type durationString struct {
 	time.Duration
+	Set bool
 }
 
 func (d *durationString) UnmarshalJSON(data []byte) error {
 	text := strings.TrimSpace(string(data))
 	if text == "" || text == "null" {
 		d.Duration = 0
+		d.Set = false
 		return nil
 	}
+	d.Set = true
 	if strings.HasPrefix(text, "\"") {
 		var raw string
 		if err := json.Unmarshal(data, &raw); err != nil {
@@ -119,6 +122,7 @@ func (d *durationString) UnmarshalJSON(data []byte) error {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			d.Duration = 0
+			d.Set = false
 			return nil
 		}
 		parsed, err := time.ParseDuration(raw)
@@ -223,11 +227,27 @@ func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) ([]nodesource.
 			MaxNodes:      item.MaxNodes,
 			MaxBytes:      item.MaxBytes,
 		}
-		if item.Timeout.String() != "" {
-			cfg.Timeout = item.Timeout.Duration
-		}
 		if cfg.Name == "" && cfg.URL == "" && cfg.File == "" {
 			continue
+		}
+		label := cfg.Name
+		if label == "" {
+			label = cfg.URL
+		}
+		if label == "" {
+			label = cfg.File
+		}
+		if item.Timeout.Set {
+			if item.Timeout.Duration <= 0 {
+				return nil, fmt.Errorf("免费代理源 %q 的超时时间必须大于 0", label)
+			}
+			cfg.Timeout = item.Timeout.Duration
+		}
+		if item.MaxNodes < 0 {
+			return nil, fmt.Errorf("免费代理源 %q 的 max_nodes 不能为负数", label)
+		}
+		if item.MaxBytes < 0 {
+			return nil, fmt.Errorf("免费代理源 %q 的 max_bytes 不能为负数", label)
 		}
 		if cfg.URL != "" {
 			if err := validateHTTPURL("免费代理源地址", cfg.URL); err != nil {
