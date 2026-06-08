@@ -350,6 +350,30 @@ func waitForMonitorQualityJob(t *testing.T, srv *Server, id string) quality.JobS
 	return quality.JobSnapshot{}
 }
 
+func TestLegacyQualityCheckRejectsInvalidScope(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "cloudflare", path: "/api/cloudflare/check?scope=bad&region=all&count=1"},
+		{name: "reputation", path: "/api/reputation/check?scope=bad&region=all&count=1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+
+			srv.srv.Handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rec.Code, rec.Body.String())
+			}
+			assertQualityErrorCode(t, rec, "invalid_scope")
+		})
+	}
+}
+
 func TestLegacyQualityCheckRejectsInvalidBackgroundFlags(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 

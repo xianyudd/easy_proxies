@@ -1314,6 +1314,17 @@ func parseOptionalBoolParam(q url.Values, key string) (bool, bool) {
 	}
 }
 
+func parseOptionalScopeAllParam(q url.Values) (bool, bool) {
+	raw := strings.TrimSpace(q.Get("scope"))
+	if raw == "" {
+		return false, true
+	}
+	if strings.EqualFold(raw, "all") {
+		return true, true
+	}
+	return false, false
+}
+
 func validateNodeListQuery(q url.Values) (string, bool) {
 	if !isAllowedQueryValue(q.Get("availability"), "", "all", "available", "healthy", "unavailable", "failed", "blacklisted", "unchecked") {
 		return "invalid_availability", false
@@ -2045,7 +2056,13 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "invalid include_unavailable", "code": "invalid_bool"})
 		return
 	}
-	includeUnavailable = includeUnavailable || strings.EqualFold(r.URL.Query().Get("scope"), "all")
+	scopeAll, ok := parseOptionalScopeAllParam(r.URL.Query())
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid scope", "code": "invalid_scope"})
+		return
+	}
+	includeUnavailable = includeUnavailable || scopeAll
 	retryFailed, ok := parseOptionalBoolParam(r.URL.Query(), "retry_failed")
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
@@ -2318,7 +2335,13 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "invalid include_unavailable", "code": "invalid_bool"})
 		return
 	}
-	includeUnavailable = includeUnavailable || strings.EqualFold(r.URL.Query().Get("scope"), "all")
+	scopeAll, ok := parseOptionalScopeAllParam(r.URL.Query())
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid scope", "code": "invalid_scope"})
+		return
+	}
+	includeUnavailable = includeUnavailable || scopeAll
 	if !isAllowedMonitorMode(mode) {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in reputation check", "code": "invalid_mode"})
@@ -2338,7 +2361,7 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	maxCount := 50
-	if retryFailed || strings.EqualFold(r.URL.Query().Get("scope"), "all") || includeUnavailable {
+	if retryFailed || scopeAll || includeUnavailable {
 		maxCount = 500
 	}
 	if count > maxCount {
