@@ -104,9 +104,14 @@ export function SettingsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subscriptionRefreshState, subscriptionRefreshObservedRunning, subStatus.data?.is_refreshing, subStatus.data?.nodes_modified])
   useEffect(() => {
-    const id = window.location.hash.slice(1)
-    if (!id) return
-    window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 0)
+    const scrollToHashSection = () => {
+      const id = window.location.hash.slice(1)
+      if (!id) return
+      window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 0)
+    }
+    scrollToHashSection()
+    window.addEventListener('hashchange', scrollToHashSection)
+    return () => window.removeEventListener('hashchange', scrollToHashSection)
   }, [])
   useEffect(() => {
     const state = String(reloadStatus.data?.state || '')

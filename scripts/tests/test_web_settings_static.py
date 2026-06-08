@@ -1,6 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+APP = ROOT / "web" / "src" / "App.tsx"
 SETTINGS_PAGE = ROOT / "web" / "src" / "pages" / "SettingsPage.tsx"
 SERVER = ROOT / "internal" / "monitor" / "server.go"
 
@@ -26,6 +27,17 @@ def test_settings_page_tracks_reload_and_free_proxy_refresh_status():
     assert "freeProxyRefreshDescription" in text
     assert "free_proxy_refresh_started" in text
     assert "reload_started" in text
+
+
+def test_settings_section_hashes_route_and_scroll_reliably():
+    app = read(APP)
+    page = read(SETTINGS_PAGE)
+    for section in ("#subscriptions", "#free-proxy", "#pool", "#multi-port", "#routing", "#quality-check", "#management"):
+        assert f"['{section}', 'settings']" in app
+    assert "scrollToHashSection" in page
+    assert "window.addEventListener('hashchange', scrollToHashSection)" in page
+    assert "window.removeEventListener('hashchange', scrollToHashSection)" in page
+    assert "document.getElementById(id)?.scrollIntoView" in page
 
 
 def test_disabled_only_free_proxy_source_changes_do_not_trigger_refresh():
@@ -59,6 +71,7 @@ def test_settings_page_polls_subscription_refresh_and_refreshes_node_caches():
 if __name__ == "__main__":
     test_settings_page_does_not_overwrite_dirty_draft_on_refetch()
     test_settings_page_tracks_reload_and_free_proxy_refresh_status()
+    test_settings_section_hashes_route_and_scroll_reliably()
     test_disabled_only_free_proxy_source_changes_do_not_trigger_refresh()
     test_settings_page_refreshes_runtime_node_caches_after_background_changes()
     test_settings_page_polls_subscription_refresh_and_refreshes_node_caches()

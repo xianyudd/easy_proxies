@@ -22,6 +22,7 @@ const hashTabMap = new Map<string, ReturnType<typeof useAppStore.getState>['acti
   ['#status', 'status'],
   ['#settings', 'settings'],
   ['#subscriptions', 'settings'],
+  ['#free-proxy', 'settings'],
   ['#pool', 'settings'],
   ['#multi-port', 'settings'],
   ['#routing', 'settings'],
