@@ -224,6 +224,35 @@ func TestNodeActionMissingNodeReturnsStructuredErrors(t *testing.T) {
 	}
 }
 
+func TestNodeActionRouteErrorsAreStructured(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{mgr: mgr}
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		status int
+		code   string
+	}{
+		{name: "unknown action", method: http.MethodPost, path: "/api/nodes/node-a/unknown", status: http.StatusNotFound, code: "unknown_node_action"},
+		{name: "wrong method", method: http.MethodGet, path: "/api/nodes/node-a/release", status: http.StatusMethodNotAllowed, code: "method_not_allowed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rr := httptest.NewRecorder()
+			server.handleNodeAction(rr, req)
+			if rr.Code != tc.status {
+				t.Fatalf("status=%d, want %d body=%s", rr.Code, tc.status, rr.Body.String())
+			}
+			assertNodeActionErrorCode(t, rr, tc.code)
+		})
+	}
+}
+
 func TestManualProbeSuccessMarksNodeAvailable(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
 	if err != nil {

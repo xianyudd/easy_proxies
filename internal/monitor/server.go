@@ -1420,11 +1420,13 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/nodes/"), "/")
 	if len(parts) < 1 {
 		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "节点名称无效", "code": "invalid_node_name"})
 		return
 	}
 	tag := parts[0]
 	if tag == "" {
 		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "节点名称无效", "code": "invalid_node_name"})
 		return
 	}
 	action := ""
@@ -1435,6 +1437,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 	case "probe":
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
+			writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -1453,6 +1456,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 	case "release":
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
+			writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 			return
 		}
 		if err := s.mgr.Release(tag); err != nil {
@@ -1464,6 +1468,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 	case "blacklist":
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
+			writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 			return
 		}
 		var req struct {
@@ -1484,6 +1489,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"message": fmt.Sprintf("已拉黑 %s", duration)})
 	default:
 		w.WriteHeader(http.StatusNotFound)
+		writeJSON(w, map[string]any{"error": "unknown node action", "code": "unknown_node_action"})
 	}
 }
 
