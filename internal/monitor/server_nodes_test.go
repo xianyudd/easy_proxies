@@ -157,6 +157,31 @@ func TestHandleNodesRejectsInvalidSummaryOnly(t *testing.T) {
 	}
 }
 
+func TestHandleNodesRejectsInvalidFiltersAndSort(t *testing.T) {
+	server := newTestNodesServer(t)
+	for _, tc := range []struct {
+		name string
+		path string
+		code string
+	}{
+		{name: "availability", path: "/api/nodes?page=1&availability=bad", code: "invalid_availability"},
+		{name: "latency", path: "/api/nodes?page=1&latency=bad", code: "invalid_latency"},
+		{name: "sort", path: "/api/nodes?page=1&sort=bad", code: "invalid_sort"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rr := httptest.NewRecorder()
+
+			server.handleNodes(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rr.Code, rr.Body.String())
+			}
+			assertNodeActionErrorCode(t, rr, tc.code)
+		})
+	}
+}
+
 func TestHandleNodesSummaryOnlyReturnsStatsWithoutRows(t *testing.T) {
 	server := newTestNodesServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes?summary_only=true", nil)

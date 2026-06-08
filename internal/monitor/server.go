@@ -1161,6 +1161,11 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	if pageSize > 500 {
 		pageSize = 500
 	}
+	if errCode, ok := validateNodeListQuery(q); !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": strings.Replace(errCode, "_", " ", 1), "code": errCode})
+		return
+	}
 	filtered := filterNodeSnapshots(allNodes, q)
 	sortNodeSnapshots(filtered, q.Get("sort"))
 	totalFiltered := len(filtered)
@@ -1306,6 +1311,29 @@ func parseOptionalBoolParam(q url.Values, key string) (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+func validateNodeListQuery(q url.Values) (string, bool) {
+	if !isAllowedQueryValue(q.Get("availability"), "", "all", "available", "healthy", "unavailable", "failed", "blacklisted", "unchecked") {
+		return "invalid_availability", false
+	}
+	if !isAllowedQueryValue(q.Get("latency"), "", "all", "tested", "untested", "fast", "slow") {
+		return "invalid_latency", false
+	}
+	if !isAllowedQueryValue(q.Get("sort"), "", "name", "region", "source", "latency_desc") {
+		return "invalid_sort", false
+	}
+	return "", true
+}
+
+func isAllowedQueryValue(raw string, allowed ...string) bool {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func filterNodeSnapshots(nodes []Snapshot, q url.Values) []Snapshot {
