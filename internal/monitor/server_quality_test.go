@@ -336,6 +336,32 @@ func waitForMonitorQualityJob(t *testing.T, srv *Server, id string) quality.JobS
 	return quality.JobSnapshot{}
 }
 
+func TestLegacyQualityCheckRejectsInvalidBackgroundFlags(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "cloudflare background", path: "/api/cloudflare/check?background=maybe&region=all&count=1"},
+		{name: "cloudflare async", path: "/api/cloudflare/check?async=maybe&region=all&count=1"},
+		{name: "reputation background", path: "/api/reputation/check?background=maybe&region=all&count=1"},
+		{name: "reputation async", path: "/api/reputation/check?async=maybe&region=all&count=1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+
+			srv.srv.Handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rec.Code, rec.Body.String())
+			}
+			assertQualityErrorCode(t, rec, "invalid_bool")
+		})
+	}
+}
+
 func TestLegacyQualityCheckBackgroundModeCreatesJob(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 

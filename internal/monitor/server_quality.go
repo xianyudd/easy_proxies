@@ -146,12 +146,26 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"error": "not found", "code": "not_found"})
 }
 
-func isBackgroundQualityRequest(r *http.Request) bool {
-	return r.URL.Query().Get("background") == "1" || strings.EqualFold(r.URL.Query().Get("background"), "true") || r.URL.Query().Get("async") == "1" || strings.EqualFold(r.URL.Query().Get("async"), "true")
+func isBackgroundQualityRequest(r *http.Request) (bool, bool, string) {
+	background, ok := parseOptionalBoolParam(r.URL.Query(), "background")
+	if !ok {
+		return false, false, "background"
+	}
+	async, ok := parseOptionalBoolParam(r.URL.Query(), "async")
+	if !ok {
+		return false, false, "async"
+	}
+	return background || async, true, ""
 }
 
 func (s *Server) startBackgroundQualityCheck(w http.ResponseWriter, r *http.Request, kind quality.CheckKind, region, mode, source string, count int, includeUnavailable, retryFailed bool) bool {
-	if !isBackgroundQualityRequest(r) {
+	background, ok, invalidKey := isBackgroundQualityRequest(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid " + invalidKey, "code": "invalid_bool"})
+		return true
+	}
+	if !background {
 		return false
 	}
 	if count <= 0 {
