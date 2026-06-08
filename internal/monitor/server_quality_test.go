@@ -185,6 +185,34 @@ func TestQualityJobRejectsInvalidExplicitCountType(t *testing.T) {
 	}
 }
 
+func TestQualityJobRejectsInvalidModeAndSource(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	for _, tc := range []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "top-level mode", body: `{"kind":"pipeline","region":"all","mode":"single","count":1}`, code: "invalid_mode"},
+		{name: "query mode", body: `{"kind":"pipeline","query":{"region":"all","mode":"single"},"count":1}`, code: "invalid_mode"},
+		{name: "top-level source", body: `{"kind":"pipeline","region":"all","source":"bad_source","count":1}`, code: "invalid_source"},
+		{name: "query source", body: `{"kind":"pipeline","query":{"region":"all","source":"bad_source"},"count":1}`, code: "invalid_source"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			srv.srv.Handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rec.Code, rec.Body.String())
+			}
+			assertQualityErrorCode(t, rec, tc.code)
+		})
+	}
+}
+
 func TestQualityJobAPICancelAndErrors(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 
@@ -510,6 +538,30 @@ func TestMonitorQualityTargetSourceFiltersSource(t *testing.T) {
 	}
 	if len(availableTargets) != 1 || availableTargets[0].NodeTag != "node-a" {
 		t.Fatalf("source filter without include_unavailable should select only checked available targets, got %#v", availableTargets)
+	}
+}
+
+func TestLegacyBackgroundQualityCheckRejectsInvalidSource(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "cloudflare", path: "/api/cloudflare/check?background=true&region=all&source=bad_source&count=1"},
+		{name: "reputation", path: "/api/reputation/check?background=true&region=all&source=bad_source&count=1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+
+			srv.srv.Handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rec.Code, rec.Body.String())
+			}
+			assertQualityErrorCode(t, rec, "invalid_source")
+		})
 	}
 }
 

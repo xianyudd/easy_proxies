@@ -44,19 +44,10 @@ func (s *Server) handleQualityJobs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "invalid request body", "code": "invalid_request"})
 		return
 	}
-	if req.Region == "" && req.Query.Region != "" {
-		req.Region = req.Query.Region
-	}
-	if req.Region == "" {
-		req.Region = "all"
-	}
-	if !isAllowedMonitorRegion(strings.ToLower(req.Region)) {
+	if code, ok := normalizeQualityJobRequest(&req); !ok {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "invalid region", "code": "invalid_request"})
+		writeJSON(w, map[string]any{"error": strings.ReplaceAll(code, "_", " "), "code": code})
 		return
-	}
-	if req.Mode == "" {
-		req.Mode = "multi-port"
 	}
 	if req.Count <= 0 {
 		req.Count = 500
@@ -145,6 +136,83 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"error": "not found", "code": "not_found"})
 }
 
+func normalizeQualityJobRequest(req *quality.JobRequest) (string, bool) {
+	if req == nil {
+		return "invalid_request", false
+	}
+	if code, ok := normalizeQualityJobRegion(&req.Region); !ok {
+		return code, false
+	}
+	if code, ok := normalizeQualityJobRegion(&req.Query.Region); !ok {
+		return code, false
+	}
+	if req.Region == "" && req.Query.Region != "" {
+		req.Region = req.Query.Region
+	}
+	if req.Region == "" {
+		req.Region = "all"
+	}
+	if code, ok := normalizeQualityJobMode(&req.Mode); !ok {
+		return code, false
+	}
+	if code, ok := normalizeQualityJobMode(&req.Query.Mode); !ok {
+		return code, false
+	}
+	if req.Mode == "" {
+		req.Mode = "multi-port"
+	}
+	if code, ok := normalizeQualityJobSource(&req.Source); !ok {
+		return code, false
+	}
+	if code, ok := normalizeQualityJobSource(&req.Query.Source); !ok {
+		return code, false
+	}
+	return "", true
+}
+
+func normalizeQualityJobRegion(region *string) (string, bool) {
+	value := strings.ToLower(strings.TrimSpace(*region))
+	if value == "" {
+		*region = ""
+		return "", true
+	}
+	if !isAllowedMonitorRegion(value) {
+		return "invalid_region", false
+	}
+	*region = value
+	return "", true
+}
+
+func normalizeQualityJobMode(mode *string) (string, bool) {
+	value := strings.ToLower(strings.TrimSpace(*mode))
+	if value == "" {
+		*mode = ""
+		return "", true
+	}
+	switch value {
+	case "multi", "multi_port":
+		*mode = "multi-port"
+	case "multi-port":
+		*mode = value
+	default:
+		return "invalid_mode", false
+	}
+	return "", true
+}
+
+func normalizeQualityJobSource(source *string) (string, bool) {
+	value := strings.ToLower(strings.TrimSpace(*source))
+	if value == "" {
+		*source = ""
+		return "", true
+	}
+	if !isAllowedQueryValue(value, "all", "subscription", "free_proxy", "inline", "nodes_file", "unknown") {
+		return "invalid_source", false
+	}
+	*source = value
+	return "", true
+}
+
 func isBackgroundQualityRequest(r *http.Request) (bool, bool, string) {
 	background, ok := parseOptionalBoolParam(r.URL.Query(), "background")
 	if !ok {
@@ -174,6 +242,11 @@ func (s *Server) startBackgroundQualityCheck(w http.ResponseWriter, r *http.Requ
 		count = 10000
 	}
 	req := quality.JobRequest{Kind: kind, Region: region, Mode: mode, Source: source, Count: count, IncludeUnavailable: includeUnavailable, RetryFailed: retryFailed}
+	if code, ok := normalizeQualityJobRequest(&req); !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": strings.ReplaceAll(code, "_", " "), "code": code})
+		return true
+	}
 	snap, err := s.qualitySvc.CreateJob(r.Context(), req)
 	if err != nil {
 		if errors.Is(err, quality.ErrActiveJob) {
