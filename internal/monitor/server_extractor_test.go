@@ -1,6 +1,12 @@
 package monitor
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"easy_proxies/internal/config"
+)
 
 func TestExtractorSnapshotMatchesRegionExtendedAliases(t *testing.T) {
 	t.Parallel()
@@ -57,5 +63,30 @@ func TestExtractorSnapshotMatchesRegionExtendedAliases(t *testing.T) {
 				t.Fatalf("expected %v, got %v", tc.want, got)
 			}
 		})
+	}
+}
+
+func TestHandleExtractorRejectsInvalidCount(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := mgr.Register(NodeInfo{Tag: "node-a", Name: "Node A", URI: "http://1.1.1.1:80", ListenAddress: "127.0.0.1", Port: 31001, Region: "us"})
+	node.MarkInitialCheckDone(true)
+	srv := &Server{
+		mgr: mgr,
+		cfg: Config{ProxyUsername: "user", ProxyPassword: "pass"},
+		cfgSrc: &config.Config{
+			Mode: "multi-port",
+		},
+	}
+
+	for _, rawCount := range []string{"0", "-1", "abc"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/extractor?region=all&mode=multi-port&format=http_url&count="+rawCount, nil)
+		rec := httptest.NewRecorder()
+		srv.handleExtractor(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("count=%s status=%d, want 400 body=%s", rawCount, rec.Code, rec.Body.String())
+		}
 	}
 }

@@ -94,6 +94,24 @@ func TestHandleNodesPagedClampsOutOfRangePageAndReportsTotalPages(t *testing.T) 
 	}
 }
 
+func TestHandleNodesClampsLargePageSize(t *testing.T) {
+	server := newTestNodesServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes?page=1&page_size=999999&availability=all", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleNodes(rr, req)
+
+	var payload struct {
+		PageSize int `json:"page_size"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.PageSize != 500 {
+		t.Fatalf("page_size=%d, want clamp to 500", payload.PageSize)
+	}
+}
+
 func TestHandleNodesSummaryOnlyReturnsStatsWithoutRows(t *testing.T) {
 	server := newTestNodesServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes?summary_only=true", nil)

@@ -2329,9 +2329,13 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 
 	count := 1
 	if rawCount := strings.TrimSpace(r.URL.Query().Get("count")); rawCount != "" {
-		if parsed, err := strconv.Atoi(rawCount); err == nil && parsed > 0 {
-			count = parsed
+		parsed, err := strconv.Atoi(rawCount)
+		if err != nil || parsed <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "invalid count"})
+			return
 		}
+		count = parsed
 	}
 	if count > 500 {
 		count = 500
