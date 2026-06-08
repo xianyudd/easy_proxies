@@ -3,6 +3,7 @@ export interface ReputationResult {
   node_tag?: string
   region?: string
   port?: number
+  ip?: string
   exit_ip?: string
   country?: string
   asn?: string | number

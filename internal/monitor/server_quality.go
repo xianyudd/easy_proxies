@@ -66,6 +66,7 @@ func (s *Server) handleQualityJobs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_request"})
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	writeJSON(w, qualityJobCreatedResponse(snap))
 }
@@ -258,6 +259,7 @@ func (s *Server) startBackgroundQualityCheck(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_request"})
 		return true
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	writeJSON(w, qualityJobCreatedResponse(snap))
 	return true

@@ -11,6 +11,7 @@ import { Button } from '../components/ui/Button'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { Badge } from '../components/ui/Badge'
 import { CfDistributionChart, ReputationRiskChart, CfScoreRankChart } from '../components/charts/QualityCharts'
+import { REGION_META, regionMeta } from '../components/charts/region'
 import { useToast } from '../components/ui/Toast'
 import { useAppStore } from '../store/appStore'
 import { useExtractorStore } from '../store/extractorStore'
@@ -72,6 +73,15 @@ function repFromJobRow(row: QualityJobResult): ReputationResult {
 function isTerminalJob(job?: QualityJobSnapshot) { return !!job && ['completed', 'failed', 'cancelled'].includes(job.status) }
 
 type QualityRow = { key: string; row: CloudflareResult; rep?: ReputationResult; repRisk: string; score: number; tier?: string; pool?: string }
+const QUALITY_REGION_OPTIONS = Object.entries(REGION_META).map(([value, meta]) => ({ value, label: meta.label }))
+
+function reputationExitIp(row: ReputationResult) {
+  return String(row.exit_ip || row.ip || '').trim()
+}
+
+function regionLabel(region?: string) {
+  return regionMeta(region).label
+}
 
 export function QualityPage() {
   const [region, setRegion] = useState('all')
@@ -101,7 +111,7 @@ export function QualityPage() {
   const sourceTotalLabel = hasSummaryError ? '未知' : String(nodesSummary.data?.total_nodes || 0)
   const sourceCountLabel = (key: string) => hasSummaryError ? '未知' : String(sourceStats[key] || 0)
   const sourceCount = source === 'all' ? (nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0) : Number(sourceStats[source] || 0)
-  const scanCount = Math.max(1, count)
+  const scanCount = Math.min(50, Math.max(1, count))
   const allCount = Math.max(sourceCount || nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0, source === 'all' ? 500 : 1)
   const jobRunning = !!jobId && !isTerminalJob(jobQuery.data)
   const cacheLoading = cfCache.isFetching || repCache.isFetching
@@ -111,9 +121,21 @@ export function QualityPage() {
   const scanAllLabel = nodesSummary.isLoading ? 'Pipeline 扫描节点（统计加载中）' : hasSummaryError ? 'Pipeline 扫描节点（数量未知）' : `Pipeline 扫描 ${allCount} 个节点`
   const qualitySource = source === 'all' ? undefined : source
   const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { setCfRows(d.data || []); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
-  const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true }), onSuccess: job => { setJobId(job.job_id); setResultPage(1); toast('Pipeline 后台扫描任务已创建', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '创建后台扫描失败', 'error') })
-  const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true, retry_failed: true, replace: true }), onSuccess: job => { setJobId(job.job_id); setResultPage(1); toast('失败节点 Pipeline 重试任务已创建', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '创建重试任务失败', 'error') })
+  const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true }) })
+  const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true, retry_failed: true, replace: true }) })
   const cancelScan = useMutation({ mutationFn: () => cancelQualityJob(jobId), onSuccess: () => { void jobQuery.refetch(); void jobResults.refetch(); toast('后台任务已取消', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '取消任务失败', 'error') })
+  const startQualityJob = async (retryFailed = false) => {
+    const mutation = retryFailed ? retryScan : fullScan
+    try {
+      const job = await mutation.mutateAsync()
+      if (!job?.job_id) throw new Error('后台任务响应缺少 job_id')
+      setJobId(job.job_id)
+      setResultPage(1)
+      toast(retryFailed ? '失败节点 Pipeline 重试任务已创建' : 'Pipeline 后台扫描任务已创建', 'ok')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : retryFailed ? '创建重试任务失败' : '创建后台扫描失败', 'error')
+    }
+  }
   const loadCache = async () => {
     try {
       const [cf, rep] = await Promise.all([cfCache.refetch(), repCache.refetch()])
@@ -145,7 +167,10 @@ export function QualityPage() {
   const activeRepRows = jobId ? jobRepRows : repRows
   const summary = jobQuery.data?.summary
   const failedCount = jobId ? (jobQuery.data?.failed || 0) : cfRows.filter(failedCf).length + repRows.filter(row => repLevel(row) === 'failed' || !!row.error).length
-  const repByExitIp = useMemo(() => new Map(activeRepRows.filter(r => r.exit_ip).map(r => [String(r.exit_ip), r])), [activeRepRows])
+  const repByExitIp = useMemo(() => new Map<string, ReputationResult>(activeRepRows.flatMap(r => {
+    const ip = reputationExitIp(r)
+    return ip ? [[ip, r] as [string, ReputationResult]] : []
+  })), [activeRepRows])
   const repByPort = useMemo(() => new Map(activeRepRows.filter(r => r.port != null).map(r => [String(r.port), r])), [activeRepRows])
   const rows = useMemo<QualityRow[]>(() => {
     const sourceRows = jobId ? activeCfRows : activeCfRows.filter(r => filter === 'all' || r.level === filter)
@@ -173,7 +198,7 @@ export function QualityPage() {
   const extract = (row: CloudflareResult) => { setExtractorParams({ mode:'multi-port', region: (row.region || 'all') as never, format:'http_url', count:1, reveal:true }); setActiveTab('extractor'); toast('已带入代理提取页', 'ok') }
   const columns = useMemo<ColumnsType<QualityRow>>(() => [
     { title: '节点', dataIndex: 'node', width: 220, fixed: 'left', render: (_, item) => <div><strong>{item.row.node_name || item.row.node_tag || '-'}</strong><br/><span className="muted mono">{item.row.node_tag || ''}</span></div> },
-    { title: '地区/端口', width: 110, render: (_, item) => `${item.row.region || '-'}:${item.row.port || '-'}` },
+    { title: '地区/端口', width: 110, render: (_, item) => `${regionLabel(item.row.region)}:${item.row.port || '-'}` },
     { title: '出口 IP', width: 150, render: (_, item) => item.row.exit_ip || '-' },
     { title: 'CF 分', width: 120, sorter: jobId ? undefined : (a, b) => (Number(a.row.score) || 0) - (Number(b.row.score) || 0), render: (_, item) => <Badge tone={levelTone(item.row.level)}>{item.row.score ?? '-'} / {cfLabel(item.row.level)}</Badge> },
     { title: 'IP 风险', width: 130, render: (_, item) => <Badge tone={levelTone(item.repRisk)}>{item.repRisk}{item.rep ? ` / ${riskScore(item.rep)}` : ''}</Badge> },
@@ -192,11 +217,11 @@ export function QualityPage() {
     {jobId && jobQuery.isError && <QueryErrorBanner title="后台任务状态加载失败" error={jobQuery.error} onRetry={() => { void jobQuery.refetch() }} />}
     {jobId && jobResults.isError && <QueryErrorBanner title="后台任务结果加载失败" error={jobResults.error} onRetry={() => { void jobResults.refetch() }} />}
     <div className="card quality-control-card">
-      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => fullScan.mutate()}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canCreatePipeline || retryScan.isPending} onClick={() => retryScan.mutate()}>{retryScan.isPending ? '重试中...' : 'Pipeline 重试失败节点'}</Button><Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button><Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button></div></div>
+      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测；同步 CF 抽样最多 50 个节点。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => { void startQualityJob(false) }}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canCreatePipeline || retryScan.isPending} onClick={() => { void startQualityJob(true) }}>{retryScan.isPending ? '重试中...' : 'Pipeline 重试失败节点'}</Button><Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button><Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button></div></div>
       <div className="quality-filter-grid modern-filter-grid">
         <div className="field console-field">
           <label>地区范围</label>
-          <Select className="console-select" aria-label="地区范围" value={region} onChange={setRegion} options={[{ value: 'all', label: '全部' }, { value: 'us', label: '美国' }, { value: 'jp', label: '日本' }, { value: 'hk', label: '香港' }, { value: 'sg', label: '新加坡' }, { value: 'de', label: '德国' }, { value: 'gb', label: '英国' }]} />
+          <Select className="console-select" aria-label="地区范围" value={region} onChange={setRegion} options={QUALITY_REGION_OPTIONS} />
         </div>
         <div className="field console-field">
           <label>节点来源</label>
@@ -204,7 +229,7 @@ export function QualityPage() {
         </div>
         <div className="field console-field">
           <label>样本数</label>
-          <InputNumber className="console-number" aria-label="样本数" min={1} value={count} onChange={value=>setCount(Number(value)||10)} />
+          <InputNumber className="console-number" aria-label="样本数" min={1} max={50} value={count} onChange={value=>setCount(Math.min(50, Math.max(1, Number(value)||10)))} />
         </div>
         <div className="field console-field">
           <label>结果筛选</label>

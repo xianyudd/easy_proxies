@@ -2273,6 +2273,11 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "invalid region", "code": "invalid_region"})
 		return
 	}
+	if code, ok := normalizeQualityJobSource(&source); !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": strings.ReplaceAll(code, "_", " "), "code": code})
+		return
+	}
 	if !isAllowedMonitorMode(mode) {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in cloudflare check", "code": "invalid_mode"})
@@ -2526,6 +2531,11 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	if !isAllowedMonitorRegion(region) {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "invalid region", "code": "invalid_region"})
+		return
+	}
+	if code, ok := normalizeQualityJobSource(&source); !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": strings.ReplaceAll(code, "_", " "), "code": code})
 		return
 	}
 	includeUnavailable, ok := parseOptionalBoolParam(r.URL.Query(), "include_unavailable")

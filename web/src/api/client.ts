@@ -38,11 +38,22 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     ...init,
   })
   const contentType = res.headers.get('content-type') || ''
-  const payload = contentType.includes('application/json') ? await res.json().catch(() => ({})) : await res.text()
+  const payload = contentType.includes('application/json') ? await res.json().catch(() => ({})) : parseTextPayload(await res.text())
   if (!res.ok) {
     throw new ApiError(errorMessage(res.status, payload, path), res.status, payload, path)
   }
   return payload as T
+}
+
+function parseTextPayload(text: string): unknown {
+  const trimmed = text.trim()
+  if (!trimmed) return text
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return text
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return text
+  }
 }
 
 export const api = {

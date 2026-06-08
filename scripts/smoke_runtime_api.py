@@ -157,6 +157,55 @@ def check_debug_and_logs(opener: urllib.request.OpenerDirector) -> None:
     print("debug/logs: summary/full/logs and structured invalid bool ok")
 
 
+def check_quality_paths(opener: urllib.request.OpenerDirector) -> None:
+    for path in ("/api/cloudflare/cache", "/api/reputation/cache"):
+        code, payload = request(opener, "GET", path)
+        require(code == 200 and isinstance(payload, dict), f"GET {path} failed HTTP {code}: {payload!r}")
+        require(isinstance(payload.get("data"), list), f"{path} payload missing data list: {payload!r}")
+    invalid_source_paths = (
+        "/api/cloudflare/check?region=all&mode=multi-port&count=1&source=bad_source",
+        "/api/reputation/check?region=all&mode=multi-port&count=1&source=bad_source",
+    )
+    for path in invalid_source_paths:
+        code, payload = request(opener, "GET", path)
+        require(code == 400 and isinstance(payload, dict) and payload.get("code") == "invalid_source", f"{path} should reject invalid source, got HTTP {code}: {payload!r}")
+    limit_paths = (
+        "/api/cloudflare/check?region=all&mode=multi-port&count=51",
+        "/api/reputation/check?region=all&mode=multi-port&count=6",
+    )
+    for path in limit_paths:
+        code, payload = request(opener, "GET", path)
+        require(code == 400 and isinstance(payload, dict) and payload.get("code") == "use_background", f"{path} should require background scan, got HTTP {code}: {payload!r}")
+
+    code, job = request(opener, "POST", "/api/quality/jobs", {
+        "kind": "pipeline",
+        "region": "all",
+        "mode": "multi-port",
+        "source": "subscription",
+        "count": 1,
+        "include_unavailable": True,
+    })
+    if code == 409 and isinstance(job, dict) and job.get("code") == "active_job":
+        print("quality: create job skipped because another job is active")
+        return
+    require(code == 202 and isinstance(job, dict), f"POST quality job failed HTTP {code}: {job!r}")
+    job_id = str(job.get("job_id") or "")
+    require(job_id, f"quality job response missing job_id: {job!r}")
+    deadline = time.time() + POLL_SECONDS
+    while time.time() < deadline:
+        code, current = request(opener, "GET", f"/api/quality/jobs/{urllib.parse.quote(job_id)}")
+        require(code == 200 and isinstance(current, dict), f"GET quality job failed HTTP {code}: {current!r}")
+        state = str(current.get("status", ""))
+        if state in {"completed", "failed", "cancelled"}:
+            require(state == "completed", f"quality job did not complete successfully: {current!r}")
+            code, results = request(opener, "GET", f"/api/quality/jobs/{urllib.parse.quote(job_id)}/results?page=1&page_size=20")
+            require(code == 200 and isinstance(results, dict) and isinstance(results.get("data"), list), f"GET quality job results failed HTTP {code}: {results!r}")
+            print(f"quality: job completed id={job_id} results={len(results.get('data') or [])}")
+            return
+        time.sleep(0.5)
+    raise RuntimeSmokeError(f"quality job {job_id} did not finish within poll window")
+
+
 def check_extractor_paths(opener: urllib.request.OpenerDirector) -> None:
     cases = [
         ("/api/extractor?region=all&mode=multi-port&format=host_port_user_pass&count=3&reveal=true", "multi-port", 3),
@@ -330,6 +379,7 @@ def main() -> int:
         original_settings = check_same_value_save(opener)
         check_status_endpoints(opener)
         check_debug_and_logs(opener)
+        check_quality_paths(opener)
         check_extractor_paths(opener)
         check_manual_reload(opener)
         check_port_continuity(opener)

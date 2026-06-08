@@ -30,6 +30,13 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
     assert '"/api/logs"' in text
     assert '"nodes" not in summary' in text
     assert 'invalid debug summary_only should fail with structured error' in text
+    assert "check_quality_paths" in text
+    assert '"/api/cloudflare/cache"' in text
+    assert '"/api/reputation/cache"' in text
+    assert '"invalid_source"' in text
+    assert '"use_background"' in text
+    assert '"POST", "/api/quality/jobs"' in text
+    assert 'quality job response missing job_id' in text
 
 
 def test_smoke_script_checks_port_continuity_after_reload():
