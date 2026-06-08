@@ -1682,6 +1682,16 @@ free_proxy_sources:
 	}
 }
 
+func TestHandleFreeProxyRefreshReturnsStructuredError(t *testing.T) {
+	server := &Server{}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/free-proxy/refresh", nil)
+	rec := httptest.NewRecorder()
+	server.handleFreeProxyRefresh(rec, req)
+
+	assertSettingsErrorCode(t, rec, http.StatusServiceUnavailable, "free_proxy_refresh_unavailable")
+}
+
 func TestHandleConfigNodesCRUDReportsNeedReloadWithoutReloading(t *testing.T) {
 	fake := &fakeNodeManager{nodes: []config.NodeConfig{{Name: "old", URI: "http://127.0.0.1:18080", Port: 18080}}}
 	server := &Server{nodeMgr: fake, reloadState: "idle"}

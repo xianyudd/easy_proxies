@@ -3744,7 +3744,7 @@ func (s *Server) handleFreeProxyRefresh(w http.ResponseWriter, r *http.Request) 
 	status, started, err := s.startFreeProxyRefresh("manual")
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		writeJSON(w, map[string]any{"error": err.Error()})
+		writeJSON(w, map[string]any{"error": err.Error(), "code": "free_proxy_refresh_unavailable"})
 		return
 	}
 	writeJSON(w, map[string]any{
