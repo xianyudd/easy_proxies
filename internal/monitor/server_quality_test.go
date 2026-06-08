@@ -85,6 +85,23 @@ func TestQualityJobAPI(t *testing.T) {
 	}
 }
 
+func TestQualityJobRejectsNonPositiveExplicitCount(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	for _, body := range []string{
+		`{"kind":"cloudflare","region":"all","count":0}`,
+		`{"kind":"cloudflare","region":"all","count":-1}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body=%s status=%d, want 400 response=%s", body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestQualityJobAPICancelAndErrors(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 
