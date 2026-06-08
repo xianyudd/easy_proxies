@@ -2831,6 +2831,58 @@ free_proxy_sources:
 	}
 }
 
+func TestHandleFreeProxyRefreshReportsDisabledState(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: false
+  path: ` + cachePath + `
+  auto_reload: true
+free_proxy_sources:
+  - name: disabled-source
+    url: http://127.0.0.1:1/free.txt
+    enabled: false
+    format: txt
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+	req := httptest.NewRequest(http.MethodPost, "/api/free-proxy/refresh", nil)
+	rec := httptest.NewRecorder()
+
+	server.handleFreeProxyRefresh(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Message string                 `json:"message"`
+		Started bool                   `json:"started"`
+		Status  freeProxyRefreshStatus `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Started || resp.Status.State != "disabled" {
+		t.Fatalf("expected disabled refresh response, got %#v body=%s", resp, rec.Body.String())
+	}
+	if strings.Contains(resp.Message, "运行") {
+		t.Fatalf("disabled refresh should not claim a job is running: %#v body=%s", resp, rec.Body.String())
+	}
+	if resp.Status.TotalSources != 1 || resp.Status.EnabledSources != 0 || resp.Status.CacheEnabled {
+		t.Fatalf("disabled refresh response should include config context: %#v body=%s", resp.Status, rec.Body.String())
+	}
+}
+
 func TestHandleFreeProxyRefreshReturnsStructuredError(t *testing.T) {
 	server := &Server{}
 

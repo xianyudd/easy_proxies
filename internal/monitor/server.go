@@ -878,11 +878,13 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 		return freeProxyRefreshStatus{}, false, errors.New("配置存储未初始化")
 	}
 	if len(cfg.FreeProxySources) == 0 {
-		return freeProxyRefreshStatus{State: "idle", RequestedBy: requestedBy}, false, nil
+		status := freeProxyRefreshStatus{State: "idle", RequestedBy: requestedBy}
+		return s.enrichFreeProxyRefreshStatus(status), false, nil
 	}
 	cache := cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)
 	if !cache.EnabledValue() {
-		return freeProxyRefreshStatus{State: "disabled", RequestedBy: requestedBy}, false, nil
+		status := freeProxyRefreshStatus{State: "disabled", RequestedBy: requestedBy}
+		return s.enrichFreeProxyRefreshStatus(status), false, nil
 	}
 
 	now := time.Now()
@@ -4408,17 +4410,28 @@ func (s *Server) handleFreeProxyRefresh(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, map[string]any{
-		"message": startedText(started, "免费源刷新已启动", "已有免费源刷新在运行"),
+		"message": freeProxyRefreshMessage(started, status),
 		"started": started,
 		"status":  status,
 	})
 }
 
-func startedText(started bool, startedMessage, runningMessage string) string {
+func freeProxyRefreshMessage(started bool, status freeProxyRefreshStatus) string {
 	if started {
-		return startedMessage
+		return "免费源刷新已启动"
 	}
-	return runningMessage
+	switch status.State {
+	case "disabled":
+		return "免费源缓存未启用"
+	case "idle":
+		if status.TotalSources == 0 {
+			return "暂无免费源可刷新"
+		}
+		if status.EnabledSources == 0 {
+			return "没有已启用的免费源"
+		}
+	}
+	return "已有免费源刷新在运行"
 }
 
 func (s *Server) ensureNodeManager(w http.ResponseWriter) bool {
