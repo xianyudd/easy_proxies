@@ -1653,7 +1653,7 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 
 		// 未授权
 		w.WriteHeader(http.StatusUnauthorized)
-		writeJSON(w, map[string]any{"error": "未授权，请先登录"})
+		writeJSON(w, map[string]any{"error": "未授权，请先登录", "code": "unauthorized"})
 	}
 }
 
@@ -1676,7 +1676,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "请求格式错误"})
+		writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 		return
 	}
 
@@ -1685,7 +1685,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		// 添加随机延迟防止暴力破解
 		time.Sleep(time.Duration(100+mathrand.Intn(200)) * time.Millisecond)
 		w.WriteHeader(http.StatusUnauthorized)
-		writeJSON(w, map[string]any{"error": "密码错误"})
+		writeJSON(w, map[string]any{"error": "密码错误", "code": "invalid_password"})
 		return
 	}
 
@@ -1694,7 +1694,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Printf("Failed to create session: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		writeJSON(w, map[string]any{"error": "服务器错误"})
+		writeJSON(w, map[string]any{"error": "服务器错误", "code": "session_create_failed"})
 		return
 	}
 
