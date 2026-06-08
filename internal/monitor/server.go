@@ -3251,9 +3251,15 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if strings.TrimSpace(req.FreeProxyFilter.Timeout) != "" {
-				if _, err := time.ParseDuration(req.FreeProxyFilter.Timeout); err != nil {
+				d, err := time.ParseDuration(req.FreeProxyFilter.Timeout)
+				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
 					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的免费源筛选超时: %v", err), "code": "invalid_free_proxy_filter_timeout"})
+					return
+				}
+				if d <= 0 {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": "免费源筛选超时必须大于 0", "code": "invalid_free_proxy_filter_timeout"})
 					return
 				}
 			}
@@ -3265,9 +3271,15 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if strings.TrimSpace(req.FreeProxyCache.MaxAge) != "" {
-				if _, err := time.ParseDuration(req.FreeProxyCache.MaxAge); err != nil {
+				d, err := time.ParseDuration(req.FreeProxyCache.MaxAge)
+				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
 					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的免费源缓存时长: %v", err), "code": "invalid_free_proxy_cache_max_age"})
+					return
+				}
+				if d <= 0 {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": "免费源缓存时长必须大于 0", "code": "invalid_free_proxy_cache_max_age"})
 					return
 				}
 			}
