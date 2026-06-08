@@ -188,6 +188,29 @@ func positiveDurationString(d time.Duration) string {
 	return d.String()
 }
 
+func settingsCoreMode(mode string) string {
+	mode = normalizeCoreMode(mode)
+	if mode == "" {
+		return "pool"
+	}
+	return mode
+}
+
+func settingsPoolMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return "sequential"
+	}
+	return mode
+}
+
+func settingsPositiveInt(value, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
 func isAllowedCoreMode(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "pool", "multi-port", "multi_port", "hybrid":
@@ -3101,7 +3124,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if cfg != nil {
-			resp["mode"] = cfg.Mode
+			resp["mode"] = settingsCoreMode(cfg.Mode)
 			resp["listener"] = map[string]any{
 				"address":  cfg.Listener.Address,
 				"port":     cfg.Listener.Port,
@@ -3121,9 +3144,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"region_ports": cfg.AndroidProxy.RegionPorts,
 			}
 			resp["pool"] = map[string]any{
-				"mode":               cfg.Pool.Mode,
-				"failure_threshold":  cfg.Pool.FailureThreshold,
-				"blacklist_duration": cfg.Pool.BlacklistDuration.String(),
+				"mode":               settingsPoolMode(cfg.Pool.Mode),
+				"failure_threshold":  settingsPositiveInt(cfg.Pool.FailureThreshold, 3),
+				"blacklist_duration": positiveDurationString(cfg.Pool.BlacklistDuration),
 			}
 			resp["management"] = map[string]any{
 				"listen":   cfg.Management.Listen,
@@ -3145,16 +3168,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 			resp["free_proxy_sources"] = cfg.FreeProxySources
 			resp["free_proxy_max_nodes"] = cfg.FreeProxyMaxNodes
+			filter := cfg.FreeProxyFilter.Normalized()
 			resp["free_proxy_filter"] = map[string]any{
-				"enabled":              cfg.FreeProxyFilter.Enabled,
-				"min_tier":             cfg.FreeProxyFilter.MinTier,
-				"workers":              cfg.FreeProxyFilter.Workers,
-				"timeout":              cfg.FreeProxyFilter.Timeout.String(),
-				"max_candidates":       cfg.FreeProxyFilter.MaxCandidates,
-				"max_probe_candidates": cfg.FreeProxyFilter.MaxProbeCandidates,
+				"enabled":              filter.Enabled,
+				"min_tier":             filter.MinTier,
+				"workers":              filter.Workers,
+				"timeout":              positiveDurationString(filter.Timeout),
+				"max_candidates":       filter.MaxCandidates,
+				"max_probe_candidates": filter.MaxProbeCandidates,
 				"probes": map[string]any{
-					"http":  cfg.FreeProxyFilter.Probes.HTTP,
-					"https": cfg.FreeProxyFilter.Probes.HTTPS,
+					"http":  filter.Probes.HTTP,
+					"https": filter.Probes.HTTPS,
 				},
 			}
 			cache := cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)

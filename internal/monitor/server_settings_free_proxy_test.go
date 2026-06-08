@@ -1153,6 +1153,39 @@ func TestHandleSettingsReturnsFreeProxyConfig(t *testing.T) {
 	}
 }
 
+func TestHandleSettingsAcceptsRoundTripZeroDurationDefaults(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.SetFilePath(configPath)
+	cfg.Log.Output = "stdout"
+	cfg.Log.MaxSize = 50
+	cfg.Log.MaxBackups = 3
+	cfg.Log.MaxAge = 7
+	server := &Server{cfgSrc: cfg}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	getRec := httptest.NewRecorder()
+	server.handleSettings(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", getRec.Code, getRec.Body.String())
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(getRec.Body.Bytes()))
+	putRec := httptest.NewRecorder()
+	server.handleSettings(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("round-trip PUT status = %d, body = %s", putRec.Code, putRec.Body.String())
+	}
+}
+
 func TestHandleSettingsAcceptsRoundTripFreeProxyDurations(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
