@@ -3277,16 +3277,33 @@ func (s *Server) handleSubscriptionRefresh(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := s.subRefresher.RefreshNow(); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		writeJSON(w, map[string]any{"error": err.Error()})
+	status := s.subRefresher.Status()
+	nodeCount := status.NodeCount
+	if runtimeCount := s.runtimeSubscriptionNodeCount(); runtimeCount > nodeCount {
+		nodeCount = runtimeCount
+	}
+	if status.IsRefreshing {
+		writeJSON(w, map[string]any{
+			"message":    "订阅刷新已在运行",
+			"started":    false,
+			"status":     status,
+			"node_count": nodeCount,
+		})
 		return
 	}
 
-	status := s.subRefresher.Status()
+	go func() {
+		if err := s.subRefresher.RefreshNow(); err != nil && s.logger != nil {
+			s.logger.Printf("❌ subscription refresh failed: %v", err)
+		}
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
 	writeJSON(w, map[string]any{
-		"message":    "刷新成功",
-		"node_count": status.NodeCount,
+		"message":    "订阅刷新已在后台启动",
+		"started":    true,
+		"status":     status,
+		"node_count": nodeCount,
 	})
 }
 

@@ -1482,6 +1482,9 @@ func (f fakeSubscriptionRefresher) UpdateConfigAndRefresh(urls []string, enabled
 
 type recordingSubscriptionRefresher struct {
 	status             SubscriptionStatus
+	refreshCalls       int
+	refreshStarted     chan struct{}
+	refreshBlock       chan struct{}
 	updateCalls        int
 	updateRefreshCalls int
 	lastURLs           []string
@@ -1489,7 +1492,16 @@ type recordingSubscriptionRefresher struct {
 	lastInterval       time.Duration
 }
 
-func (f *recordingSubscriptionRefresher) RefreshNow() error          { return nil }
+func (f *recordingSubscriptionRefresher) RefreshNow() error {
+	f.refreshCalls++
+	if f.refreshStarted != nil {
+		f.refreshStarted <- struct{}{}
+	}
+	if f.refreshBlock != nil {
+		<-f.refreshBlock
+	}
+	return nil
+}
 func (f *recordingSubscriptionRefresher) Status() SubscriptionStatus { return f.status }
 func (f *recordingSubscriptionRefresher) UpdateConfig(urls []string, enabled bool, interval time.Duration) {
 	f.updateCalls++
@@ -1503,6 +1515,82 @@ func (f *recordingSubscriptionRefresher) UpdateConfigAndRefresh(urls []string, e
 	f.lastEnabled = enabled
 	f.lastInterval = interval
 	return nil
+}
+
+func TestHandleSubscriptionRefreshStartsInBackground(t *testing.T) {
+	refresher := &recordingSubscriptionRefresher{
+		status:         SubscriptionStatus{NodeCount: 7},
+		refreshStarted: make(chan struct{}, 1),
+		refreshBlock:   make(chan struct{}),
+	}
+	server := &Server{}
+	server.SetSubscriptionRefresher(refresher)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/refresh", nil)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		server.handleSubscriptionRefresh(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		close(refresher.refreshBlock)
+		t.Fatal("subscription refresh endpoint blocked waiting for refresh completion")
+	}
+	close(refresher.refreshBlock)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Started bool `json:"started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Started {
+		t.Fatalf("unexpected response started=%v body=%s", resp.Started, rec.Body.String())
+	}
+
+	select {
+	case <-refresher.refreshStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("background refresh was not triggered")
+	}
+	if refresher.refreshCalls != 1 {
+		t.Fatalf("refreshCalls=%d, want 1", refresher.refreshCalls)
+	}
+}
+
+func TestHandleSubscriptionRefreshReportsRuntimeSubscriptionNodeCount(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	mgr.Register(NodeInfo{Tag: "sub-a", Name: "Sub A", Source: "subscription"})
+	mgr.Register(NodeInfo{Tag: "sub-b", Name: "Sub B", Source: "subscription"})
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	srv.SetSubscriptionRefresher(&recordingSubscriptionRefresher{status: SubscriptionStatus{NodeCount: 0}})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/refresh", nil)
+	rec := httptest.NewRecorder()
+	srv.handleSubscriptionRefresh(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NodeCount int `json:"node_count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.NodeCount != 2 {
+		t.Fatalf("node_count=%d, want runtime subscription count 2; body=%s", resp.NodeCount, rec.Body.String())
+	}
 }
 
 func TestHandleSubscriptionConfigSkipsRefreshForUnchangedConfig(t *testing.T) {
