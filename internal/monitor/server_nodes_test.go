@@ -186,6 +186,23 @@ func TestHandleNodesSummaryOnlyReturnsStatsWithoutRows(t *testing.T) {
 	}
 }
 
+func TestHandleDebugRejectsInvalidSummaryOnly(t *testing.T) {
+	server := newTestNodesServer(t)
+	for _, raw := range []string{"maybe", "2", "yes"} {
+		t.Run(raw, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/debug?summary_only="+raw, nil)
+			rr := httptest.NewRecorder()
+
+			server.handleDebug(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rr.Code, rr.Body.String())
+			}
+			assertNodeActionErrorCode(t, rr, "invalid_bool")
+		})
+	}
+}
+
 func TestHandleDebugSummaryOnlyOmitsNodeDetails(t *testing.T) {
 	server := newTestNodesServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/debug?summary_only=true", nil)

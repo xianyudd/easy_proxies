@@ -1422,7 +1422,12 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshots := s.mgr.Snapshot()
 	var totalCalls, totalSuccess int64
-	summaryOnly := strings.EqualFold(r.URL.Query().Get("summary_only"), "true") || r.URL.Query().Get("summary_only") == "1"
+	summaryOnly, ok := parseOptionalBoolParam(r.URL.Query(), "summary_only")
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid summary_only", "code": "invalid_bool"})
+		return
+	}
 	debugNodes := make([]map[string]any, 0, len(snapshots))
 	for _, snap := range snapshots {
 		totalCalls += snap.SuccessCount + int64(snap.FailureCount)
