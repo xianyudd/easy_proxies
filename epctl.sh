@@ -405,9 +405,6 @@ wait_for_service_ready() {
   local deadline=$((SECONDS + START_TIMEOUT)) code available min_available
   local clash_listen clash_host clash_port
   min_available="${EP_READY_MIN_AVAILABLE:-0}"
-  if [ "$EP_PROFILE" = "isolated" ] && [ -z "${EP_READY_MIN_AVAILABLE+x}" ]; then
-    min_available=1
-  fi
   clash_listen="$(cfg_value management clash_api_listen || true)"
   clash_host="$(configured_host "${clash_listen:-127.0.0.1:0}")"
   clash_port="$(configured_listen_port "${clash_listen:-127.0.0.1:0}")"
@@ -416,16 +413,17 @@ wait_for_service_ready() {
     if [ "$code" = "200" ]; then
       if [ -z "$clash_listen" ] || tcp_listening "$clash_host" "$clash_port"; then
         available="$(node_available_count)"
-        if [[ "$available" =~ ^[0-9]+$ ]] && [ "$available" -ge "$min_available" ]; then
-          echo "[OK] service ready: webui=$WEBUI_URL clash=${clash_listen:-n/a} available=$available"
-          return 0
+        if [ "$min_available" != "0" ] && [[ "$available" =~ ^[0-9]+$ ]] && [ "$available" -lt "$min_available" ]; then
+          echo "[WARN] node availability below threshold: available=${available:-unknown} min_available=$min_available"
         fi
+        echo "[OK] service ready: webui=$WEBUI_URL clash=${clash_listen:-n/a} available=${available:-unknown}"
+        return 0
       fi
     fi
     sleep 1
   done
   available="$(node_available_count)"
-  echo "[WARN] service not fully ready after ${START_TIMEOUT}s: webui=$WEBUI_URL clash=${clash_listen:-n/a} available=${available:-unknown} min_available=$min_available"
+  echo "[WARN] service control plane not ready after ${START_TIMEOUT}s: webui=$WEBUI_URL clash=${clash_listen:-n/a} available=${available:-unknown}"
   return 1
 }
 
