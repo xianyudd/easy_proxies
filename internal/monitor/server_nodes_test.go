@@ -169,6 +169,30 @@ func TestHandleDebugSummaryOnlyOmitsNodeDetails(t *testing.T) {
 	}
 }
 
+func TestReadOnlyNodeHandlersRejectMethodsWithStructuredCode(t *testing.T) {
+	server := newTestNodesServer(t)
+	for _, tc := range []struct {
+		name    string
+		path    string
+		handler http.HandlerFunc
+	}{
+		{name: "nodes", path: "/api/nodes", handler: server.handleNodes},
+		{name: "debug", path: "/api/debug", handler: server.handleDebug},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			rr := httptest.NewRecorder()
+
+			tc.handler(rr, req)
+
+			if rr.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("status=%d, want 405 body=%s", rr.Code, rr.Body.String())
+			}
+			assertNodeActionErrorCode(t, rr, "method_not_allowed")
+		})
+	}
+}
+
 func TestManualProbeFailureMarksNodeUnavailable(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
 	if err != nil {

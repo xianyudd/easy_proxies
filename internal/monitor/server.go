@@ -1121,6 +1121,7 @@ func serveEmbeddedFile(w http.ResponseWriter, name string, data []byte) {
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	q := r.URL.Query()
@@ -1372,6 +1373,7 @@ func sortNodeSnapshots(nodes []Snapshot, sortBy string) {
 func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	snapshots := s.mgr.Snapshot()
