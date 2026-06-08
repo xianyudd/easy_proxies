@@ -1919,6 +1919,11 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "invalid region"})
 		return
 	}
+	if !isAllowedMonitorMode(mode) {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in cloudflare check"})
+		return
+	}
 	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckCloudflare, region, mode, source, count, includeUnavailable, retryFailed); startBackground {
 		return
 	}
@@ -1938,11 +1943,6 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	if count > maxCount {
 		count = maxCount
-	}
-	if mode != "multi-port" && mode != "multi_port" && mode != "multi" {
-		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in cloudflare check"})
-		return
 	}
 	var retryTags map[string]bool
 	if retryFailed {
@@ -2094,6 +2094,15 @@ func isAllowedMonitorRegion(region string) bool {
 	return map[string]bool{"all": true, "us": true, "jp": true, "hk": true, "sg": true, "tw": true, "kr": true, "in": true, "ae": true, "ch": true, "au": true, "de": true, "gb": true, "ca": true, "other": true}[region]
 }
 
+func isAllowedMonitorMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "multi-port", "multi_port", "multi":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) handleReputationIP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -2158,6 +2167,11 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
+	if !isAllowedMonitorMode(mode) {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in reputation check"})
+		return
+	}
 	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckReputation, region, mode, source, count, includeUnavailable, retryFailed); startBackground {
 		return
 	}
@@ -2178,12 +2192,6 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	if count > maxCount {
 		count = maxCount
 	}
-	if mode != "multi-port" && mode != "multi_port" && mode != "multi" {
-		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in reputation check"})
-		return
-	}
-
 	var retryTags map[string]bool
 	if retryFailed {
 		retryTags = failedReputationTags(s.repChecker.NodeResults())

@@ -85,12 +85,45 @@ func TestQualityJobAPI(t *testing.T) {
 	}
 }
 
+func TestBackgroundQualityCheckRejectsInvalidMode(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	for _, path := range []string{
+		"/api/cloudflare/check?background=true&mode=single&count=1",
+		"/api/reputation/check?background=true&mode=single&count=1",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("path=%s status=%d, want 400 body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestQualityJobRejectsNonPositiveExplicitCount(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 
 	for _, body := range []string{
 		`{"kind":"cloudflare","region":"all","count":0}`,
 		`{"kind":"cloudflare","region":"all","count":-1}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body=%s status=%d, want 400 response=%s", body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestQualityJobRejectsInvalidExplicitCountType(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	for _, body := range []string{
+		`{"kind":"cloudflare","region":"all","count":"5"}`,
+		`{"kind":"cloudflare","region":"all","count":null}`,
 	} {
 		req := httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
