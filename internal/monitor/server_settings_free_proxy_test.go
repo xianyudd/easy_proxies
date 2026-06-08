@@ -190,6 +190,54 @@ func (f *fakeNodeManager) ReloadCalls() int {
 	return f.reloadCalls
 }
 
+func TestManagementHandlersRejectMethodsWithStructuredCode(t *testing.T) {
+	server := &Server{}
+	cases := []struct {
+		name string
+		req  *http.Request
+		call func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "settings", req: httptest.NewRequest(http.MethodPost, "/api/settings", nil), call: server.handleSettings},
+		{name: "subscription status", req: httptest.NewRequest(http.MethodPost, "/api/subscription/status", nil), call: server.handleSubscriptionStatus},
+		{name: "subscription refresh", req: httptest.NewRequest(http.MethodGet, "/api/subscription/refresh", nil), call: server.handleSubscriptionRefresh},
+		{name: "subscription config", req: httptest.NewRequest(http.MethodPost, "/api/subscription/config", nil), call: server.handleSubscriptionConfig},
+		{name: "reload", req: httptest.NewRequest(http.MethodGet, "/api/reload", nil), call: server.handleReload},
+		{name: "reload status", req: httptest.NewRequest(http.MethodPost, "/api/reload/status", nil), call: server.handleReloadStatus},
+		{name: "free proxy refresh status", req: httptest.NewRequest(http.MethodPost, "/api/free-proxy/refresh/status", nil), call: server.handleFreeProxyRefreshStatus},
+		{name: "free proxy refresh", req: httptest.NewRequest(http.MethodGet, "/api/free-proxy/refresh", nil), call: server.handleFreeProxyRefresh},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+
+			tc.call(rec, tc.req)
+
+			assertSettingsErrorCode(t, rec, http.StatusMethodNotAllowed, "method_not_allowed")
+		})
+	}
+}
+
+func TestConfigNodeHandlersRejectMethodsWithStructuredCode(t *testing.T) {
+	server := &Server{nodeMgr: &fakeNodeManager{}}
+	cases := []struct {
+		name string
+		req  *http.Request
+		call func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "config nodes", req: httptest.NewRequest(http.MethodPatch, "/api/nodes/config", nil), call: server.handleConfigNodes},
+		{name: "config node item", req: httptest.NewRequest(http.MethodPost, "/api/nodes/config/node-a", nil), call: server.handleConfigNodeItem},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+
+			tc.call(rec, tc.req)
+
+			assertSettingsErrorCode(t, rec, http.StatusMethodNotAllowed, "method_not_allowed")
+		})
+	}
+}
+
 func TestHandleSettingsPersistsFreeProxyConfig(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

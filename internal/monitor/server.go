@@ -1499,6 +1499,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleProbeAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 
@@ -1671,6 +1672,7 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 
@@ -1735,6 +1737,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 
@@ -2360,6 +2363,7 @@ func androidExtractorPort(cfg config.AndroidProxyConfig, region string) uint16 {
 func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 
@@ -3322,6 +3326,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 	}
 }
 
@@ -3382,6 +3387,7 @@ func hasJSONKey(raw map[string]json.RawMessage, key string) bool {
 func (s *Server) handleSubscriptionStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 
@@ -3430,6 +3436,7 @@ func (s *Server) runtimeSubscriptionNodeCount() int {
 func (s *Server) handleSubscriptionRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 
@@ -3603,6 +3610,7 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 	}
 }
 
@@ -3671,6 +3679,7 @@ func (s *Server) handleConfigNodes(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"node": node, "message": "节点已添加，请点击重载使配置生效", "need_reload": true})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 	}
 }
 
@@ -3710,6 +3719,7 @@ func (s *Server) handleConfigNodeItem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"message": "节点已删除，请点击重载使配置生效", "need_reload": true})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 	}
 }
 
@@ -3717,6 +3727,7 @@ func (s *Server) handleConfigNodeItem(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	if !s.ensureNodeManager(w) {
@@ -3738,6 +3749,7 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReloadStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	writeJSON(w, s.currentReloadStatus())
@@ -3746,6 +3758,7 @@ func (s *Server) handleReloadStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleFreeProxyRefreshStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	writeJSON(w, s.currentFreeProxyRefreshStatus())
@@ -3754,6 +3767,7 @@ func (s *Server) handleFreeProxyRefreshStatus(w http.ResponseWriter, r *http.Req
 func (s *Server) handleFreeProxyRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	status, started, err := s.startFreeProxyRefresh("manual")
@@ -3840,6 +3854,7 @@ func (s *Server) streamUnavailableTraffic(r *http.Request, w http.ResponseWriter
 func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 
@@ -3910,6 +3925,7 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
 	content := SharedLogBuffer.Content()

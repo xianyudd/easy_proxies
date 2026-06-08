@@ -97,6 +97,33 @@ func TestSSEHandlersReturnStructuredErrorWithoutFlusher(t *testing.T) {
 	}
 }
 
+func TestHandleTrafficRejectsMethodsWithStructuredCode(t *testing.T) {
+	server := &Server{}
+	req := httptest.NewRequest(http.MethodPost, "/api/traffic", nil)
+	rec := httptest.NewRecorder()
+
+	server.handleTraffic(rec, req)
+
+	assertTrafficErrorCode(t, rec, http.StatusMethodNotAllowed, "method_not_allowed")
+}
+
+func assertTrafficErrorCode(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
+	if rec.Code != status {
+		t.Fatalf("status=%d, want %d body=%s", rec.Code, status, rec.Body.String())
+	}
+	var body struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == "" || body.Code != code {
+		t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
+	}
+}
+
 func TestHandleTrafficUnavailableFlushesInitialSSE(t *testing.T) {
 	server := &Server{cfgSrc: &config.Config{Management: config.ManagementConfig{ClashAPIListen: "127.0.0.1:1"}}}
 	line := readFirstSSEData(t, server.handleTraffic)
