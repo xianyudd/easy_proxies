@@ -69,6 +69,7 @@ Isolated profile aliases:
   isolated:config                       Write /tmp/easy_proxies_isolated.yaml
   isolated:build                        Build /tmp/easy_proxies_isolated
   isolated:start                        Start isolated instance on WebUI :19093
+  isolated:run                          Run isolated instance in foreground (sandbox/debug)
   isolated:stop                         Stop isolated instance only
   isolated:restart                      Rebuild and restart isolated instance
   isolated:status                       Show isolated status
@@ -624,6 +625,24 @@ ensure_isolated_config_defaults() {
   fi
 }
 
+
+run_service_foreground() {
+  if [ ! -f "$CONFIG_FILE" ] && [ "$EP_PROFILE" = "isolated" ]; then
+    write_isolated_config
+  fi
+  ensure_isolated_config_defaults
+  if [ ! -x "$BIN" ]; then
+    echo "[ERROR] binary not executable: $BIN"
+    echo "Build first: ./epctl.sh service:build"
+    exit 1
+  fi
+  if [ "${EP_KEEP_PROXY_ENV:-0}" != "1" ]; then
+    clean_proxy_env
+  fi
+  echo "[INFO] running foreground profile=$EP_PROFILE bin=$BIN config=$CONFIG_FILE"
+  exec "$BIN" --config "$CONFIG_FILE"
+}
+
 start_service() {
   if is_running; then
     sync_pid_file
@@ -866,6 +885,7 @@ case "$cmd" in
   isolated:config|service:isolated:config) EP_PROFILE=isolated; write_isolated_config ;;
   isolated:build|service:isolated:build) EP_PROFILE=isolated; build_service ;;
   isolated:start|service:isolated:start) start_service ;;
+  isolated:run|service:isolated:run) EP_PROFILE=isolated; run_service_foreground ;;
   isolated:stop|service:isolated:stop) stop_service ;;
   isolated:restart|service:isolated:restart) build_service; stop_service; start_service ;;
   isolated:status|service:isolated:status) status_service ;;

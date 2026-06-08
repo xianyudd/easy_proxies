@@ -28,7 +28,16 @@ def test_status_uses_authenticated_optional_api_and_null_safe_jq():
     assert 'WebUI API summary unavailable' in text
 
 
+def test_isolated_foreground_run_command_exists_for_sandbox_runtime_verification():
+    text = read_source()
+    assert 'isolated:run                          Run isolated instance in foreground' in text
+    assert 'run_service_foreground()' in text
+    assert 'exec "$BIN" --config "$CONFIG_FILE"' in text
+    assert 'isolated:run|service:isolated:run) EP_PROFILE=isolated; run_service_foreground ;;' in text
+
+
 if __name__ == "__main__":
     test_isolated_startup_does_not_require_available_nodes_by_default()
     test_readiness_warning_reports_node_availability_separately()
     test_status_uses_authenticated_optional_api_and_null_safe_jq()
+    test_isolated_foreground_run_command_exists_for_sandbox_runtime_verification()
