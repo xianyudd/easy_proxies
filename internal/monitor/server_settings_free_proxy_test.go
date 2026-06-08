@@ -191,6 +191,50 @@ free_proxy_filter:
 	}
 }
 
+func TestHandleSettingsRejectsInvalidFreeProxySourceURLBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_sources:
+  - name: old
+    url: https://example.test/proxies.txt
+    enabled: true
+free_proxy_max_nodes: 10
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	body := []byte(`{
+		"free_proxy_sources": [
+			{"name":"bad","url":"not-a-url","default_scheme":"http","format":"text","enabled":true}
+		],
+		"free_proxy_max_nodes": 123
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body = %s", rec.Code, rec.Body.String())
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.FreeProxyMaxNodes != 10 || len(reloaded.FreeProxySources) != 1 || reloaded.FreeProxySources[0].URL != "https://example.test/proxies.txt" {
+		t.Fatalf("invalid free proxy source should not be persisted: max=%d sources=%#v", reloaded.FreeProxyMaxNodes, reloaded.FreeProxySources)
+	}
+}
+
 func TestHandleSettingsUpdatesCloudflareRuntimeConfig(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

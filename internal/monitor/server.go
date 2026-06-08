@@ -175,7 +175,7 @@ type freeProxyCacheRequest struct {
 	MaxAge         string `json:"max_age"`
 }
 
-func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) []nodesource.SourceConfig {
+func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) ([]nodesource.SourceConfig, error) {
 	out := make([]nodesource.SourceConfig, 0, len(in))
 	for _, item := range in {
 		cfg := nodesource.SourceConfig{
@@ -194,9 +194,14 @@ func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) []nodesource.S
 		if cfg.Name == "" && cfg.URL == "" && cfg.File == "" {
 			continue
 		}
+		if cfg.URL != "" {
+			if err := validateHTTPURL("免费代理源地址", cfg.URL); err != nil {
+				return nil, err
+			}
+		}
 		out = append(out, cfg)
 	}
-	return out
+	return out, nil
 }
 
 func freeProxyFilterFromRequest(req *freeProxyFilterRequest, fallback nodesource.FilterConfig) nodesource.FilterConfig {
@@ -3101,7 +3106,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if req.FreeProxySources != nil {
-			s.cfgSrc.FreeProxySources = sourceConfigsFromRequest(req.FreeProxySources)
+			sources, err := sourceConfigsFromRequest(req.FreeProxySources)
+			if err != nil {
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_free_proxy_source"})
+				return
+			}
+			s.cfgSrc.FreeProxySources = sources
 		}
 		if req.FreeProxyMaxNodes != nil {
 			s.cfgSrc.FreeProxyMaxNodes = *req.FreeProxyMaxNodes
@@ -3504,15 +3516,19 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 }
 
 func validateSubscriptionURL(raw string) error {
+	return validateHTTPURL("订阅地址", raw)
+}
+
+func validateHTTPURL(label, raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("无效的订阅地址: %s", raw)
+		return fmt.Errorf("无效的%s: %s", label, raw)
 	}
 	switch strings.ToLower(parsed.Scheme) {
 	case "http", "https":
 		return nil
 	default:
-		return fmt.Errorf("订阅地址只支持 http/https: %s", raw)
+		return fmt.Errorf("%s只支持 http/https: %s", label, raw)
 	}
 }
 
