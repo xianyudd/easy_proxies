@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Checkbox, Input, Select } from 'antd'
 import { AlertCircle, Clock3, Database, Plus, Save, Trash2, Wifi } from 'lucide-react'
 import { getFreeProxyRefreshStatus, getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig, startFreeProxyRefresh } from '../api/settings'
@@ -64,6 +64,7 @@ function freeProxyRefreshDescription(state: 'idle' | 'refreshing' | 'failed', st
 }
 
 export function SettingsPage() {
+  const queryClient = useQueryClient()
   const settings = useQuery({ queryKey:['settings'], queryFn:getSettings })
   const subStatus = useQuery({ queryKey:['sub-status'], queryFn:getSubscriptionStatus })
   const cfCache = useQuery({ queryKey:['cf-cache'], queryFn:getCloudflareCache })
@@ -77,6 +78,12 @@ export function SettingsPage() {
   const reloadStatus = useQuery({ queryKey:['reload-status'], queryFn:getReloadStatus, enabled: reloadState === 'reloading', refetchInterval: reloadState === 'reloading' ? 800 : false })
   const freeProxyRefreshStatus = useQuery({ queryKey:['free-proxy-refresh-status'], queryFn:getFreeProxyRefreshStatus, refetchInterval: freeProxyRefreshState === 'refreshing' ? 800 : false })
   const toast = useToast(s=>s.show)
+  const refreshRuntimeNodeCaches = () => {
+    void queryClient.invalidateQueries({ queryKey:['nodes-page'] })
+    void queryClient.invalidateQueries({ queryKey:['nodes-summary'] })
+    void queryClient.invalidateQueries({ queryKey:['nodes'] })
+    void queryClient.invalidateQueries({ queryKey:['status-nodes-all'] })
+  }
   useEffect(()=>{
     if (!settings.data) return
     if (!settingsDirty) setDraft(settings.data)
@@ -99,6 +106,7 @@ export function SettingsPage() {
       toast(duration > 0 ? `设置已在后台生效（${duration}ms）` : '设置已在后台生效', 'ok')
       setReloadState('idle')
       void settings.refetch()
+      refreshRuntimeNodeCaches()
       void subStatus.refetch()
     } else if (state === 'failed') {
       setReloadState('failed')
@@ -135,6 +143,7 @@ export function SettingsPage() {
       setFreeProxyRefreshState('idle')
       setReloadState('idle')
       void settings.refetch()
+      refreshRuntimeNodeCaches()
       void freeProxyRefreshStatus.refetch()
     } else if (state === 'failed') {
       setFreeProxyRefreshState('failed')
