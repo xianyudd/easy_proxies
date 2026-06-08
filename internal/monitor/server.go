@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	mathrand "math/rand"
@@ -1477,8 +1478,7 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 			Duration string `json:"duration"` // e.g. "1h", "24h", "30m"
 		}
 		if r.Body != nil && r.Body != http.NoBody {
-			decoder := json.NewDecoder(r.Body)
-			if err := decoder.Decode(&req); err != nil {
+			if err := decodeSingleJSONBody(r, &req); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 				return
@@ -1646,6 +1646,21 @@ func writeJSON(w http.ResponseWriter, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+func decodeSingleJSONBody(r *http.Request, v any) error {
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("request body must contain a single JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
 // withAuth 认证中间件，如果配置了密码则需要验证
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1696,7 +1711,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeSingleJSONBody(r, &req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 		return
@@ -3374,8 +3389,7 @@ func requestScheme(r *http.Request) string {
 
 func readJSONBodyMap(r *http.Request, v any) (map[string]json.RawMessage, error) {
 	var raw map[string]json.RawMessage
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&raw); err != nil {
+	if err := decodeSingleJSONBody(r, &raw); err != nil {
 		return nil, err
 	}
 	data, err := json.Marshal(raw)
@@ -3512,7 +3526,7 @@ func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request
 			Enabled       bool     `json:"enabled"`
 			Interval      string   `json:"interval"` // e.g. "1h", "30m"
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := decodeSingleJSONBody(r, &req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 			return
@@ -3676,7 +3690,7 @@ func (s *Server) handleConfigNodes(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"nodes": nodes})
 	case http.MethodPost:
 		var payload nodePayload
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := decodeSingleJSONBody(r, &payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 			return
@@ -3710,7 +3724,7 @@ func (s *Server) handleConfigNodeItem(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		var payload nodePayload
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := decodeSingleJSONBody(r, &payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 			return

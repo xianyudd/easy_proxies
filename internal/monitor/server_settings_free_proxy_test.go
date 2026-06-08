@@ -66,6 +66,13 @@ func TestHandleSettingsReturnsStructuredErrorCodes(t *testing.T) {
 			code:   "invalid_request",
 		},
 		{
+			name:   "trailing json",
+			server: &Server{},
+			body:   `{"external_ip":"1.2.3.4"}{"extra":true}`,
+			status: http.StatusBadRequest,
+			code:   "invalid_request",
+		},
+		{
 			name:   "missing config store",
 			server: &Server{},
 			body:   `{"external_ip":"1.2.3.4"}`,
@@ -234,6 +241,27 @@ func TestConfigNodeHandlersRejectMethodsWithStructuredCode(t *testing.T) {
 			tc.call(rec, tc.req)
 
 			assertSettingsErrorCode(t, rec, http.StatusMethodNotAllowed, "method_not_allowed")
+		})
+	}
+}
+
+func TestConfigNodeHandlersRejectTrailingJSON(t *testing.T) {
+	server := &Server{nodeMgr: &fakeNodeManager{}}
+	cases := []struct {
+		name string
+		req  *http.Request
+		call func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "create", req: httptest.NewRequest(http.MethodPost, "/api/nodes/config", bytes.NewReader([]byte(`{"name":"node-a","uri":"http://127.0.0.1:1"}{"extra":true}`))), call: server.handleConfigNodes},
+		{name: "update", req: httptest.NewRequest(http.MethodPut, "/api/nodes/config/node-a", bytes.NewReader([]byte(`{"name":"node-a","uri":"http://127.0.0.1:1"}{"extra":true}`))), call: server.handleConfigNodeItem},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+
+			tc.call(rec, tc.req)
+
+			assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 		})
 	}
 }
@@ -2040,6 +2068,16 @@ func TestHandleReloadStatusReportsAsyncFailure(t *testing.T) {
 	if resp.State != "failed" || resp.Error != "boom" {
 		t.Fatalf("unexpected status: %#v", resp)
 	}
+}
+
+func TestSubscriptionConfigRejectsTrailingJSON(t *testing.T) {
+	server := &Server{}
+	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader([]byte(`{"subscriptions":[],"enabled":false,"interval":"10m"}{"extra":true}`)))
+	rec := httptest.NewRecorder()
+
+	server.handleSubscriptionConfig(rec, req)
+
+	assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 }
 
 func TestHandleSettingsHotRebindsManagementListen(t *testing.T) {

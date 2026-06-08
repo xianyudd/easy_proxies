@@ -315,6 +315,31 @@ func TestBlacklistRejectsInvalidBodyWithoutMutatingNode(t *testing.T) {
 	}
 }
 
+func TestNodeActionBlacklistRejectsTrailingJSONWithoutMutatingNode(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := mgr.Register(NodeInfo{Tag: "node-a", Name: "Node A", URI: "http://127.0.0.1:1", Region: "us", Source: "free_proxy", Port: 13022})
+	h.MarkInitialCheckDone(true)
+	h.MarkAvailable(true)
+	server := &Server{mgr: mgr}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/nodes/node-a/blacklist", strings.NewReader(`{"duration":"1h"}{"extra":true}`))
+	rr := httptest.NewRecorder()
+
+	server.handleNodeAction(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 body=%s", rr.Code, rr.Body.String())
+	}
+	assertNodeActionErrorCode(t, rr, "invalid_request")
+	snap := mgr.Snapshot()[0]
+	if snap.Blacklisted {
+		t.Fatalf("trailing JSON blacklist request should not mutate node, got %#v", snap)
+	}
+}
+
 func TestBlacklistEmptyBodyUsesDefaultDuration(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
 	if err != nil {
