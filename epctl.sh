@@ -33,7 +33,11 @@ else
 fi
 
 WEBUI_TOKEN="${WEBUI_TOKEN:-}"
-WEBUI_PASSWORD="${WEBUI_PASSWORD:-}"
+if [ "$EP_PROFILE" = "isolated" ]; then
+  WEBUI_PASSWORD="${WEBUI_PASSWORD:-runtime-partial-secret}"
+else
+  WEBUI_PASSWORD="${WEBUI_PASSWORD:-}"
+fi
 
 ADB_SERIAL="${ADB_SERIAL:-192.168.1.118:5555}"
 TEST_URL="${TEST_URL:-http://cp.cloudflare.com/generate_204}"
@@ -474,6 +478,8 @@ build_service() {
 write_isolated_config() {
   local source_config="${SOURCE_CONFIG:-$ROOT_DIR/config.yaml}"
   local cache_dir="/tmp/.cache/easy-proxies-isolated"
+  local management_password_json
+  management_password_json="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$WEBUI_PASSWORD")"
   mkdir -p "$cache_dir"
   cat >"$CONFIG_FILE" <<EOF
 mode: hybrid
@@ -500,7 +506,7 @@ management:
   listen: 127.0.0.1:19093
   clash_api_listen: 127.0.0.1:19094
   probe_target: http://cp.cloudflare.com/generate_204
-  password: ""
+  password: $management_password_json
 subscription_refresh:
   enabled: true
   interval: 1h0m0s

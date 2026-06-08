@@ -46,6 +46,14 @@ def test_status_prefers_total_filtered_for_all_availability_visible_count():
     assert 'visible_nodes:(.total_filtered // .visible_nodes // .total_nodes // ((.nodes // [])|length))' in text
 
 
+def test_isolated_profile_uses_default_webui_password_consistently():
+    text = read_source()
+    assert 'WEBUI_PASSWORD="${WEBUI_PASSWORD:-runtime-partial-secret}"' in text
+    assert 'WEBUI_PASSWORD="${WEBUI_PASSWORD:-}"' in text
+    assert "management_password_json=\"$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' \"$WEBUI_PASSWORD\")\"" in text
+    assert '  password: $management_password_json' in text
+
+
 if __name__ == "__main__":
     test_isolated_startup_does_not_require_available_nodes_by_default()
     test_readiness_warning_reports_node_availability_separately()
@@ -53,3 +61,4 @@ if __name__ == "__main__":
     test_isolated_foreground_run_command_exists_for_sandbox_runtime_verification()
     test_status_fetches_summary_only_all_nodes_for_full_port_range_summary()
     test_status_prefers_total_filtered_for_all_availability_visible_count()
+    test_isolated_profile_uses_default_webui_password_consistently()
