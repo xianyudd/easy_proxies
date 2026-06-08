@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -53,9 +54,7 @@ func TestReputationHTTPHandlers(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/reputation/check?region=bad", nil)
 	rec = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("invalid region status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	assertMonitorAPIErrorCode(t, rec, http.StatusBadRequest, "invalid_region")
 }
 
 func TestReputationCheckRequiresBackgroundForLargeSyncCount(t *testing.T) {
@@ -76,6 +75,35 @@ func TestReputationCheckRequiresBackgroundForLargeSyncCount(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "background") {
 		t.Fatalf("large sync count should explain background mode, body=%s", rec.Body.String())
+	}
+}
+
+func TestReputationCheckReturnsStructuredErrorCodes(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil || srv.srv == nil {
+		t.Fatal("expected server")
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+		code string
+	}{
+		{name: "invalid count", path: "/api/reputation/check?region=all&mode=multi-port&count=bad", code: "invalid_count"},
+		{name: "invalid region", path: "/api/reputation/check?region=bad&mode=multi-port&count=1", code: "invalid_region"},
+		{name: "invalid mode", path: "/api/reputation/check?region=all&mode=single&count=1", code: "invalid_mode"},
+		{name: "missing ip", path: "/api/reputation/ip", code: "missing_ip"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+			srv.srv.Handler.ServeHTTP(rec, req)
+			assertMonitorAPIErrorCode(t, rec, http.StatusBadRequest, tc.code)
+		})
 	}
 }
 
@@ -112,16 +140,12 @@ func TestCloudflareHTTPHandlers(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/cloudflare/check?region=bad", nil)
 	rec = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("invalid region status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	assertMonitorAPIErrorCode(t, rec, http.StatusBadRequest, "invalid_region")
 
 	req = httptest.NewRequest(http.MethodGet, "/api/cloudflare/check?region=jp&count=bad", nil)
 	rec = httptest.NewRecorder()
 	srv.srv.Handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("invalid count status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	assertMonitorAPIErrorCode(t, rec, http.StatusBadRequest, "invalid_count")
 }
 
 func TestCloudflareCheckRequiresBackgroundForLargeSyncCount(t *testing.T) {
@@ -145,6 +169,34 @@ func TestCloudflareCheckRequiresBackgroundForLargeSyncCount(t *testing.T) {
 	}
 }
 
+func TestCloudflareCheckReturnsStructuredErrorCodes(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil || srv.srv == nil {
+		t.Fatal("expected server")
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+		code string
+	}{
+		{name: "invalid count", path: "/api/cloudflare/check?region=all&mode=multi-port&count=bad", code: "invalid_count"},
+		{name: "invalid region", path: "/api/cloudflare/check?region=bad&mode=multi-port&count=1", code: "invalid_region"},
+		{name: "invalid mode", path: "/api/cloudflare/check?region=all&mode=single&count=1", code: "invalid_mode"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+			srv.srv.Handler.ServeHTTP(rec, req)
+			assertMonitorAPIErrorCode(t, rec, http.StatusBadRequest, tc.code)
+		})
+	}
+}
+
 func TestCloudflareCheckerUsesQualityConfig(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true})
 	if err != nil {
@@ -156,5 +208,22 @@ func TestCloudflareCheckerUsesQualityConfig(t *testing.T) {
 	timeout, concurrency := srv.cfChecker.Settings()
 	if timeout != 3500*time.Millisecond || concurrency != 24 {
 		t.Fatalf("cloudflare checker settings = %s/%d, want 3.5s/24", timeout, concurrency)
+	}
+}
+
+func assertMonitorAPIErrorCode(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
+	if rec.Code != status {
+		t.Fatalf("status=%d, want %d body=%s", rec.Code, status, rec.Body.String())
+	}
+	var body struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == "" || body.Code != code {
+		t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
 	}
 }

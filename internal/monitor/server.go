@@ -1907,7 +1907,7 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "invalid count"})
+			writeJSON(w, map[string]any{"error": "invalid count", "code": "invalid_count"})
 			return
 		}
 		count = parsed
@@ -1916,12 +1916,12 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 	retryFailed := r.URL.Query().Get("retry_failed") == "1" || strings.EqualFold(r.URL.Query().Get("retry_failed"), "true")
 	if !isAllowedMonitorRegion(region) {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "invalid region"})
+		writeJSON(w, map[string]any{"error": "invalid region", "code": "invalid_region"})
 		return
 	}
 	if !isAllowedMonitorMode(mode) {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in cloudflare check"})
+		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in cloudflare check", "code": "invalid_mode"})
 		return
 	}
 	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckCloudflare, region, mode, source, count, includeUnavailable, retryFailed); startBackground {
@@ -1964,7 +1964,7 @@ func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
 	targets, err := s.buildCloudflareTargets(region, source, count, includeUnavailable, retryTags)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": err.Error()})
+		writeJSON(w, map[string]any{"error": err.Error(), "code": "no_targets"})
 		return
 	}
 	if retryFailed {
@@ -2111,13 +2111,13 @@ func (s *Server) handleReputationIP(w http.ResponseWriter, r *http.Request) {
 	ip := strings.TrimSpace(r.URL.Query().Get("ip"))
 	if ip == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "missing ip"})
+		writeJSON(w, map[string]any{"error": "missing ip", "code": "missing_ip"})
 		return
 	}
 	result, err := s.repChecker.LookupIP(r.Context(), ip)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": err.Error()})
+		writeJSON(w, map[string]any{"error": err.Error(), "code": "lookup_failed"})
 		return
 	}
 	writeJSON(w, map[string]any{"data": result})
@@ -2155,7 +2155,7 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "invalid count"})
+			writeJSON(w, map[string]any{"error": "invalid count", "code": "invalid_count"})
 			return
 		}
 		count = parsed
@@ -2163,13 +2163,13 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	retryFailed := r.URL.Query().Get("retry_failed") == "1" || strings.EqualFold(r.URL.Query().Get("retry_failed"), "true")
 	if !isAllowedMonitorRegion(region) {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "invalid region"})
+		writeJSON(w, map[string]any{"error": "invalid region", "code": "invalid_region"})
 		return
 	}
 	includeUnavailable := r.URL.Query().Get("include_unavailable") == "1" || strings.EqualFold(r.URL.Query().Get("include_unavailable"), "true") || strings.EqualFold(r.URL.Query().Get("scope"), "all")
 	if !isAllowedMonitorMode(mode) {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in reputation check"})
+		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in reputation check", "code": "invalid_mode"})
 		return
 	}
 	if startBackground := s.startBackgroundQualityCheck(w, r, quality.CheckReputation, region, mode, source, count, includeUnavailable, retryFailed); startBackground {
@@ -2213,7 +2213,7 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	targets, err := s.buildReputationTargets(region, source, count, includeUnavailable, retryTags)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": err.Error()})
+		writeJSON(w, map[string]any{"error": err.Error(), "code": "no_targets"})
 		return
 	}
 	results := s.repChecker.CheckProxies(r.Context(), targets, reputationExpectedCountry(region))
