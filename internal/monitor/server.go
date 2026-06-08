@@ -3645,7 +3645,7 @@ func (s *Server) handleConfigNodes(w http.ResponseWriter, r *http.Request) {
 		var payload nodePayload
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "请求格式错误"})
+			writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 			return
 		}
 		node, err := s.nodeMgr.CreateNode(r.Context(), payload.toConfig())
@@ -3669,7 +3669,7 @@ func (s *Server) handleConfigNodeItem(w http.ResponseWriter, r *http.Request) {
 	nodeName, err := url.PathUnescape(namePart)
 	if err != nil || nodeName == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "节点名称无效"})
+		writeJSON(w, map[string]any{"error": "节点名称无效", "code": "invalid_node_name"})
 		return
 	}
 
@@ -3678,7 +3678,7 @@ func (s *Server) handleConfigNodeItem(w http.ResponseWriter, r *http.Request) {
 		var payload nodePayload
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "请求格式错误"})
+			writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 			return
 		}
 		node, err := s.nodeMgr.UpdateNode(r.Context(), nodeName, payload.toConfig())
@@ -3764,7 +3764,7 @@ func startedText(started bool, startedMessage, runningMessage string) string {
 func (s *Server) ensureNodeManager(w http.ResponseWriter) bool {
 	if s.nodeMgr == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		writeJSON(w, map[string]any{"error": "节点管理未启用"})
+		writeJSON(w, map[string]any{"error": "节点管理未启用", "code": "node_manager_disabled"})
 		return false
 	}
 	return true

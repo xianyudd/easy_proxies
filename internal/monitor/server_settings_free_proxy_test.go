@@ -1815,6 +1815,62 @@ func TestHandleConfigNodesReturnsStructuredErrorCodes(t *testing.T) {
 	}
 }
 
+func TestHandleConfigNodeHandlersReturnStructuredRequestErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		server  *Server
+		handler func(*Server, *httptest.ResponseRecorder)
+		status  int
+		code    string
+	}{
+		{
+			name:   "manager disabled",
+			server: &Server{},
+			handler: func(s *Server, rec *httptest.ResponseRecorder) {
+				s.handleConfigNodes(rec, httptest.NewRequest(http.MethodGet, "/api/nodes/config", nil))
+			},
+			status: http.StatusServiceUnavailable,
+			code:   "node_manager_disabled",
+		},
+		{
+			name:   "create bad json",
+			server: &Server{nodeMgr: &fakeNodeManager{}},
+			handler: func(s *Server, rec *httptest.ResponseRecorder) {
+				s.handleConfigNodes(rec, httptest.NewRequest(http.MethodPost, "/api/nodes/config", bytes.NewReader([]byte(`{`))))
+			},
+			status: http.StatusBadRequest,
+			code:   "invalid_request",
+		},
+		{
+			name:   "invalid node name",
+			server: &Server{nodeMgr: &fakeNodeManager{}},
+			handler: func(s *Server, rec *httptest.ResponseRecorder) {
+				s.handleConfigNodeItem(rec, httptest.NewRequest(http.MethodPut, "/api/nodes/config/", nil))
+			},
+			status: http.StatusBadRequest,
+			code:   "invalid_node_name",
+		},
+		{
+			name:   "update bad json",
+			server: &Server{nodeMgr: &fakeNodeManager{}},
+			handler: func(s *Server, rec *httptest.ResponseRecorder) {
+				s.handleConfigNodeItem(rec, httptest.NewRequest(http.MethodPut, "/api/nodes/config/node-a", bytes.NewReader([]byte(`{`))))
+			},
+			status: http.StatusBadRequest,
+			code:   "invalid_request",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+
+			tc.handler(tc.server, rec)
+
+			assertSettingsErrorCode(t, rec, tc.status, tc.code)
+		})
+	}
+}
+
 func TestHandleReloadStartsAsyncReload(t *testing.T) {
 	fake := &fakeNodeManager{delay: 200 * time.Millisecond, done: make(chan struct{})}
 	server := &Server{nodeMgr: fake, reloadState: "idle"}
