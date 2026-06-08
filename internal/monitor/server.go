@@ -3502,6 +3502,20 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		oldManagementListen = s.cfg.Listen
+		newManagementListen := ""
+		if req.Management != nil {
+			newManagementListen = strings.TrimSpace(req.Management.Listen)
+		}
+		if oldManagementListen != "" && newManagementListen != "" && newManagementListen != strings.TrimSpace(oldManagementListen) {
+			ln, err := net.Listen("tcp", newManagementListen)
+			if err != nil {
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("管理端口热切换失败: listen %s: %v", newManagementListen, err), "code": "management_rebind_failed"})
+				return
+			}
+			_ = ln.Close()
+		}
 		oldCoreSignature := coreReloadSignature(s.cfgSrc)
 		oldFreeProxySignature := freeProxyRefreshSignature(s.cfgSrc)
 
@@ -3615,7 +3629,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfg.ProxyUsername = s.cfgSrc.Listener.Username
 			s.cfg.ProxyPassword = s.cfgSrc.Listener.Password
 		}
-		newManagementListen := s.cfgSrc.Management.Listen
+		newManagementListen = s.cfgSrc.Management.Listen
 		if err := s.cfgSrc.SaveSettings(); err != nil {
 			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)

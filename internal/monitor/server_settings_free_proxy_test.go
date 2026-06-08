@@ -2668,6 +2668,47 @@ func TestSubscriptionConfigRejectsTrailingJSON(t *testing.T) {
 	assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 }
 
+func TestHandleSettingsRejectsInvalidManagementListenBeforePersisting(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil {
+		t.Fatal("server is nil")
+	}
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("nodes:\n  - name: base\n    uri: http://127.0.0.1:18080\nmanagement:\n  listen: 127.0.0.1:0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetConfig(cfg)
+	if err := srv.startHTTPServer("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	oldListen := srv.cfg.Listen
+	t.Cleanup(func() { srv.Shutdown(context.Background()) })
+
+	body := []byte(`{"management":{"listen":"127.0.0.1:-1","password":""},"external_ip":"2.2.2.2"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	req.Host = oldListen
+	rec := httptest.NewRecorder()
+	srv.handleSettings(rec, req)
+
+	assertSettingsErrorCode(t, rec, http.StatusBadRequest, "management_rebind_failed")
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Management.Listen == "127.0.0.1:-1" || reloaded.ExternalIP == "2.2.2.2" {
+		t.Fatalf("failed management rebind should not persist settings: listen=%q external_ip=%q", reloaded.Management.Listen, reloaded.ExternalIP)
+	}
+}
+
 func TestHandleSettingsHotRebindsManagementListen(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
 	if err != nil {
