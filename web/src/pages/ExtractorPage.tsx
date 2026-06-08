@@ -31,11 +31,15 @@ export function ExtractorPage() {
   }
   const runAndCopy = async () => {
     if (mutation.isPending) return
-    const data = await mutation.mutateAsync(params)
-    setResult(data)
-    const out = entriesToText(data.entries || [])
-    if (out) await copyToClipboard(out, toast, '已生成并复制')
-    else toast('已生成，但没有可复制的内容', 'info')
+    try {
+      const data = await mutation.mutateAsync(params)
+      setResult(data)
+      const out = entriesToText(data.entries || [])
+      if (out) await copyToClipboard(out, toast, '已生成并复制')
+      else toast('已生成，但没有可复制的内容', 'info')
+    } catch (e) {
+      toast(e instanceof Error ? `生成并复制失败：${e.message}` : '生成并复制失败', 'error')
+    }
   }
   const text = entriesToText(entries)
   const copyAll = async () => { if (!text) return toast('请先生成代理', 'error'); await copyToClipboard(text, toast, '已复制全部') }
