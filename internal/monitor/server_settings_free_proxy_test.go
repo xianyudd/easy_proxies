@@ -918,6 +918,49 @@ quality_check:
 	}
 }
 
+func TestHandleSettingsPreservesQualityCheckFieldsWhenPartiallyUpdated(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+quality_check:
+  enabled: true
+  interval: 2h
+  region: us
+  count: 321
+  include_unavailable: true
+  retry_failed: true
+  cloudflare_timeout: 6s
+  cloudflare_concurrency: 32
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+
+	body := []byte(`{"quality_check":{"enabled":false}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := reloaded.QualityCheck
+	if q.Enabled || q.Interval != 2*time.Hour || q.Region != "us" || q.Count != 321 || !q.IncludeUnavailable || !q.RetryFailed || q.CloudflareTimeout != 6*time.Second || q.CloudflareConcurrency != 32 {
+		t.Fatalf("quality_check partial update corrupted fields: %#v", q)
+	}
+}
+
 func TestHandleSettingsRejectsInvalidQualityRegionBeforePersisting(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")

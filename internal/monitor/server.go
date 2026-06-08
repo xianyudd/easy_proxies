@@ -3326,6 +3326,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasLogMaxBackups := hasNestedJSONKey(body, "log", "max_backups")
 		hasLogMaxAge := hasNestedJSONKey(body, "log", "max_age")
 		hasLogCompress := hasNestedJSONKey(body, "log", "compress")
+		hasQualityEnabled := hasNestedJSONKey(body, "quality_check", "enabled")
+		hasQualityIntervalKey := hasNestedJSONKey(body, "quality_check", "interval")
+		hasQualityRegion := hasNestedJSONKey(body, "quality_check", "region")
+		hasQualityCount := hasNestedJSONKey(body, "quality_check", "count")
+		hasQualityIncludeUnavailable := hasNestedJSONKey(body, "quality_check", "include_unavailable")
+		hasQualityRetryFailed := hasNestedJSONKey(body, "quality_check", "retry_failed")
+		hasQualityCloudflareTimeout := hasNestedJSONKey(body, "quality_check", "cloudflare_timeout")
+		hasQualityCloudflareConcurrency := hasNestedJSONKey(body, "quality_check", "cloudflare_concurrency")
 
 		logCfg := config.LogConfig{}
 		hasLogCfg := false
@@ -3475,27 +3483,29 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		var cloudflareTimeout time.Duration
 		hasCloudflareTimeout := false
 		if req.QualityCheck != nil {
-			qualityRegion := strings.ToLower(strings.TrimSpace(req.QualityCheck.Region))
-			if qualityRegion == "" {
-				qualityRegion = config.DefaultQualityCheckRegion
+			if hasQualityRegion {
+				qualityRegion := strings.ToLower(strings.TrimSpace(req.QualityCheck.Region))
+				if qualityRegion == "" {
+					qualityRegion = config.DefaultQualityCheckRegion
+				}
+				if !isAllowedMonitorRegion(qualityRegion) {
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": "无效的质量检测区域", "code": "invalid_quality_region"})
+					return
+				}
+				req.QualityCheck.Region = qualityRegion
 			}
-			if !isAllowedMonitorRegion(qualityRegion) {
-				w.WriteHeader(http.StatusBadRequest)
-				writeJSON(w, map[string]any{"error": "无效的质量检测区域", "code": "invalid_quality_region"})
-				return
-			}
-			req.QualityCheck.Region = qualityRegion
-			if req.QualityCheck.Count <= 0 {
+			if hasQualityCount && req.QualityCheck.Count <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的质量检测数量", "code": "invalid_quality_count"})
 				return
 			}
-			if req.QualityCheck.CloudflareConcurrency <= 0 {
+			if hasQualityCloudflareConcurrency && req.QualityCheck.CloudflareConcurrency <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的 CF 并发数", "code": "invalid_cloudflare_concurrency"})
 				return
 			}
-			if strings.TrimSpace(req.QualityCheck.Interval) != "" {
+			if hasQualityIntervalKey && strings.TrimSpace(req.QualityCheck.Interval) != "" {
 				d, err := time.ParseDuration(req.QualityCheck.Interval)
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
@@ -3510,7 +3520,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				qualityInterval = d
 				hasQualityInterval = true
 			}
-			if strings.TrimSpace(req.QualityCheck.CloudflareTimeout) != "" {
+			if hasQualityCloudflareTimeout && strings.TrimSpace(req.QualityCheck.CloudflareTimeout) != "" {
 				d, err := time.ParseDuration(req.QualityCheck.CloudflareTimeout)
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
@@ -3670,25 +3680,32 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.FreeProxyCache = freeProxyCacheFromRequest(req.FreeProxyCache, s.cfgSrc.FreeProxyCache)
 		}
 		if req.QualityCheck != nil {
-			resolvedQualityInterval := s.cfgSrc.QualityCheck.Interval
+			resolvedQuality := s.cfgSrc.QualityCheck
+			if hasQualityEnabled {
+				resolvedQuality.Enabled = req.QualityCheck.Enabled
+			}
 			if hasQualityInterval {
-				resolvedQualityInterval = qualityInterval
+				resolvedQuality.Interval = qualityInterval
 			}
-			resolvedCloudflareTimeout := s.cfgSrc.QualityCheck.CloudflareTimeout
+			if hasQualityRegion {
+				resolvedQuality.Region = req.QualityCheck.Region
+			}
+			if hasQualityCount {
+				resolvedQuality.Count = req.QualityCheck.Count
+			}
+			if hasQualityIncludeUnavailable {
+				resolvedQuality.IncludeUnavailable = req.QualityCheck.IncludeUnavailable
+			}
+			if hasQualityRetryFailed {
+				resolvedQuality.RetryFailed = req.QualityCheck.RetryFailed
+			}
 			if hasCloudflareTimeout {
-				resolvedCloudflareTimeout = cloudflareTimeout
+				resolvedQuality.CloudflareTimeout = cloudflareTimeout
 			}
-			s.cfgSrc.QualityCheck = config.QualityCheckConfig{
-				Enabled:               req.QualityCheck.Enabled,
-				Interval:              resolvedQualityInterval,
-				Region:                req.QualityCheck.Region,
-				Count:                 req.QualityCheck.Count,
-				IncludeUnavailable:    req.QualityCheck.IncludeUnavailable,
-				RetryFailed:           req.QualityCheck.RetryFailed,
-				CloudflareTimeout:     resolvedCloudflareTimeout,
-				CloudflareConcurrency: req.QualityCheck.CloudflareConcurrency,
+			if hasQualityCloudflareConcurrency {
+				resolvedQuality.CloudflareConcurrency = req.QualityCheck.CloudflareConcurrency
 			}
-			s.cfgSrc.QualityCheck = s.cfgSrc.QualityCheck.Normalized()
+			s.cfgSrc.QualityCheck = resolvedQuality.Normalized()
 		}
 		if s.cfgSrc.Mode == "multi-port" || s.cfgSrc.Mode == "hybrid" {
 			s.cfg.ProxyUsername = s.cfgSrc.MultiPort.Username
