@@ -184,6 +184,32 @@ func positiveDurationString(d time.Duration) string {
 	return d.String()
 }
 
+func isAllowedCoreMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "pool", "multi-port", "multi_port", "hybrid":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeCoreMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "multi_port" {
+		return "multi-port"
+	}
+	return mode
+}
+
+func isAllowedPoolMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "sequential", "random", "balance", "round_robin", "least_failures":
+		return true
+	default:
+		return false
+	}
+}
+
 func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) ([]nodesource.SourceConfig, error) {
 	out := make([]nodesource.SourceConfig, 0, len(in))
 	for _, item := range in {
@@ -3212,6 +3238,21 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		savedProbeTarget := ""
 		savedSkipCertVerify := false
 		if req.Log != nil {
+			if req.Log.MaxSize <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的日志文件大小", "code": "invalid_log_max_size"})
+				return
+			}
+			if req.Log.MaxBackups <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的日志备份数量", "code": "invalid_log_max_backups"})
+				return
+			}
+			if req.Log.MaxAge <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的日志保留天数", "code": "invalid_log_max_age"})
+				return
+			}
 			logCfg = config.LogConfig{
 				Output:     req.Log.Output,
 				MaxSize:    req.Log.MaxSize,
@@ -3220,6 +3261,23 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				Compress:   req.Log.Compress,
 			}
 			hasLogCfg = true
+		}
+		if hasMode && !isAllowedCoreMode(req.Mode) {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "无效的运行模式", "code": "invalid_mode"})
+			return
+		}
+		if req.Pool != nil {
+			if !isAllowedPoolMode(req.Pool.Mode) {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的节点池模式", "code": "invalid_pool_mode"})
+				return
+			}
+			if req.Pool.FailureThreshold <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的节点池失败阈值", "code": "invalid_pool_failure_threshold"})
+				return
+			}
 		}
 		var poolBlacklistDuration time.Duration
 		if req.Pool != nil && strings.TrimSpace(req.Pool.BlacklistDuration) != "" {
@@ -3406,7 +3464,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.Log.Compress = logCfg.Compress
 		}
 		if hasMode {
-			s.cfgSrc.Mode = req.Mode
+			s.cfgSrc.Mode = normalizeCoreMode(req.Mode)
 		}
 		if req.Listener != nil {
 			s.cfgSrc.Listener.Address = req.Listener.Address

@@ -1122,6 +1122,65 @@ free_proxy_cache:
 	}
 }
 
+func TestHandleSettingsRejectsInvalidCoreEnumsAndNumbersBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`mode: hybrid
+nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+pool:
+  mode: round_robin
+  failure_threshold: 3
+  blacklist_duration: 5m
+log:
+  output: stdout
+  max_size: 100
+  max_backups: 3
+  max_age: 7
+  compress: false
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "bad mode", body: `{"mode":"bad","external_ip":"2.2.2.2"}`, code: "invalid_mode"},
+		{name: "bad pool mode", body: `{"external_ip":"2.2.2.2","pool":{"mode":"bad","failure_threshold":3,"blacklist_duration":"5m"}}`, code: "invalid_pool_mode"},
+		{name: "zero pool threshold", body: `{"external_ip":"2.2.2.2","pool":{"mode":"round_robin","failure_threshold":0,"blacklist_duration":"5m"}}`, code: "invalid_pool_failure_threshold"},
+		{name: "negative pool threshold", body: `{"external_ip":"2.2.2.2","pool":{"mode":"round_robin","failure_threshold":-1,"blacklist_duration":"5m"}}`, code: "invalid_pool_failure_threshold"},
+		{name: "zero log max size", body: `{"external_ip":"2.2.2.2","log":{"output":"stdout","max_size":0,"max_backups":3,"max_age":7,"compress":false}}`, code: "invalid_log_max_size"},
+		{name: "zero log max backups", body: `{"external_ip":"2.2.2.2","log":{"output":"stdout","max_size":100,"max_backups":0,"max_age":7,"compress":false}}`, code: "invalid_log_max_backups"},
+		{name: "zero log max age", body: `{"external_ip":"2.2.2.2","log":{"output":"stdout","max_size":100,"max_backups":3,"max_age":0,"compress":false}}`, code: "invalid_log_max_age"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+
+			server.handleSettings(rec, req)
+
+			assertSettingsErrorCode(t, rec, http.StatusBadRequest, tc.code)
+			reloaded, err := config.Load(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.Mode != "hybrid" || reloaded.ExternalIP != "1.1.1.1" || reloaded.Pool.Mode != "round_robin" || reloaded.Pool.FailureThreshold != 3 || reloaded.Log.MaxSize != 100 || reloaded.Log.MaxBackups != 3 || reloaded.Log.MaxAge != 7 {
+				t.Fatalf("invalid core setting should not be persisted: mode=%q external_ip=%q pool=%#v log=%#v", reloaded.Mode, reloaded.ExternalIP, reloaded.Pool, reloaded.Log)
+			}
+		})
+	}
+}
+
 func TestHandleSettingsSkipsReloadForControlPlaneOnlyChanges(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
