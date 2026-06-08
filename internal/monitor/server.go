@@ -2365,7 +2365,7 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 		parsed, err := strconv.Atoi(rawCount)
 		if err != nil || parsed <= 0 {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "invalid count"})
+			writeJSON(w, map[string]any{"error": "invalid count", "code": "invalid_count"})
 			return
 		}
 		count = parsed
@@ -2379,7 +2379,7 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowedRegions[region] {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "invalid region"})
+		writeJSON(w, map[string]any{"error": "invalid region", "code": "invalid_region"})
 		return
 	}
 
@@ -2403,7 +2403,7 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 	}
 	if mode != "pool" && mode != "geoip" && mode != "multi-port" && mode != "android" {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "invalid mode"})
+		writeJSON(w, map[string]any{"error": "invalid mode", "code": "invalid_mode"})
 		return
 	}
 
@@ -2458,14 +2458,14 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 		format != "user_pass_at_host_port_refresh_remark" &&
 		format != "json" {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "invalid format"})
+		writeJSON(w, map[string]any{"error": "invalid format", "code": "invalid_format"})
 		return
 	}
 
 	entries, warnings, effectiveFormat, err := s.buildExtractorEntries(region, mode, format, count, reveal)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": err.Error()})
+		writeJSON(w, map[string]any{"error": err.Error(), "code": "extractor_error"})
 		return
 	}
 

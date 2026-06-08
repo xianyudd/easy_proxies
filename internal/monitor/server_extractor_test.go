@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -85,8 +86,44 @@ func TestHandleExtractorRejectsInvalidCount(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/extractor?region=all&mode=multi-port&format=http_url&count="+rawCount, nil)
 		rec := httptest.NewRecorder()
 		srv.handleExtractor(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("count=%s status=%d, want 400 body=%s", rawCount, rec.Code, rec.Body.String())
-		}
+		assertExtractorErrorCode(t, rec, http.StatusBadRequest, "invalid_count")
+	}
+}
+
+func TestHandleExtractorReturnsStructuredErrorCodes(t *testing.T) {
+	srv := &Server{}
+	cases := []struct {
+		name string
+		path string
+		code string
+	}{
+		{name: "region", path: "/api/extractor?region=moon&mode=pool&format=http_url", code: "invalid_region"},
+		{name: "mode", path: "/api/extractor?region=all&mode=bad&format=http_url", code: "invalid_mode"},
+		{name: "format", path: "/api/extractor?region=all&mode=pool&format=bad", code: "invalid_format"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+			srv.handleExtractor(rec, req)
+			assertExtractorErrorCode(t, rec, http.StatusBadRequest, tc.code)
+		})
+	}
+}
+
+func assertExtractorErrorCode(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
+	if rec.Code != status {
+		t.Fatalf("status=%d, want %d body=%s", rec.Code, status, rec.Body.String())
+	}
+	var body struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == "" || body.Code != code {
+		t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
 	}
 }
