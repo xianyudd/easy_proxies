@@ -1146,8 +1146,18 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	allNodes := s.mgr.Snapshot()
 	regionStats, regionHealthy, sourceStats := nodeStats(allNodes)
 	visibleNodes, availableNodes, portRange := nodeSummaryCounts(allNodes)
-	page := parsePositiveInt(q.Get("page"), 1)
-	pageSize := parsePositiveInt(q.Get("page_size"), 100)
+	page, ok := parsePositiveIntParam(q, "page", 1)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid page", "code": "invalid_pagination"})
+		return
+	}
+	pageSize, ok := parsePositiveIntParam(q, "page_size", 100)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid page_size", "code": "invalid_pagination"})
+		return
+	}
 	if pageSize > 500 {
 		pageSize = 500
 	}
@@ -1263,6 +1273,18 @@ func parsePositiveInt(raw string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func parsePositiveIntParam(q url.Values, key string, fallback int) (int, bool) {
+	raw := strings.TrimSpace(q.Get(key))
+	if raw == "" {
+		return fallback, true
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, false
+	}
+	return value, true
 }
 
 func filterNodeSnapshots(nodes []Snapshot, q url.Values) []Snapshot {

@@ -95,6 +95,33 @@ func TestHandleNodesPagedClampsOutOfRangePageAndReportsTotalPages(t *testing.T) 
 	}
 }
 
+func TestHandleNodesRejectsInvalidPagination(t *testing.T) {
+	server := newTestNodesServer(t)
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "bad page", path: "/api/nodes?page=abc&page_size=100"},
+		{name: "zero page", path: "/api/nodes?page=0&page_size=100"},
+		{name: "negative page", path: "/api/nodes?page=-1&page_size=100"},
+		{name: "bad page size", path: "/api/nodes?page=1&page_size=abc"},
+		{name: "zero page size", path: "/api/nodes?page=1&page_size=0"},
+		{name: "negative page size", path: "/api/nodes?page=1&page_size=-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rr := httptest.NewRecorder()
+
+			server.handleNodes(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rr.Code, rr.Body.String())
+			}
+			assertNodeActionErrorCode(t, rr, "invalid_pagination")
+		})
+	}
+}
+
 func TestHandleNodesClampsLargePageSize(t *testing.T) {
 	server := newTestNodesServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes?page=1&page_size=999999&availability=all", nil)
