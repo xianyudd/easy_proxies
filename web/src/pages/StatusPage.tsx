@@ -6,6 +6,7 @@ import { Badge } from '../components/ui/Badge'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { RegionAvailabilityChart, LatencyTopChart, TrafficTrendChart, FailureRankChart } from '../components/charts/NodeCharts'
 import { regionMeta } from '../components/charts/region'
+import type { NodeSnapshot } from '../types/node'
 
 interface DebugNode { failure_count?: number; success_count?: number }
 interface DebugResponse { success_rate?: number; nodes?: DebugNode[]; total_calls?: number; total_success?: number }
@@ -19,8 +20,26 @@ function regionLabel(region?: string) {
   return regionMeta(region).label
 }
 
+const STATUS_PAGE_SIZE = 500
+
+async function getAllStatusNodes() {
+  let page = 1
+  let firstPage: Awaited<ReturnType<typeof getNodesPage>> | null = null
+  const nodes: NodeSnapshot[] = []
+  while (page <= 1000) {
+    const current = await getNodesPage({ availability: 'all', page, page_size: STATUS_PAGE_SIZE })
+    if (!firstPage) firstPage = current
+    nodes.push(...current.nodes)
+    if (!current.has_next) {
+      return { ...firstPage, page: current.page, has_next: current.has_next, nodes }
+    }
+    page += 1
+  }
+  return { ...(firstPage || await getNodesPage({ availability: 'all', page_size: STATUS_PAGE_SIZE })), nodes }
+}
+
 export function StatusPage() {
-  const nodes = useQuery({ queryKey:['status-nodes-all'], queryFn:() => getNodesPage({ availability: 'all', page_size: 500 }), refetchInterval:10000 })
+  const nodes = useQuery({ queryKey:['status-nodes-all'], queryFn:getAllStatusNodes, refetchInterval:10000 })
   const summary = useQuery({ queryKey:['nodes-summary'], queryFn:getNodesSummary, refetchInterval:10000 })
   const debug = useQuery({ queryKey:['debug-summary'], queryFn:() => getDebugSummary() as Promise<DebugResponse>, refetchInterval:10000 })
   const data = nodes.data?.nodes || []

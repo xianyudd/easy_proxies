@@ -14,7 +14,6 @@ def test_status_page_uses_region_labels_in_text_lists():
     assert "getNodesPage" in text
     assert "getNodes," not in text
     assert "availability: 'all'" in text
-    assert "page_size: 500" in text
     assert "import { regionMeta }" in text
     assert "function regionLabel" in text
     assert "{regionLabel(r)}" in text
@@ -41,6 +40,16 @@ def test_diagnostics_clear_logs_pauses_auto_refresh():
     assert "onClick={clearLogs}" in text
 
 
+def test_status_page_fetches_all_node_pages_for_large_free_source_pools():
+    text = read(STATUS_PAGE)
+    assert "async function getAllStatusNodes" in text
+    assert "has_next" in text
+    assert "page += 1" in text
+    assert "page_size: STATUS_PAGE_SIZE" in text
+    assert "page_size: 500" not in text
+
+
 if __name__ == "__main__":
     test_status_page_uses_region_labels_in_text_lists()
+    test_status_page_fetches_all_node_pages_for_large_free_source_pools()
     test_diagnostics_page_surfaces_debug_and_log_query_errors()
