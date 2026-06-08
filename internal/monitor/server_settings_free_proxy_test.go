@@ -50,6 +50,58 @@ func freeLocalListen(t *testing.T) string {
 	return addr
 }
 
+func TestHandleSettingsReturnsStructuredErrorCodes(t *testing.T) {
+	cases := []struct {
+		name   string
+		server *Server
+		body   string
+		status int
+		code   string
+	}{
+		{
+			name:   "bad json",
+			server: &Server{},
+			body:   `{`,
+			status: http.StatusBadRequest,
+			code:   "invalid_request",
+		},
+		{
+			name:   "missing config store",
+			server: &Server{},
+			body:   `{"external_ip":"1.2.3.4"}`,
+			status: http.StatusInternalServerError,
+			code:   "config_store_uninitialized",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader([]byte(tc.body)))
+			rec := httptest.NewRecorder()
+
+			tc.server.handleSettings(rec, req)
+
+			assertSettingsErrorCode(t, rec, tc.status, tc.code)
+		})
+	}
+}
+
+func assertSettingsErrorCode(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
+	if rec.Code != status {
+		t.Fatalf("status=%d, want %d body=%s", rec.Code, status, rec.Body.String())
+	}
+	var body struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == "" || body.Code != code {
+		t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
+	}
+}
+
 func (f *fakeNodeManager) ListConfigNodes(ctx context.Context) ([]config.NodeConfig, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

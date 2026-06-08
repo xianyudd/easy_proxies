@@ -3001,7 +3001,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		body, err := readJSONBodyMap(r, &req)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "请求格式错误"})
+			writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
 			return
 		}
 
@@ -3103,7 +3103,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if s.cfgSrc == nil {
 			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)
-			writeJSON(w, map[string]any{"error": "配置存储未初始化"})
+			writeJSON(w, map[string]any{"error": "配置存储未初始化", "code": "config_store_uninitialized"})
 			return
 		}
 
@@ -3225,7 +3225,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if err := s.cfgSrc.SaveSettings(); err != nil {
 			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)
-			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err)})
+			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err), "code": "save_settings_failed"})
 			return
 		}
 		needFreeProxyRefresh := oldFreeProxySignature != freeProxyRefreshSignature(s.cfgSrc)
@@ -3249,7 +3249,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			listen, changed, err := s.rebindHTTPServer(newManagementListen)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
-				writeJSON(w, map[string]any{"error": fmt.Sprintf("管理端口热切换失败: %v", err)})
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("管理端口热切换失败: %v", err), "code": "management_rebind_failed"})
 				return
 			}
 			reboundListen = listen
