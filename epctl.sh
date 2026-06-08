@@ -238,6 +238,39 @@ json_pretty() {
   if command -v jq >/dev/null 2>&1; then jq .; else cat; fi
 }
 
+webui_api_optional() {
+  local method="$1" path="$2" body="${3:-}"
+  local url="${WEBUI_URL%/}${path}"
+  local curl_args=(--noproxy '*' --max-time "$TIMEOUT" -sS -X "$method" -H 'Accept: application/json')
+  local cookie_jar=""
+  clean_proxy_env
+  if [ -n "$WEBUI_TOKEN" ]; then
+    curl_args+=(-H "Authorization: Bearer ${WEBUI_TOKEN}")
+  elif [ -n "$WEBUI_PASSWORD" ]; then
+    cookie_jar="$(mktemp -t epctl-webui-cookie.XXXXXX)"
+    local auth_code
+    auth_code="$(printf '{"password":"%s"}' "$WEBUI_PASSWORD" | curl --noproxy '*' --max-time "$TIMEOUT" -sS -o /dev/null -w '%{http_code}' -c "$cookie_jar" -H 'Content-Type: application/json' -X POST --data-binary @- "${WEBUI_URL%/}/api/auth" || true)"
+    if [ "$auth_code" != "200" ]; then
+      rm -f "$cookie_jar"
+      return 1
+    fi
+    curl_args+=(-b "$cookie_jar")
+  fi
+  if [ -n "$body" ]; then
+    curl_args+=(-H 'Content-Type: application/json' --data-binary "$body")
+  fi
+  local response_file status
+  response_file="$(mktemp -t epctl-webui-response.XXXXXX)"
+  status="$(curl "${curl_args[@]}" -o "$response_file" -w '%{http_code}' "$url" || true)"
+  [ -z "$cookie_jar" ] || rm -f "$cookie_jar"
+  if ! [[ "$status" =~ ^[0-9]+$ ]] || [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+    rm -f "$response_file"
+    return 1
+  fi
+  cat "$response_file"
+  rm -f "$response_file"
+}
+
 webui_api() {
   local method="$1" path="$2" body="${3:-}"
   local url="${WEBUI_URL%/}${path}"
@@ -723,17 +756,24 @@ status_service() {
   ss -ltnp 2>/dev/null | grep -E "$listen_re" || true
   echo
   if [ "$web" = "200" ]; then
-    node_json="$(curl --noproxy '*' --max-time "$TIMEOUT" -sS "${WEBUI_URL%/}/api/nodes" || true)"
+    node_json="$(webui_api_optional GET "/api/nodes" || true)"
     if command -v jq >/dev/null 2>&1 && [ -n "$node_json" ]; then
-      echo "$node_json" | jq '{total_nodes, visible_nodes:(.nodes|length), available:([.nodes[] | select(.available==true)] | length), source_stats, region_stats, port_range: (([.nodes[].port? // empty] | sort) as $p | if ($p|length)>0 then {first:$p[0], last:$p[-1]} else null end)}' || true
-    else
+      echo "$node_json" | jq '{total_nodes, visible_nodes:((.nodes // [])|length), available:([(.nodes // [])[] | select(.available==true)] | length), source_stats, region_stats, port_range: (([(.nodes // [])[].port? // empty] | sort) as $p | if ($p|length)>0 then {first:$p[0], last:$p[-1]} else null end)}' || true
+    elif [ -n "$node_json" ]; then
       echo "$node_json"
+    else
+      echo "WebUI API summary unavailable; set WEBUI_TOKEN or WEBUI_PASSWORD for authenticated status details."
     fi
-    settings_json="$(curl --noproxy '*' --max-time "$TIMEOUT" -sS "${WEBUI_URL%/}/api/settings" || true)"
+    settings_json="$(webui_api_optional GET "/api/settings" || true)"
     if command -v jq >/dev/null 2>&1 && [ -n "$settings_json" ]; then
       echo
       echo "Settings summary:"
-      echo "$settings_json" | jq '{subscriptions:(.subscriptions|length? // 0), free_proxy_sources:(.free_proxy_sources|length? // 0), free_proxy_cache, free_proxy_max_nodes}' 2>/dev/null || true
+      echo "$settings_json" | jq '{subscriptions:((.subscriptions // [])|length), free_proxy_sources:((.free_proxy_sources // [])|length), free_proxy_cache, free_proxy_max_nodes}' 2>/dev/null || true
+    elif [ -z "$node_json" ]; then
+      true
+    else
+      echo
+      echo "Settings summary unavailable; set WEBUI_TOKEN or WEBUI_PASSWORD."
     fi
   fi
 }
