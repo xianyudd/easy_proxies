@@ -16,6 +16,8 @@ def test_web_does_not_render_protected_app_before_auth_probe_resolves():
     assert "type AuthState = 'unknown'|'authenticated'|'unauthenticated'" in store
     assert "getAuthStatus" in app
     assert "getNodesSummary" not in app
+    assert "queryClient.setQueryData(['auth-probe']" in app
+    assert "authenticated: true" in app
     assert "enabled: authenticated === 'unknown' || authenticated === 'authenticated'" in app
     assert "if (authenticated === 'unknown')" in app
     assert "return <LoginPage />" in app

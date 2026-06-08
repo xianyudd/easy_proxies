@@ -32,7 +32,7 @@ function LoginPage() {
   const setAuthed = useAppStore(s => s.setAuthenticated)
   const toast = useToast(s => s.show)
   const queryClient = useQueryClient()
-  const mutation = useMutation({ mutationFn: login, onSuccess: () => { queryClient.resetQueries({ queryKey: ['auth-probe'] }); setAuthed('authenticated'); toast('登录成功', 'ok') }, onError: (e) => toast(e instanceof Error ? e.message : '登录失败', 'error') })
+  const mutation = useMutation({ mutationFn: login, onSuccess: () => { queryClient.setQueryData(['auth-probe'], { authenticated: true, password_required: true }); queryClient.invalidateQueries({ queryKey: ['auth-probe'] }); setAuthed('authenticated'); toast('登录成功', 'ok') }, onError: (e) => toast(e instanceof Error ? e.message : '登录失败', 'error') })
   return <div className="login"><form className="login-box" onSubmit={(e) => { e.preventDefault(); mutation.mutate(password) }}>
     <h2>Easy Proxies</h2><p className="muted">请输入本地管理密码。</p>
     <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} autoFocus />
