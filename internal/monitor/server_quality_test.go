@@ -142,6 +142,46 @@ func newQualityAPITestServer(t *testing.T) *Server {
 	return srv
 }
 
+func TestQualityJobItemMethodLimits(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(`{"kind":"pipeline","region":"all","count":1,"include_unavailable":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/quality/jobs/" + created.JobID},
+		{http.MethodPut, "/api/quality/jobs/" + created.JobID},
+		{http.MethodDelete, "/api/quality/jobs/" + created.JobID},
+		{http.MethodPost, "/api/quality/jobs/" + created.JobID + "/results"},
+		{http.MethodPut, "/api/quality/jobs/" + created.JobID + "/results"},
+		{http.MethodDelete, "/api/quality/jobs/" + created.JobID + "/results"},
+		{http.MethodGet, "/api/quality/jobs/" + created.JobID + "/cancel"},
+		{http.MethodPut, "/api/quality/jobs/" + created.JobID + "/cancel"},
+		{http.MethodDelete, "/api/quality/jobs/" + created.JobID + "/cancel"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		rec := httptest.NewRecorder()
+		srv.srv.Handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s %s status=%d, want 405 body=%s", tc.method, tc.path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestQualityPipelineJobAPI(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 

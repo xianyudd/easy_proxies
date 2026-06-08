@@ -70,7 +70,11 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(path, "/")
 	id := parts[0]
-	if len(parts) == 1 && r.Method == http.MethodGet {
+	if len(parts) == 1 && r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if len(parts) == 1 {
 		snap, ok := s.qualitySvc.GetJob(id)
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -80,7 +84,11 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, snap)
 		return
 	}
-	if len(parts) == 2 && parts[1] == "results" && r.Method == http.MethodGet {
+	if len(parts) == 2 && parts[1] == "results" && r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "results" {
 		if _, ok := s.qualitySvc.GetJob(id); !ok {
 			w.WriteHeader(http.StatusNotFound)
 			writeJSON(w, map[string]any{"error": "job not found", "code": "not_found"})
@@ -91,7 +99,11 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.qualitySvc.ListResults(id, quality.ResultQuery{Page: page, PageSize: pageSize}))
 		return
 	}
-	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
+	if len(parts) == 2 && parts[1] == "cancel" && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "cancel" {
 		if err := s.qualitySvc.CancelJob(id); err != nil && !errors.Is(err, quality.ErrJobTerminal) {
 			w.WriteHeader(http.StatusNotFound)
 			writeJSON(w, map[string]any{"error": err.Error(), "code": "not_found"})
