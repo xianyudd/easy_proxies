@@ -3125,25 +3125,37 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfgSrc.FreeProxyCache = freeProxyCacheFromRequest(req.FreeProxyCache, s.cfgSrc.FreeProxyCache)
 		}
 		if req.QualityCheck != nil {
+			qualityInterval := s.cfgSrc.QualityCheck.Interval
+			if req.QualityCheck.Interval != "" {
+				d, err := time.ParseDuration(req.QualityCheck.Interval)
+				if err != nil {
+					s.cfgMu.Unlock()
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的质量检测间隔: %v", err), "code": "invalid_quality_interval"})
+					return
+				}
+				qualityInterval = d
+			}
+			cloudflareTimeout := s.cfgSrc.QualityCheck.CloudflareTimeout
+			if req.QualityCheck.CloudflareTimeout != "" {
+				d, err := time.ParseDuration(req.QualityCheck.CloudflareTimeout)
+				if err != nil {
+					s.cfgMu.Unlock()
+					w.WriteHeader(http.StatusBadRequest)
+					writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的 CF 超时: %v", err), "code": "invalid_cloudflare_timeout"})
+					return
+				}
+				cloudflareTimeout = d
+			}
 			s.cfgSrc.QualityCheck = config.QualityCheckConfig{
 				Enabled:               req.QualityCheck.Enabled,
-				Interval:              s.cfgSrc.QualityCheck.Interval,
+				Interval:              qualityInterval,
 				Region:                req.QualityCheck.Region,
 				Count:                 req.QualityCheck.Count,
 				IncludeUnavailable:    req.QualityCheck.IncludeUnavailable,
 				RetryFailed:           req.QualityCheck.RetryFailed,
-				CloudflareTimeout:     s.cfgSrc.QualityCheck.CloudflareTimeout,
+				CloudflareTimeout:     cloudflareTimeout,
 				CloudflareConcurrency: req.QualityCheck.CloudflareConcurrency,
-			}
-			if req.QualityCheck.Interval != "" {
-				if d, err := time.ParseDuration(req.QualityCheck.Interval); err == nil {
-					s.cfgSrc.QualityCheck.Interval = d
-				}
-			}
-			if req.QualityCheck.CloudflareTimeout != "" {
-				if d, err := time.ParseDuration(req.QualityCheck.CloudflareTimeout); err == nil {
-					s.cfgSrc.QualityCheck.CloudflareTimeout = d
-				}
 			}
 			s.cfgSrc.QualityCheck = s.cfgSrc.QualityCheck.Normalized()
 		}

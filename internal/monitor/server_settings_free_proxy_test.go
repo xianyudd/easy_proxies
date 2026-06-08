@@ -303,6 +303,68 @@ quality_check:
 	}
 }
 
+func TestHandleSettingsRejectsInvalidQualityDurationBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+management:
+  listen: ` + listen + `
+quality_check:
+  enabled: true
+  interval: 1h
+  region: all
+  count: 500
+  include_unavailable: true
+  cloudflare_timeout: 5s
+  cloudflare_concurrency: 24
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	server := NewServer(Config{Enabled: true, Listen: listen}, mgr, nil)
+	server.SetConfig(cfg)
+
+	body := []byte(`{
+		"management": {"listen":"` + listen + `","password":""},
+		"quality_check": {
+			"enabled": true,
+			"interval": "1h",
+			"region": "all",
+			"count": 500,
+			"include_unavailable": true,
+			"cloudflare_timeout": "bad-duration",
+			"cloudflare_concurrency": 32
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body = %s", rec.Code, rec.Body.String())
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := reloaded.QualityCheck.Normalized()
+	if q.CloudflareTimeout != 5*time.Second || q.CloudflareConcurrency != 24 {
+		t.Fatalf("invalid quality settings should not be persisted: timeout=%s concurrency=%d", q.CloudflareTimeout, q.CloudflareConcurrency)
+	}
+}
+
 func TestHandleSettingsReturnsFreeProxyConfig(t *testing.T) {
 	cfg := &config.Config{FreeProxyMaxNodes: 88}
 	cfg.FreeProxyFilter.Enabled = true
