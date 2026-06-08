@@ -211,6 +211,24 @@ func settingsPositiveInt(value, fallback int) int {
 	return value
 }
 
+func settingsFreeProxySources(sources []nodesource.SourceConfig) []map[string]any {
+	out := make([]map[string]any, 0, len(sources))
+	for _, source := range sources {
+		out = append(out, map[string]any{
+			"name":           source.Name,
+			"url":            source.URL,
+			"file":           source.File,
+			"format":         source.Format,
+			"default_scheme": source.DefaultScheme,
+			"enabled":        source.Enabled,
+			"timeout":        positiveDurationString(source.Timeout),
+			"max_nodes":      source.MaxNodes,
+			"max_bytes":      source.MaxBytes,
+		})
+	}
+	return out
+}
+
 func isAllowedCoreMode(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "pool", "multi-port", "multi_port", "hybrid":
@@ -3166,7 +3184,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"interval": positiveDurationString(cfg.SubscriptionRefresh.Interval),
 			}
 
-			resp["free_proxy_sources"] = cfg.FreeProxySources
+			resp["free_proxy_sources"] = settingsFreeProxySources(cfg.FreeProxySources)
 			resp["free_proxy_max_nodes"] = cfg.FreeProxyMaxNodes
 			filter := cfg.FreeProxyFilter.Normalized()
 			resp["free_proxy_filter"] = map[string]any{
