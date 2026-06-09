@@ -2961,7 +2961,7 @@ free_proxy_sources:
 	}
 }
 
-func TestHandleSettingsReportsNoImmediateReloadWhenFreshFreeProxyCacheIsReused(t *testing.T) {
+func TestHandleSettingsAutoReloadsWhenFreshFreeProxyCacheIsReused(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	cachePath := filepath.Join(tmp, "cache.txt")
@@ -3024,8 +3024,16 @@ free_proxy_sources:
 		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
 	}
 	status := waitFreeProxyRefreshDone(t, server, 500*time.Millisecond)
-	if status.State != "succeeded" || status.Accepted != 1 || status.CacheUpdated || status.ReloadStarted {
-		t.Fatalf("fresh cache reuse should not reload: %#v", status)
+	if status.State != "succeeded" || status.Accepted != 1 || status.CacheUpdated || !status.ReloadStarted {
+		t.Fatalf("fresh cache reuse from settings should auto reload cached nodes: %#v", status)
+	}
+	select {
+	case <-fake.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto reload did not run after settings reused fresh free proxy cache")
+	}
+	if fake.ReloadCalls() != 1 {
+		t.Fatalf("reloadCalls = %d, want 1", fake.ReloadCalls())
 	}
 }
 

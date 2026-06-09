@@ -959,17 +959,18 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 	status := s.freeProxyRefreshStatus
 	s.freeProxyRefreshMu.Unlock()
 
-	go s.runFreeProxyRefresh(cfg, cache, signature, now)
+	go s.runFreeProxyRefresh(cfg, cache, signature, requestedBy, now)
 
 	return status, true, nil
 }
 
-func (s *Server) runFreeProxyRefresh(cfg *config.Config, cache config.FreeProxyCacheConfig, signature string, started time.Time) {
+func (s *Server) runFreeProxyRefresh(cfg *config.Config, cache config.FreeProxyCacheConfig, signature, requestedBy string, started time.Time) {
 	summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
 	finished := time.Now()
 	reloadStarted := false
 	var reloadStatusSnapshot *reloadStatus
-	if err == nil && summary.CacheUpdated && summary.Count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
+	shouldReload := summary.CacheUpdated || strings.TrimSpace(requestedBy) == "settings"
+	if err == nil && shouldReload && summary.Count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
 		status, startedReload, reloadErr := s.startAsyncReload("free-proxy-refresh")
 		reloadStarted = startedReload
 		reloadStatusSnapshot = &status
@@ -1028,7 +1029,7 @@ func (s *Server) runFreeProxyRefresh(cfg *config.Config, cache config.FreeProxyC
 			}
 			s.logger.Printf("free proxy refresh %s in %dms; running queued refresh requested_by=%s", level, finished.Sub(started).Milliseconds(), nextRequestedBy)
 		}
-		go s.runFreeProxyRefresh(nextCfg, nextCache, nextSignature, nextStarted)
+		go s.runFreeProxyRefresh(nextCfg, nextCache, nextSignature, nextRequestedBy, nextStarted)
 		return
 	}
 
