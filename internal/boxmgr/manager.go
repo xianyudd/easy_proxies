@@ -234,6 +234,7 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 
 	// Clear stale monitor nodes so the dashboard reflects the new config
 	if m.monitorMgr != nil {
+		m.monitorMgr.SetAllowedTags(configNodeTags(newCfg))
 		m.monitorMgr.ClearNodes()
 	}
 
@@ -282,6 +283,10 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 	// Sync config to monitor server so future WebUI settings changes target the current config pointer
 	if m.monitorServer != nil {
 		m.monitorServer.SetConfig(m.cfg)
+	}
+
+	if m.monitorMgr != nil && !configHasSource(newCfg, config.NodeSourceFreeProxy) {
+		m.monitorMgr.ClearSource(string(config.NodeSourceFreeProxy))
 	}
 
 	// Trigger initial health check for newly registered nodes
@@ -970,6 +975,55 @@ func cloneNodes(nodes []config.NodeConfig) []config.NodeConfig {
 	out := make([]config.NodeConfig, len(nodes))
 	copy(out, nodes)
 	return out
+}
+
+func configHasSource(cfg *config.Config, source config.NodeSource) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, node := range cfg.Nodes {
+		if node.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
+func configNodeTags(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	usedTags := make(map[string]int, len(cfg.Nodes))
+	tags := make([]string, 0, len(cfg.Nodes))
+	for _, node := range cfg.Nodes {
+		baseTag := runtimeNodeTagBase(node.Name)
+		if baseTag == "" {
+			baseTag = fmt.Sprintf("node-%d", len(tags)+1)
+		}
+		tag := baseTag
+		if count, exists := usedTags[baseTag]; exists {
+			usedTags[baseTag] = count + 1
+			tag = fmt.Sprintf("%s-%d", baseTag, count+1)
+		} else {
+			usedTags[baseTag] = 1
+		}
+		if tag == "" {
+			continue
+		}
+		tags = append(tags, tag)
+	}
+	return tags
+}
+
+func runtimeNodeTagBase(name string) string {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" {
+		return ""
+	}
+	segments := strings.FieldsFunc(lower, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	})
+	return strings.Trim(strings.Join(segments, "-"), "-")
 }
 
 func (m *Manager) copyConfigLocked() *config.Config {

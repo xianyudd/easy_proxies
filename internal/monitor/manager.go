@@ -98,14 +98,15 @@ type entry struct {
 
 // Manager aggregates all node states for the UI/API.
 type Manager struct {
-	cfg        Config
-	probeDst   M.Socksaddr
-	probeReady bool
-	mu         sync.RWMutex
-	nodes      map[string]*entry
-	ctx        context.Context
-	cancel     context.CancelFunc
-	logger     Logger
+	cfg         Config
+	probeDst    M.Socksaddr
+	probeReady  bool
+	mu          sync.RWMutex
+	nodes       map[string]*entry
+	allowedTags map[string]struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
+	logger      Logger
 }
 
 // Logger interface for logging
@@ -367,8 +368,18 @@ func parsePort(value string) uint16 {
 
 // Register ensures a node is tracked and returns its entry.
 func (m *Manager) Register(info NodeInfo) *EntryHandle {
+	tag := strings.TrimSpace(info.Tag)
+	if tag == "" {
+		return nil
+	}
+	info.Tag = tag
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.allowedTags != nil {
+		if _, ok := m.allowedTags[info.Tag]; !ok {
+			return nil
+		}
+	}
 	e, ok := m.nodes[info.Tag]
 	if !ok {
 		e = &entry{
@@ -388,6 +399,50 @@ func (m *Manager) ClearNodes() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.nodes = make(map[string]*entry)
+}
+
+// SetAllowedTags restricts runtime node registration to the currently active
+// config generation. It also prunes existing entries that are no longer present
+// so stale pools from an older sing-box instance cannot repopulate the monitor
+// dashboard after a reload.
+func (m *Manager) SetAllowedTags(tags []string) {
+	allowed := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		allowed[tag] = struct{}{}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.allowedTags = allowed
+	for tag := range m.nodes {
+		if _, ok := allowed[tag]; !ok {
+			delete(m.nodes, tag)
+		}
+	}
+}
+
+// ClearSource removes registered nodes that came from a runtime source. It is
+// used after config reloads to drop stale runtime-only free-proxy entries that
+// may have been registered by an older box generation.
+func (m *Manager) ClearSource(source string) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for tag, entry := range m.nodes {
+		entry.mu.RLock()
+		entrySource := entry.info.Source
+		entry.mu.RUnlock()
+		if entrySource == source {
+			delete(m.nodes, tag)
+		}
+	}
 }
 
 // DestinationForProbe exposes the configured destination for health checks.

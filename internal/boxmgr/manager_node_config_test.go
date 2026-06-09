@@ -59,3 +59,31 @@ func TestPortConflictRetriesBeforeReassign(t *testing.T) {
 		t.Fatalf("retry %d should allow reassignment", transientPortConflictRetries)
 	}
 }
+
+func TestConfigHasSourceDetectsRuntimeFreeProxyNodes(t *testing.T) {
+	cfg := &config.Config{Nodes: []config.NodeConfig{
+		{Name: "sub", URI: "http://127.0.0.1:18080", Source: config.NodeSourceSubscription},
+	}}
+	if configHasSource(cfg, config.NodeSourceFreeProxy) {
+		t.Fatal("subscription-only config should not report free_proxy source")
+	}
+	cfg.Nodes = append(cfg.Nodes, config.NodeConfig{Name: "free", URI: "http://127.0.0.1:18081", Source: config.NodeSourceFreeProxy})
+	if !configHasSource(cfg, config.NodeSourceFreeProxy) {
+		t.Fatal("config with free_proxy node should report free_proxy source")
+	}
+}
+
+func TestConfigNodeTagsReturnsRuntimeNodeNames(t *testing.T) {
+	cfg := &config.Config{Nodes: []config.NodeConfig{
+		{Name: " Sub A ", URI: "http://127.0.0.1:18080", Source: config.NodeSourceSubscription},
+		{Name: "", URI: "http://127.0.0.1:18081", Source: config.NodeSourceFreeProxy},
+		{Name: "Sub A", URI: "http://127.0.0.1:18082", Source: config.NodeSourceFreeProxy},
+		{Name: "free-a", URI: "http://127.0.0.1:18083", Source: config.NodeSourceFreeProxy},
+	}}
+
+	got := configNodeTags(cfg)
+
+	if len(got) != 4 || got[0] != "sub-a" || got[1] != "node-2" || got[2] != "sub-a-2" || got[3] != "free-a" {
+		t.Fatalf("configNodeTags()=%#v, want sanitized unique runtime tags", got)
+	}
+}
