@@ -212,6 +212,53 @@ fi
     assert result.returncode == 0, result.stderr
 
 
+def test_start_service_fails_when_control_plane_not_ready_but_preserves_running_pid():
+    script = f"""
+set -euo pipefail
+tmp="$(mktemp -d)"
+bin="$tmp/sleep-bin"
+cat >"$bin" <<'SH'
+#!/usr/bin/env sh
+sleep 30
+SH
+chmod +x "$bin"
+CONFIG_FILE="$tmp/config.yaml"
+touch "$CONFIG_FILE"
+BIN="$bin"
+LOG_FILE="$tmp/service.log"
+PID_FILE="$tmp/service.pid"
+WEBUI_URL="http://127.0.0.1:19093"
+EPCTL_LIB_ONLY=1
+source {shell_quote(str(EPCTL))}
+preflight_ports_available() {{ :; }}
+clean_proxy_env() {{ :; }}
+wait_for_service_ready() {{
+  echo "[WARN] simulated control plane not ready" >&2
+  return 1
+}}
+set +e
+( start_service )
+code="$?"
+set -e
+pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+if [ -n "$pid" ]; then
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+fi
+if [ "$code" -eq 0 ]; then
+  echo "start_service unexpectedly succeeded when control plane was not ready" >&2
+  exit 1
+fi
+if [ -z "$pid" ]; then
+  echo "running pid file should be preserved for cleanup/status" >&2
+  exit 1
+fi
+"""
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr
+    assert "service process started but control plane is not ready" in result.stdout + result.stderr
+
+
 def test_restart_service_removes_temp_binary_when_stop_fails():
     script = f"""
 set -euo pipefail
@@ -286,5 +333,6 @@ if __name__ == "__main__":
     test_preflight_rejects_other_visible_owner()
     test_preflight_rejects_unknown_owner_without_pid()
     test_start_service_failure_removes_stale_pid_file()
+    test_start_service_fails_when_control_plane_not_ready_but_preserves_running_pid()
     test_restart_service_removes_temp_binary_when_stop_fails()
     test_status_reports_stale_unverified_pid_file_when_not_running()

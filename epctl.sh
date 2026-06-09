@@ -790,7 +790,10 @@ start_service() {
   if is_running; then
     sync_pid_file
     echo "[OK] started, pid=$(display_pid)"
-    wait_for_service_ready
+    if ! wait_for_service_ready; then
+      echo "[ERROR] service process started but control plane is not ready; pid=$(display_pid) log=$LOG_FILE" >&2
+      exit 1
+    fi
   else
     echo "[ERROR] failed to start, see $LOG_FILE"
     tail -n 80 "$LOG_FILE" 2>/dev/null || true
