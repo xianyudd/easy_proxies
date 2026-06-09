@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -3035,8 +3036,10 @@ func TestHandleFreeProxyRefreshStatusSerializesCacheReuseFields(t *testing.T) {
 	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	var remoteFetches atomic.Int32
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("fresh cache refresh should not fetch remote source")
+		remoteFetches.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer slow.Close()
 	initial := []byte(`nodes:
@@ -3069,6 +3072,9 @@ free_proxy_sources:
 	status := waitFreeProxyRefreshDone(t, server, 500*time.Millisecond)
 	if status.State != "succeeded" {
 		t.Fatalf("refresh did not finish quickly: %#v", status)
+	}
+	if got := remoteFetches.Load(); got != 0 {
+		t.Fatalf("fresh cache refresh should not fetch remote source, got %d fetches", got)
 	}
 
 	rec := httptest.NewRecorder()
@@ -3122,8 +3128,10 @@ func TestFreeProxyRefreshUsesFreshCacheWithoutRemoteFetchOrReload(t *testing.T) 
 	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	var remoteFetches atomic.Int32
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("fresh cache refresh should not fetch remote source")
+		remoteFetches.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer slow.Close()
 	initial := []byte(`nodes:
@@ -3160,6 +3168,9 @@ free_proxy_sources:
 	}
 	if status.DurationMS > 200 {
 		t.Fatalf("fresh cache refresh too slow: %#v", status)
+	}
+	if got := remoteFetches.Load(); got != 0 {
+		t.Fatalf("fresh cache refresh should not fetch remote source, got %d fetches", got)
 	}
 	if fake.ReloadCalls() != 0 {
 		t.Fatalf("reloadCalls = %d, want 0", fake.ReloadCalls())

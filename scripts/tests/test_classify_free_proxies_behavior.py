@@ -22,10 +22,17 @@ def pid_exists(pid: int) -> bool:
     return True
 
 
+async def wait_pid_gone(pid: int) -> None:
+    for _ in range(100):
+        if not pid_exists(pid):
+            return
+        await asyncio.sleep(0.01)
+
+
 def install_fake_curl(tmp: Path) -> Path:
     pid_file = tmp / "curl.pid"
     fake = tmp / "curl"
-    fake.write_text(f"#!/bin/sh\necho $$ > {pid_file}\nsleep 30\n")
+    fake.write_text(f"#!/bin/sh\necho $$ > {pid_file}\nexec sleep 30\n")
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
     os.environ["PATH"] = f"{tmp}:{os.environ['PATH']}"
     return pid_file
@@ -37,7 +44,7 @@ async def timeout_case() -> None:
         result = await mod.run_probe("http://127.0.0.1:1", mod.PROBES[0], 0.05, asyncio.Semaphore(1))
         assert result["error"] == "timeout"
         pid = int(pid_file.read_text())
-        await asyncio.sleep(0.05)
+        await wait_pid_gone(pid)
         assert not pid_exists(pid), f"fake curl pid {pid} still exists after timeout cleanup"
 
 
@@ -56,7 +63,7 @@ async def cancellation_case() -> None:
             await task
         except asyncio.CancelledError:
             pass
-        await asyncio.sleep(0.05)
+        await wait_pid_gone(pid)
         assert not pid_exists(pid), f"fake curl pid {pid} still exists after cancellation cleanup"
 
 
