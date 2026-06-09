@@ -61,7 +61,8 @@ def test_smoke_script_checks_port_continuity_after_reload():
     assert 'fetch_all_nodes' in text
     assert 'page_size = 500' in text
     assert 'has_next' in text
-    assert 'missing ports' in text
+    assert 'Port holes are allowed' in text
+    assert 'gaps={missing}' in text
     assert 'duplicate ports' in text
 
 
