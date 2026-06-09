@@ -19,6 +19,11 @@ const TRAFFIC_WINDOWS: Record<TrafficWindow, { label: string; ms: number }> = {
   '1h': { label: '1 小时', ms: 60 * 60_000 },
 }
 
+function safeTrafficNumber(input: unknown) {
+  const value = Number(input)
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
 export function RegionAvailabilityChart({ nodes }: { nodes: NodeSnapshot[] }) {
   const option = useMemo<EChartsOption>(() => {
     const stats = new Map<string, { total: number; healthy: number }>()
@@ -109,6 +114,7 @@ export function FailureRankChart({ nodes }: { nodes: NodeSnapshot[] }) {
 export function TrafficTrendChart() {
   const [points, setPoints] = useState<Array<{ time: string; ts: number; up: number; down: number }>>([])
   const [connected, setConnected] = useState(false)
+  const [malformedEvents, setMalformedEvents] = useState(0)
   const [windowKey, setWindowKey] = useState<TrafficWindow>('5m')
 
   useEffect(() => {
@@ -119,8 +125,10 @@ export function TrafficTrendChart() {
         const data = JSON.parse(event.data)
         const now = Date.now()
         const time = new Date(now).toLocaleTimeString([], { hour12: false })
-        setPoints(prev => [...prev.slice(-599), { time, ts: now, up: Number(data.up || 0), down: Number(data.down || 0) }])
-      } catch {}
+        setPoints(prev => [...prev.slice(-599), { time, ts: now, up: safeTrafficNumber(data.up), down: safeTrafficNumber(data.down) }])
+      } catch {
+        setMalformedEvents(count => count + 1)
+      }
     }
     source.onerror = () => setConnected(false)
     return () => source.close()
@@ -153,7 +161,10 @@ export function TrafficTrendChart() {
 
   return <div>
     <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
-      <div className={`chart-status ${connected ? 'ok' : 'warn'}`}>{connected ? '实时流量已连接' : '等待流量数据 / Clash API'}</div>
+      <div className={`chart-status ${connected ? 'ok' : 'warn'}`}>
+        {connected ? '实时流量已连接' : '等待流量数据 / Clash API'}
+        {malformedEvents > 0 ? ` · 流量数据异常 ${malformedEvents} 次` : ''}
+      </div>
       <div className="toolbar">
         {(Object.keys(TRAFFIC_WINDOWS) as TrafficWindow[]).map(key => (
           <Button key={key} variant={windowKey === key ? 'primary' : 'secondary'} onClick={() => setWindowKey(key)}>{TRAFFIC_WINDOWS[key].label}</Button>
