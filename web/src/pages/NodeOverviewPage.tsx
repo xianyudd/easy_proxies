@@ -62,8 +62,18 @@ function latencyLabel(value: unknown) {
   return Number.isFinite(ms) && ms >= 0 ? `${ms} ms` : '未测速'
 }
 
+function safeCount(input: unknown) {
+  const value = Number(input)
+  return Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0
+}
+
 function safeRows<T>(rows: unknown): T[] {
   return Array.isArray(rows) ? rows : []
+}
+
+function safeRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, raw]) => [key, safeCount(raw)]))
 }
 
 export function NodeOverviewPage() {
@@ -92,22 +102,24 @@ export function NodeOverviewPage() {
   }, [data?.page, page])
 
   const regions = useMemo(() => {
-    const stats = data?.region_stats || {}
+    const stats = safeRecord(data?.region_stats)
     return Object.entries(stats).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
   }, [data?.region_stats])
 
   const sources = useMemo(() => {
-    const stats = data?.source_stats || {}
+    const stats = safeRecord(data?.source_stats)
     return Object.entries(stats).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
   }, [data?.source_stats])
 
   const summaryUnavailable = isError && !data
+  const regionHealthy = safeRecord(data?.region_healthy)
+  const sourceStats = safeRecord(data?.source_stats)
   const summary = useMemo(() => ({
-    total: summaryUnavailable ? '-' : data?.total_nodes || 0,
-    filtered: summaryUnavailable ? '-' : data?.total_filtered || 0,
-    available: summaryUnavailable ? '-' : Object.values(data?.region_healthy || {}).reduce((sum, n) => sum + n, 0),
-    free: summaryUnavailable ? '-' : data?.source_stats?.free_proxy || 0,
-  }), [data, summaryUnavailable])
+    total: summaryUnavailable ? '-' : safeCount(data?.total_nodes),
+    filtered: summaryUnavailable ? '-' : safeCount(data?.total_filtered),
+    available: summaryUnavailable ? '-' : Object.values(regionHealthy).reduce((sum, n) => sum + n, 0),
+    free: summaryUnavailable ? '-' : safeCount(sourceStats.free_proxy),
+  }), [data?.total_nodes, data?.total_filtered, regionHealthy, sourceStats, summaryUnavailable])
 
   const resetPage = <T,>(setter: (value: T) => void) => (value: T) => {
     setter(value)

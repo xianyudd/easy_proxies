@@ -30,7 +30,18 @@ def test_node_overview_defends_non_array_nodes_payload():
     assert "data?.nodes || []" not in text
 
 
+def test_node_overview_sanitizes_summary_records():
+    text = read_source()
+    assert "function safeRecord(value: unknown): Record<string, number>" in text
+    assert "safeRecord(data?.region_stats)" in text
+    assert "safeRecord(data?.source_stats)" in text
+    assert "safeRecord(data?.region_healthy)" in text
+    assert "Object.values(regionHealthy).reduce((sum, n) => sum + n, 0)" in text
+    assert "Object.values(data?.region_healthy || {})" not in text
+
+
 if __name__ == "__main__":
     test_node_overview_labels_all_backend_regions()
     test_node_overview_reconciles_server_clamped_page_and_copies_stable_tag()
     test_node_overview_defends_non_array_nodes_payload()
+    test_node_overview_sanitizes_summary_records()

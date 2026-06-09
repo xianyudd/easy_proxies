@@ -31,6 +31,11 @@ function safeRows<T>(rows: unknown): T[] {
   return Array.isArray(rows) ? rows : []
 }
 
+function safeRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, raw]) => [key, safeCount(raw)]))
+}
+
 function regionLabel(region?: string) {
   return regionMeta(region).label
 }
@@ -60,7 +65,9 @@ export function StatusPage() {
   const data = safeRows<NodeSnapshot>(nodes.data?.nodes)
   const summaryData = summary.data
   const dataUnavailable = (nodes.isError && !nodes.data) || (summary.isError && !summary.data)
-  const healthyTotal = Object.values(summaryData?.region_healthy || {}).reduce((sum, count) => sum + safeCount(count), 0)
+  const regionHealthy = safeRecord(summaryData?.region_healthy)
+  const regionStats = safeRecord(summaryData?.region_stats)
+  const healthyTotal = Object.values(regionHealthy).reduce((sum, count) => sum + safeCount(count), 0)
   const totalNodes = safeCount(summaryData?.total_nodes || nodes.data?.total_nodes || data.length)
   const stats = useMemo(() => ({
     total: dataUnavailable ? null : totalNodes,
@@ -70,7 +77,7 @@ export function StatusPage() {
     successRate: debug.isError && !debug.data ? null : safeRate(debug.data?.success_rate),
   }), [data, dataUnavailable, debug.data, debug.isError, healthyTotal, totalNodes])
   const healthRate = stats.total && stats.healthy !== null ? Math.round((stats.healthy / stats.total) * 100) : null
-  const regions = Object.entries(summaryData?.region_stats && Object.keys(summaryData.region_stats).length ? summaryData.region_stats : data.reduce((m,n)=>{ const r=String(n.region||'other'); m[r]=(m[r]||0)+1; return m }, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1])
+  const regions = Object.entries(Object.keys(regionStats).length ? regionStats : data.reduce((m,n)=>{ const r=String(n.region||'other'); m[r]=(m[r]||0)+1; return m }, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1])
   const recentBad = data.filter(n=>n.blacklisted || (Number(n.failure_count)||0)>0).slice(0,8)
   return <div className="page">
     <div className="page-header"><div><h1>运行状态</h1><p>把整体健康度、关键趋势和异常节点放在同一监控视图里，优先定位需要处理的问题。</p></div></div>

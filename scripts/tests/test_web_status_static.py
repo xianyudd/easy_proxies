@@ -30,6 +30,17 @@ def test_status_page_defends_non_array_nodes_payload():
     assert "nodes.data?.nodes || []" not in text
 
 
+def test_status_page_sanitizes_summary_records():
+    text = read(STATUS_PAGE)
+    assert "function safeRecord(value: unknown): Record<string, number>" in text
+    assert "const regionHealthy = safeRecord(summaryData?.region_healthy)" in text
+    assert "const regionStats = safeRecord(summaryData?.region_stats)" in text
+    assert "Object.values(regionHealthy).reduce((sum, count) => sum + safeCount(count), 0)" in text
+    assert "Object.entries(Object.keys(regionStats).length ? regionStats : data.reduce" in text
+    assert "Object.values(summaryData?.region_healthy || {})" not in text
+
+
 if __name__ == "__main__":
     test_status_page_sanitizes_numeric_summary_fields()
     test_status_page_defends_non_array_nodes_payload()
+    test_status_page_sanitizes_summary_records()
