@@ -827,6 +827,14 @@ func hasEnabledFreeProxySourceConfigs(sources []nodesource.SourceConfig) bool {
 	return false
 }
 
+func freeProxyRefreshable(cfg *config.Config) bool {
+	if cfg == nil || !hasEnabledFreeProxySourceConfigs(cfg.FreeProxySources) {
+		return false
+	}
+	cache := cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)
+	return cache.EnabledValue()
+}
+
 func countFreeProxyCacheFile(path string) (int, bool) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -3811,6 +3819,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		oldCoreSignature := coreReloadSignature(s.cfgSrc)
 		oldFreeProxySignature := freeProxyRefreshSignature(s.cfgSrc)
+		oldFreeProxyRefreshable := freeProxyRefreshable(s.cfgSrc)
+		oldHasEnabledFreeProxySources := hasEnabledFreeProxySourceConfigs(s.cfgSrc.FreeProxySources)
 
 		if hasExternalIP {
 			s.cfg.ExternalIP = extIP
@@ -3950,6 +3960,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if req.FreeProxyCache != nil {
 			s.cfgSrc.FreeProxyCache = freeProxyCacheFromRequest(req.FreeProxyCache, s.cfgSrc.FreeProxyCache, body)
 		}
+		if req.FreeProxySources != nil && req.FreeProxyCache == nil && !oldHasEnabledFreeProxySources && hasEnabledFreeProxySourceConfigs(s.cfgSrc.FreeProxySources) {
+			enabled := true
+			s.cfgSrc.FreeProxyCache.Enabled = &enabled
+		}
 		if req.QualityCheck != nil {
 			resolvedQuality := s.cfgSrc.QualityCheck
 			if hasQualityEnabled {
@@ -4008,18 +4022,25 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		freeProxySignatureChanged := oldFreeProxySignature != freeProxyRefreshSignature(s.cfgSrc)
-		needFreeProxyRefresh := freeProxySignatureChanged && hasEnabledFreeProxySourceConfigs(s.cfgSrc.FreeProxySources)
+		needFreeProxyRefresh := freeProxySignatureChanged && freeProxyRefreshable(s.cfgSrc)
 		needReload := oldCoreSignature != coreReloadSignature(s.cfgSrc)
 		savedExternalIP = s.cfgSrc.ExternalIP
 		savedProbeTarget = s.cfgSrc.Management.ProbeTarget
 		savedSkipCertVerify = s.cfgSrc.SkipCertVerify
 		if freeProxySignatureChanged {
-			// Free-proxy source/filter/cache changes are applied through the
-			// refresh pipeline. That pipeline starts an async reload only when it
-			// actually writes a new cache. Reporting need_reload=true here would
-			// make the UI think an immediate core reload is pending even when a
-			// fresh cache was reused and no runtime change is needed.
-			needReload = false
+			if needFreeProxyRefresh {
+				// Free-proxy source/filter/cache changes are applied through the
+				// refresh pipeline. That pipeline starts an async reload only when it
+				// actually writes a new cache. Reporting need_reload=true here would
+				// make the UI think an immediate core reload is pending even when a
+				// fresh cache was reused and no runtime change is needed.
+				needReload = false
+			} else {
+				// If the new free-proxy config cannot refresh (cache disabled or no
+				// enabled sources), a previously refreshable runtime still needs a
+				// reload to remove or recompose any loaded free-proxy nodes.
+				needReload = oldFreeProxyRefreshable
+			}
 		}
 		s.cfgMu.Unlock()
 

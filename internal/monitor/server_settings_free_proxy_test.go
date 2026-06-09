@@ -397,6 +397,131 @@ free_proxy_cache:
 	}
 }
 
+func TestHandleSettingsReloadsWhenFreeProxyCacheDisabled(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: local-free
+    file: ` + filepath.Join(tmp, "free.txt") + `
+    format: txt
+`)
+	if err := os.WriteFile(filepath.Join(tmp, "free.txt"), []byte("http://127.0.0.1:18081\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeNodeManager{done: make(chan struct{})}
+	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
+
+	body := []byte(`{"free_proxy_cache":{"enabled":false,"path":"` + cachePath + `","auto_reload":true,"workers":1,"max_age":"6h"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedReload              bool `json:"need_reload"`
+		ReloadStarted           bool `json:"reload_started"`
+		FreeProxyRefreshNeeded  bool `json:"free_proxy_refresh_needed"`
+		FreeProxyRefreshStarted bool `json:"free_proxy_refresh_started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.NeedReload || !resp.ReloadStarted || resp.FreeProxyRefreshNeeded || resp.FreeProxyRefreshStarted {
+		t.Fatalf("disabling free proxy cache should reload runtime without refresh, got %#v body=%s", resp, rec.Body.String())
+	}
+	select {
+	case <-fake.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime reload did not start after disabling free proxy cache")
+	}
+	if fake.ReloadCalls() != 1 {
+		t.Fatalf("reloadCalls=%d, want 1", fake.ReloadCalls())
+	}
+}
+
+func TestHandleSettingsReloadsWhenAllFreeProxySourcesDisabled(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	sourcePath := filepath.Join(tmp, "free.txt")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: local-free
+    file: ` + sourcePath + `
+    format: txt
+`)
+	if err := os.WriteFile(sourcePath, []byte("http://127.0.0.1:18081\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeNodeManager{done: make(chan struct{})}
+	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
+
+	body := []byte(`{
+		"free_proxy_sources": [
+			{"name":"local-free","file":"` + sourcePath + `","format":"txt","enabled":false}
+		]
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedReload              bool `json:"need_reload"`
+		ReloadStarted           bool `json:"reload_started"`
+		FreeProxyRefreshNeeded  bool `json:"free_proxy_refresh_needed"`
+		FreeProxyRefreshStarted bool `json:"free_proxy_refresh_started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.NeedReload || !resp.ReloadStarted || resp.FreeProxyRefreshNeeded || resp.FreeProxyRefreshStarted {
+		t.Fatalf("disabling all free proxy sources should reload runtime without refresh, got %#v body=%s", resp, rec.Body.String())
+	}
+	select {
+	case <-fake.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime reload did not start after disabling all free proxy sources")
+	}
+	if fake.ReloadCalls() != 1 {
+		t.Fatalf("reloadCalls=%d, want 1", fake.ReloadCalls())
+	}
+}
+
 func TestHandleSettingsPreservesFreeProxyFilterFieldsWhenPartiallyUpdated(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
@@ -2614,6 +2739,139 @@ free_proxy_sources:
 	}
 	if got, want := string(data), "http://127.0.0.1:18081\n"; got != want {
 		t.Fatalf("cache should reflect queued latest config, got %q want %q", got, want)
+	}
+}
+
+func TestStartFreeProxyRefreshDoesNotQueueSameSignatureWhileRunning(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	requested := make(chan struct{})
+	release := make(chan struct{})
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requested)
+		<-release
+		_, _ = w.Write([]byte("http://127.0.0.1:18080\n"))
+	}))
+	defer source.Close()
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: false
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: slow-source
+    url: ` + source.URL + `
+    format: txt
+    timeout: 2s
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, nodeMgr: &fakeNodeManager{done: make(chan struct{})}, reloadState: "idle"}
+	if _, started, err := server.startFreeProxyRefresh("manual"); err != nil || !started {
+		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
+	}
+	select {
+	case <-requested:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not request slow source")
+	}
+	status, started, err := server.startFreeProxyRefresh("settings")
+	if err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	if started || status.Pending {
+		t.Fatalf("same-signature refresh should not start or queue, started=%v status=%#v", started, status)
+	}
+	close(release)
+}
+
+func TestFreeProxyRefreshFailureStillDrainsPendingSnapshot(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	requested := make(chan struct{})
+	release := make(chan struct{})
+	sourceA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requested)
+		<-release
+		_, _ = w.Write([]byte("\n"))
+	}))
+	defer sourceA.Close()
+	sourceB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("http://127.0.0.1:18083\n"))
+	}))
+	defer sourceB.Close()
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: false
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: failing-source
+    url: ` + sourceA.URL + `
+    format: txt
+    timeout: 2s
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, nodeMgr: &fakeNodeManager{done: make(chan struct{})}, reloadState: "idle"}
+	if _, started, err := server.startFreeProxyRefresh("manual"); err != nil || !started {
+		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
+	}
+	select {
+	case <-requested:
+	case <-time.After(2 * time.Second):
+		t.Fatal("refresh did not request failing source")
+	}
+	server.cfgMu.Lock()
+	server.cfgSrc.FreeProxySources = []nodesource.SourceConfig{{Name: "recovery-source", URL: sourceB.URL, Format: "txt", Timeout: time.Second}}
+	server.cfgMu.Unlock()
+	status, started, err := server.startFreeProxyRefresh("settings")
+	if err != nil {
+		t.Fatalf("queue refresh: %v", err)
+	}
+	if started || !status.Pending {
+		t.Fatalf("pending recovery refresh not queued, started=%v status=%#v", started, status)
+	}
+	close(release)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		status := server.currentFreeProxyRefreshStatus()
+		if status.State == "succeeded" && !status.Pending {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("pending recovery refresh did not finish, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "http://127.0.0.1:18083\n"; got != want {
+		t.Fatalf("cache should reflect pending recovery config, got %q want %q", got, want)
 	}
 }
 

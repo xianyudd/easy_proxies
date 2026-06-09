@@ -56,7 +56,9 @@ def test_settings_section_hashes_route_and_scroll_reliably():
 def test_disabled_only_free_proxy_source_changes_do_not_trigger_refresh():
     text = read(SERVER)
     assert "freeProxySignatureChanged := oldFreeProxySignature != freeProxyRefreshSignature(s.cfgSrc)" in text
-    assert "needFreeProxyRefresh := freeProxySignatureChanged && hasEnabledFreeProxySourceConfigs(s.cfgSrc.FreeProxySources)" in text
+    assert "oldFreeProxyRefreshable := freeProxyRefreshable(s.cfgSrc)" in text
+    assert "needFreeProxyRefresh := freeProxySignatureChanged && freeProxyRefreshable(s.cfgSrc)" in text
+    assert "needReload = oldFreeProxyRefreshable" in text
     assert "if freeProxySignatureChanged" in text
 
 
