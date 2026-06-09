@@ -879,7 +879,7 @@ restart_service() {
 
 status_service() {
   clean_proxy_env
-  local web node_json settings_json pids listen_re
+  local web node_json settings_json pids listen_re pid_file
   web="$(webui_http_code)"
   echo "Profile: $EP_PROFILE"
   echo "Config:  $CONFIG_FILE"
@@ -891,7 +891,6 @@ status_service() {
   if [ -n "$pids" ]; then
     echo "Process: running pid=$(echo "$pids" | tr '\n' ' ')"
   elif [ "$web" = "200" ]; then
-    local pid_file
     pid_file="$(pid_file_value)"
     if [ -n "$pid_file" ]; then
       echo "Process: running via WebUI, pid file=$pid_file (process not visible from this environment)"
@@ -899,7 +898,12 @@ status_service() {
       echo "Process: running, detected by WebUI only"
     fi
   else
-    echo "Process: not found"
+    pid_file="$(pid_file_value)"
+    if [ -n "$pid_file" ]; then
+      echo "Process: not found, stale/unverified pid file=$pid_file"
+    else
+      echo "Process: not found"
+    fi
   fi
   echo
   local pool_port android_base multi_base clash_port geo_port web_port

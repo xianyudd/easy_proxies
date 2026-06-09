@@ -214,6 +214,31 @@ fi
     assert result.returncode == 0, result.stderr
 
 
+def test_status_reports_stale_unverified_pid_file_when_not_running():
+    script = f"""
+set -euo pipefail
+tmp="$(mktemp -d)"
+CONFIG_FILE="$tmp/config.yaml"
+BIN="$tmp/easy-proxies"
+LOG_FILE="$tmp/service.log"
+PID_FILE="$tmp/service.pid"
+WEBUI_URL="http://127.0.0.1:19093"
+printf '999999\\n' >"$PID_FILE"
+EPCTL_LIB_ONLY=1
+source {shell_quote(str(EPCTL))}
+clean_proxy_env() {{ :; }}
+webui_http_code() {{ echo 000; }}
+find_service_pids() {{ :; }}
+configured_port() {{ echo "$3"; }}
+cfg_value() {{ return 1; }}
+webui_port() {{ echo 19093; }}
+status_service
+"""
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr
+    assert "stale/unverified pid file=999999" in result.stdout
+
+
 if __name__ == "__main__":
     test_pid_matches_profile_accepts_equals_config_argument()
     test_pid_matches_profile_accepts_separate_config_argument()
@@ -225,3 +250,4 @@ if __name__ == "__main__":
     test_preflight_rejects_unknown_owner_without_pid()
     test_start_service_failure_removes_stale_pid_file()
     test_restart_service_removes_temp_binary_when_stop_fails()
+    test_status_reports_stale_unverified_pid_file_when_not_running()
