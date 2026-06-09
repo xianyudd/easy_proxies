@@ -95,10 +95,10 @@ func (m monitorQualityTargetSource) filterRetryFailedTargets(kind quality.CheckK
 	}
 	cfFailed := map[string]bool(nil)
 	repFailed := map[string]bool(nil)
-	if m.s.cfChecker != nil && (kind == "" || kind == quality.CheckCloudflare || kind == quality.CheckCombined) {
+	if m.s.cfChecker != nil && qualityKindUsesCloudflareCache(kind) {
 		cfFailed = failedCloudflareTags(m.s.cfChecker.CacheList())
 	}
-	if m.s.repChecker != nil && (kind == "" || kind == quality.CheckReputation || kind == quality.CheckCombined) {
+	if m.s.repChecker != nil && qualityKindUsesReputationCache(kind) {
 		repFailed = failedReputationTags(m.s.repChecker.NodeResults())
 	}
 	out := make([]quality.Target, 0, len(targets))
@@ -108,6 +108,24 @@ func (m monitorQualityTargetSource) filterRetryFailedTargets(kind quality.CheckK
 		}
 	}
 	return out
+}
+
+func qualityKindUsesCloudflareCache(kind quality.CheckKind) bool {
+	switch kind {
+	case "", quality.CheckCloudflare, quality.CheckCombined, quality.CheckPipeline:
+		return true
+	default:
+		return false
+	}
+}
+
+func qualityKindUsesReputationCache(kind quality.CheckKind) bool {
+	switch kind {
+	case "", quality.CheckReputation, quality.CheckCombined, quality.CheckPipeline:
+		return true
+	default:
+		return false
+	}
 }
 
 func qualityTargetFailed(target quality.Target, failed map[string]bool) bool {

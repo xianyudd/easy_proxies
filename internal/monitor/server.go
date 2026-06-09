@@ -600,9 +600,14 @@ func (s *Server) applyQualityRuntimeConfig(cfg *config.Config) {
 	if cfg != nil {
 		q = cfg.QualityCheck.Normalized()
 	}
+	var cache *cloudflarecheck.Cache
+	if s.cfChecker != nil {
+		cache = s.cfChecker.Cache()
+	}
 	s.cfChecker = cloudflarecheck.NewChecker(
 		cloudflarecheck.WithTimeout(q.CloudflareTimeout),
 		cloudflarecheck.WithMaxConcurrency(q.CloudflareConcurrency),
+		cloudflarecheck.WithCache(cache),
 	)
 }
 

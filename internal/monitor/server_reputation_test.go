@@ -301,6 +301,28 @@ func TestCloudflareCheckerUsesQualityConfig(t *testing.T) {
 	}
 }
 
+func TestCloudflareCheckerCacheSurvivesQualityConfigReload(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	srv.cfChecker.Cache().Set("node-a", cloudflarecheck.Result{NodeName: "node-a", NodeTag: "node-a", Region: "us", Level: "failed"})
+	if got := len(srv.cfChecker.CacheList()); got != 1 {
+		t.Fatalf("cloudflare cache before reload = %d, want 1", got)
+	}
+
+	srv.SetConfig(&config.Config{QualityCheck: config.QualityCheckConfig{CloudflareTimeout: 3500 * time.Millisecond, CloudflareConcurrency: 24}})
+
+	timeout, concurrency := srv.cfChecker.Settings()
+	if timeout != 3500*time.Millisecond || concurrency != 24 {
+		t.Fatalf("cloudflare checker settings = %s/%d, want 3.5s/24", timeout, concurrency)
+	}
+	if got := len(srv.cfChecker.CacheList()); got != 1 {
+		t.Fatalf("cloudflare cache after reload = %d, want 1", got)
+	}
+}
+
 func assertMonitorAPIErrorCode(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) {
 	t.Helper()
 	if rec.Code != status {

@@ -53,6 +53,13 @@ func (c *Checker) CacheList() []Result    { return c.cache.List() }
 func (c *Checker) DeleteCache(key string) { c.cache.Delete(key) }
 func (c *Checker) ClearCache()            { c.cache.Clear() }
 
+func (c *Checker) Cache() *Cache {
+	if c == nil {
+		return nil
+	}
+	return c.cache
+}
+
 func (c *Checker) Settings() (time.Duration, int) {
 	if c == nil {
 		return 0, 0

@@ -554,6 +554,24 @@ func TestMonitorQualityRetryFailedFiltersTargets(t *testing.T) {
 	}
 }
 
+func TestMonitorQualityPipelineRetryFailedFiltersTargets(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+	cache := cloudflarecheck.NewCache(time.Hour)
+	cache.Set("node-b", cloudflarecheck.Result{NodeTag: "node-b", Level: "failed", Error: "dial failed"})
+	srv.cfChecker = cloudflarecheck.NewChecker(cloudflarecheck.WithCache(cache))
+
+	targets, err := newMonitorQualityTargetSource(srv).ListTargets(context.Background(), quality.TargetQuery{Kind: quality.CheckPipeline, Region: "all", IncludeUnavailable: true, RetryFailed: true})
+	if err != nil {
+		t.Fatalf("ListTargets returned error: %v", err)
+	}
+	if len(targets) != 1 || targets[0].NodeTag != "node-b" || targets[0].Index != 0 {
+		t.Fatalf("pipeline retry_failed should select and reindex only failed target, got %#v", targets)
+	}
+	if !targets[0].Retry {
+		t.Fatalf("pipeline retry_failed target should be marked for cache bypass: %#v", targets[0])
+	}
+}
+
 func TestMonitorQualityTargetSourceFiltersSource(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 	srv.mgr.Register(NodeInfo{Tag: "node-free-unchecked", Name: "Free Unchecked", URI: "http://3.3.3.3:80", ListenAddress: "127.0.0.1", Port: 13003, Region: "sg", Source: "free_proxy"})
