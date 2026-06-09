@@ -315,25 +315,49 @@ webui_api() {
 normalize_path() {
   local path="$1"
   if command -v realpath >/dev/null 2>&1; then
-    realpath -m "$path"
+    realpath -m -- "$path"
   else
     case "$path" in /*) echo "$path" ;; *) echo "$PWD/$path" ;; esac
   fi
+}
+
+arg_matches_path() {
+  local arg="$1" expected="$2"
+  [ -n "$arg" ] && [ -n "$expected" ] || return 1
+  local arg_abs expected_abs
+  arg_abs="$(normalize_path "$arg")"
+  expected_abs="$(normalize_path "$expected")"
+  [ "$arg" = "$expected" ] || [ "$arg_abs" = "$expected_abs" ]
 }
 
 pid_matches_profile() {
   local pid="$1"
   [ -n "$pid" ] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-  local cmdline bin_abs cfg_abs
-  cmdline="$(tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline" || true)"
-  [ -n "$cmdline" ] || return 1
-  bin_abs="$(normalize_path "$BIN")"
-  cfg_abs="$(normalize_path "$CONFIG_FILE")"
-  case "$cmdline" in
-    *"$bin_abs"*" --config $cfg_abs"*|*"$BIN"*" --config $CONFIG_FILE"*) return 0 ;;
-    *) return 1 ;;
-  esac
+  local arg prev="" seen_bin=0 seen_config=0 cfg_arg
+  while IFS= read -r -d '' arg; do
+    [ -n "$arg" ] || continue
+    if arg_matches_path "$arg" "$BIN"; then
+      seen_bin=1
+    fi
+    if [ "$prev" = "--config" ]; then
+      if arg_matches_path "$arg" "$CONFIG_FILE"; then
+        seen_config=1
+      fi
+    fi
+    case "$arg" in
+      --config)
+        ;;
+      --config=*)
+        cfg_arg="${arg#--config=}"
+        if arg_matches_path "$cfg_arg" "$CONFIG_FILE"; then
+          seen_config=1
+        fi
+        ;;
+    esac
+    prev="$arg"
+  done <"/proc/$pid/cmdline"
+  [ "$seen_bin" = "1" ] && [ "$seen_config" = "1" ]
 }
 
 is_running() {
@@ -465,14 +489,22 @@ wait_for_service_ready() {
   return 1
 }
 
-build_service() {
-  local out="$BIN"
+build_service_to() {
+  local out="$1"
+  [ -n "$out" ] || {
+    echo "[ERROR] build output path is empty" >&2
+    return 1
+  }
   if [ "$EP_PROFILE" = "prod" ] && [ "$out" = "./easy_proxies_local" ]; then
     out="$ROOT_DIR/easy_proxies_local"
   fi
   echo "[INFO] building $out"
   (cd "$ROOT_DIR" && GOCACHE="${GOCACHE:-/tmp/easy-proxies-go-build}" go build -tags "$BUILD_TAGS" -o "$out" ./cmd/easy_proxies)
   echo "[OK] built $out"
+}
+
+build_service() {
+  build_service_to "$BIN"
 }
 
 write_isolated_config() {
@@ -820,6 +852,19 @@ stop_service() {
   exit 1
 }
 
+restart_service() {
+  local tmp_bin="${BIN}.next.$$"
+  rm -f "$tmp_bin"
+  build_service_to "$tmp_bin"
+  if ! stop_service; then
+    rm -f "$tmp_bin"
+    return 1
+  fi
+  mv "$tmp_bin" "$BIN"
+  chmod +x "$BIN" 2>/dev/null || true
+  start_service
+}
+
 status_service() {
   clean_proxy_env
   local web node_json settings_json pids listen_re
@@ -961,7 +1006,7 @@ cmd="${1:-}"
 case "$cmd" in
   service:start|start) start_service ;;
   service:stop|stop) stop_service ;;
-  service:restart|restart) stop_service; start_service ;;
+  service:restart|restart) restart_service ;;
   service:status|status) status_service ;;
   service:build|build) build_service ;;
   isolated:config|service:isolated:config) EP_PROFILE=isolated; write_isolated_config ;;
@@ -969,7 +1014,7 @@ case "$cmd" in
   isolated:start|service:isolated:start) start_service ;;
   isolated:run|service:isolated:run) EP_PROFILE=isolated; run_service_foreground ;;
   isolated:stop|service:isolated:stop) stop_service ;;
-  isolated:restart|service:isolated:restart) build_service; stop_service; start_service ;;
+  isolated:restart|service:isolated:restart) restart_service ;;
   isolated:status|service:isolated:status) status_service ;;
   isolated:logs) show_logs "${2:-120}" ;;
   isolated:logs-follow) tail -f "$LOG_FILE" ;;

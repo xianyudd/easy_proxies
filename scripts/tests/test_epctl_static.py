@@ -81,6 +81,30 @@ def test_port_preflight_allows_current_profile_owner_and_fails_fast_other_owners
     assert 'return 1' in text[text.index('preflight_ports_available()'):text.index('run_service_foreground()')]
 
 
+def test_restart_builds_temp_binary_before_stop_and_swap():
+    text = read_source()
+    assert 'restart_service()' in text
+    restart = text[text.index('restart_service()'):text.index('status_service()')]
+    assert 'local tmp_bin="${BIN}.next.$$"' in restart
+    assert 'build_service_to "$tmp_bin"' in restart
+    assert 'stop_service' in restart
+    assert 'mv "$tmp_bin" "$BIN"' in restart
+    assert restart.index('build_service_to "$tmp_bin"') < restart.index('stop_service')
+    assert 'service:restart|restart) restart_service ;;' in text
+    assert 'isolated:restart|service:isolated:restart) restart_service ;;' in text
+
+
+def test_pid_profile_matching_parses_config_argument_forms():
+    text = read_source()
+    assert 'realpath -m -- "$path"' in text
+    assert 'while IFS= read -r -d' in text
+    assert 'case "$arg" in' in text
+    assert '--config)' in text
+    assert '--config=*)' in text
+    assert 'cfg_arg="${arg#--config=}"' in text
+    assert 'arg_matches_path "$cfg_arg" "$CONFIG_FILE"' in text
+
+
 if __name__ == "__main__":
     test_isolated_startup_does_not_require_available_nodes_by_default()
     test_readiness_warning_reports_node_availability_separately()
@@ -92,3 +116,5 @@ if __name__ == "__main__":
     test_start_service_runs_port_preflight_before_launching_background_process()
     test_isolated_port_preflight_uses_profile_configured_key_ports()
     test_port_preflight_allows_current_profile_owner_and_fails_fast_other_owners()
+    test_restart_builds_temp_binary_before_stop_and_swap()
+    test_pid_profile_matching_parses_config_argument_forms()
