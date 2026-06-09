@@ -88,6 +88,14 @@ def test_quality_page_normalizes_active_rows_before_filter_map_spread():
     assert "activeCfRows.filter" in text
 
 
+def test_quality_page_row_key_has_stable_fallbacks_for_partial_rows():
+    text = read(QUALITY_PAGE)
+    assert "target_index?: number" in text
+    assert "node_name?: string" in text
+    assert "name?: string" in text
+    assert "row.node_tag || String(row.port || '')" not in text
+
+
 def test_quality_charts_defend_non_array_rows_props():
     text = read(ROOT / "web" / "src" / "components" / "charts" / "QualityCharts.tsx")
     assert "function safeRows<T>(rows: unknown): T[]" in text
@@ -115,5 +123,6 @@ if __name__ == "__main__":
     test_quality_page_refreshes_cache_when_background_job_finishes()
     test_quality_page_normalizes_non_array_api_rows()
     test_quality_page_normalizes_active_rows_before_filter_map_spread()
+    test_quality_page_row_key_has_stable_fallbacks_for_partial_rows()
     test_quality_charts_defend_non_array_rows_props()
     test_quality_page_sample_and_cache_refresh_exit_job_result_mode()

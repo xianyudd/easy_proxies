@@ -28,7 +28,16 @@ function qualityTone(score: number) { return score >= 80 ? 'good' : score >= 60 
 function riskPenalty(level?: string) { return level === 'low' ? 0 : level === 'medium' ? 18 : level === 'high' ? 36 : level === 'failed' ? 50 : 12 }
 function riskScore(row?: ReputationResult) { const r = row?.result || row; return Number(r?.risk_score) || 0 }
 function failedCf(row: CloudflareResult) { return row.level === 'failed' || !!row.error }
-function rowKey(row: { node_tag?: string; port?: number }) { return row.node_tag || String(row.port || '') }
+function rowKey(row: { node_tag?: string; port?: number; target_index?: number; node_name?: string; name?: string; host?: string; exit_ip?: string }) {
+  return row.node_tag
+    || (typeof row.target_index === 'number' ? `target:${row.target_index}` : '')
+    || row.node_name
+    || row.name
+    || (row.host && row.port ? `${row.host}:${row.port}` : '')
+    || (row.exit_ip && row.port ? `${row.exit_ip}:${row.port}` : '')
+    || (row.port ? `port:${row.port}` : '')
+    || `row:${JSON.stringify(row)}`
+}
 function mergeCfRows(current: CloudflareResult[], incoming: CloudflareResult[]) {
   const map = new Map(current.map(row => [rowKey(row), row]))
   incoming.forEach(row => map.set(rowKey(row), row))
