@@ -106,6 +106,9 @@ def test_restart_builds_temp_binary_before_stop_and_swap():
 
 def test_pid_profile_matching_parses_config_argument_forms():
     text = read_source()
+    assert 'EPCTL_PROC_ROOT="${EPCTL_PROC_ROOT:-/proc}"' in text
+    assert 'done <"$EPCTL_PROC_ROOT/$pid/cmdline"' in text
+    assert 'EPCTL_LIB_ONLY' in text
     assert 'realpath -m -- "$path"' in text
     assert 'while IFS= read -r -d' in text
     assert 'case "$arg" in' in text

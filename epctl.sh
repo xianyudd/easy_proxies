@@ -12,6 +12,7 @@ PID_FILE_WAS_SET="${PID_FILE+x}"
 WEBUI_URL_WAS_SET="${WEBUI_URL+x}"
 
 EP_PROFILE="${EP_PROFILE:-prod}"
+EPCTL_PROC_ROOT="${EPCTL_PROC_ROOT:-/proc}"
 case "${1:-}" in
   isolated:*|service:isolated:*) EP_PROFILE="isolated" ;;
 esac
@@ -356,7 +357,7 @@ pid_matches_profile() {
         ;;
     esac
     prev="$arg"
-  done <"/proc/$pid/cmdline"
+  done <"$EPCTL_PROC_ROOT/$pid/cmdline"
   [ "$seen_bin" = "1" ] && [ "$seen_config" = "1" ]
 }
 
@@ -1012,6 +1013,10 @@ adb_status() {
 web_dev() { (cd web && npm run dev); }
 web_typecheck() { (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run typecheck); }
 web_build() { (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run build); }
+
+if [ "${EPCTL_LIB_ONLY:-0}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 cmd="${1:-}"
 case "$cmd" in
