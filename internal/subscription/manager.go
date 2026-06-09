@@ -511,11 +511,14 @@ func (m *Manager) fetchSubscription(subURL string, timeout time.Duration) ([]con
 
 	// Limit read size to prevent memory exhaustion
 	const maxBodySize = 10 * 1024 * 1024 // 10MB
-	limitedReader := io.LimitReader(resp.Body, maxBodySize)
+	limitedReader := io.LimitReader(resp.Body, maxBodySize+1)
 
 	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if int64(len(body)) > maxBodySize {
+		return nil, fmt.Errorf("body too large: exceeds %d bytes", maxBodySize)
 	}
 
 	return config.ParseSubscriptionContent(string(body))

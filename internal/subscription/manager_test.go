@@ -1,6 +1,10 @@
 package subscription
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,5 +45,26 @@ func TestUpdateConfigDoesNotTriggerImmediateRefresh(t *testing.T) {
 	}
 	if mgr.baseCfg.SubscriptionRefresh.Interval != 2*time.Hour {
 		t.Fatalf("interval=%s, want 2h", mgr.baseCfg.SubscriptionRefresh.Interval)
+	}
+}
+
+func TestFetchSubscriptionRejectsBodyLargerThanLimit(t *testing.T) {
+	const validPrefix = "socks5://127.0.0.1:1080#valid\n"
+	const maxBodySize = 10 * 1024 * 1024
+	oversized := append([]byte(validPrefix), bytes.Repeat([]byte("x"), maxBodySize-len(validPrefix)+1)...)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(oversized)
+	}))
+	defer server.Close()
+
+	mgr := New(&config.Config{}, nil)
+	defer mgr.Stop()
+
+	nodes, err := mgr.fetchSubscription(server.URL, time.Second)
+	if err == nil {
+		t.Fatalf("fetchSubscription returned nil error for oversized body, nodes=%d", len(nodes))
+	}
+	if !strings.Contains(err.Error(), "body too large") {
+		t.Fatalf("error=%v, want body too large", err)
 	}
 }
