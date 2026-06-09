@@ -225,6 +225,31 @@ func releaseTestGate(ch chan struct{}) func() {
 	}
 }
 
+func waitTestSignal(t *testing.T, ch <-chan struct{}, timeout time.Duration, message string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(timeout):
+		t.Fatal(message)
+	}
+}
+
+func closeTestGate(ch chan struct{}) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(ch) })
+	}
+}
+
+func subscriptionTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("http://127.0.0.1:18080\nhttp://127.0.0.1:18081\n"))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
 func TestManagementHandlersRejectMethodsWithStructuredCode(t *testing.T) {
 	server := &Server{}
 	cases := []struct {
@@ -2080,11 +2105,11 @@ nodes:
 }
 
 func TestHandleSettingsPersistsSubscriptionsFields(t *testing.T) {
+	subB := subscriptionTestServer(t)
+	subC := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
-	initial := []byte(`subscriptions:
-  - https://example.test/sub-a
-subscription_refresh:
+	initial := []byte(`subscription_refresh:
   enabled: true
   interval: 1h
 nodes:
@@ -2102,7 +2127,7 @@ nodes:
 	server := &Server{cfgSrc: cfg, reloadState: "idle"}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-b","  ","https://example.test/sub-c"],"subscription_refresh":{"enabled":true,"interval":"1h"}}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q,"  ",%q],"subscription_refresh":{"enabled":true,"interval":"1h"}}`, subB.URL, subC.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSettings(rec, req)
@@ -2122,28 +2147,25 @@ nodes:
 	if !resp.SubscriptionRefreshStarted {
 		t.Fatalf("subscription URL settings should report background refresh start: body=%s", rec.Body.String())
 	}
-	select {
-	case <-refresher.updateRefreshStarted:
-	case <-time.After(time.Second):
-		t.Fatalf("settings save should start background subscription refresh")
-	}
+	waitTestSignal(t, refresher.updateRefreshStarted, 2*time.Second, "settings save should start background subscription refresh")
 	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 1 {
 		t.Fatalf("settings save should refresh changed subscription URLs in background: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
 	}
-	if got := strings.Join(refresher.lastURLs, ","); got != "https://example.test/sub-b,https://example.test/sub-c" {
-		t.Fatalf("refresher URLs = %q", got)
+	if got, want := strings.Join(refresher.lastURLs, ","), subB.URL+","+subC.URL; got != want {
+		t.Fatalf("refresher URLs = %q, want %q", got, want)
 	}
 
 	reloaded, err := config.Load(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded.Subscriptions) != 2 || reloaded.Subscriptions[0] != "https://example.test/sub-b" || reloaded.Subscriptions[1] != "https://example.test/sub-c" {
+	if len(reloaded.Subscriptions) != 2 || reloaded.Subscriptions[0] != subB.URL || reloaded.Subscriptions[1] != subC.URL {
 		t.Fatalf("subscriptions update not persisted: %#v", reloaded.Subscriptions)
 	}
 }
 
 func TestHandleSettingsPersistsSubscriptionRefreshFields(t *testing.T) {
+	subA := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`subscription_refresh:
@@ -2160,7 +2182,7 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Subscriptions = []string{"https://example.test/sub-a"}
+	cfg.Subscriptions = []string{subA.URL}
 	server := &Server{cfgSrc: cfg, reloadState: "idle"}
 
 	body := []byte(`{"subscription_refresh":{"enabled":false,"interval":"2h"}}`)
@@ -2184,7 +2206,7 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.SubscriptionRefresh.Enabled || reloaded.SubscriptionRefresh.Interval != 2*time.Hour || len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != "https://example.test/sub-a" {
+	if reloaded.SubscriptionRefresh.Enabled || reloaded.SubscriptionRefresh.Interval != 2*time.Hour || len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != subA.URL {
 		t.Fatalf("subscription refresh update not persisted or corrupted fields: refresh=%#v subscriptions=%#v", reloaded.SubscriptionRefresh, reloaded.Subscriptions)
 	}
 }
@@ -3897,15 +3919,15 @@ func (f *recordingSubscriptionRefresher) UpdateConfig(urls []string, enabled boo
 }
 func (f *recordingSubscriptionRefresher) UpdateConfigAndRefresh(urls []string, enabled bool, interval time.Duration) error {
 	f.updateRefreshCalls++
+	f.lastURLs = append([]string(nil), urls...)
+	f.lastEnabled = enabled
+	f.lastInterval = interval
 	if f.updateRefreshStarted != nil {
 		f.updateRefreshStarted <- struct{}{}
 	}
 	if f.updateRefreshBlock != nil {
 		<-f.updateRefreshBlock
 	}
-	f.lastURLs = append([]string(nil), urls...)
-	f.lastEnabled = enabled
-	f.lastInterval = interval
 	return nil
 }
 
@@ -3926,13 +3948,10 @@ func TestHandleSubscriptionRefreshStartsInBackground(t *testing.T) {
 		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
-		close(refresher.refreshBlock)
-		t.Fatal("subscription refresh endpoint blocked waiting for refresh completion")
-	}
-	close(refresher.refreshBlock)
+	closeRefreshBlock := closeTestGate(refresher.refreshBlock)
+	defer closeRefreshBlock()
+	waitTestSignal(t, done, 2*time.Second, "subscription refresh endpoint blocked waiting for refresh completion")
+	closeRefreshBlock()
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -3947,11 +3966,7 @@ func TestHandleSubscriptionRefreshStartsInBackground(t *testing.T) {
 		t.Fatalf("unexpected response started=%v body=%s", resp.Started, rec.Body.String())
 	}
 
-	select {
-	case <-refresher.refreshStarted:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatalf("background refresh was not triggered")
-	}
+	waitTestSignal(t, refresher.refreshStarted, 2*time.Second, "background refresh was not triggered")
 	if refresher.refreshCalls != 1 {
 		t.Fatalf("refreshCalls=%d, want 1", refresher.refreshCalls)
 	}
@@ -4006,13 +4021,14 @@ func TestHandleSubscriptionRefreshReportsRuntimeSubscriptionNodeCount(t *testing
 }
 
 func TestHandleSubscriptionConfigSkipsRefreshForUnchangedConfig(t *testing.T) {
+	subA := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
 subscriptions:
-  - https://example.test/sub-a
+  - ` + subA.URL + `
 subscription_refresh:
   enabled: true
   interval: 1h
@@ -4028,7 +4044,7 @@ subscription_refresh:
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-a"],"enabled":true,"interval":"1h"}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q],"enabled":true,"interval":"1h"}`, subA.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSubscriptionConfig(rec, req)
@@ -4052,13 +4068,14 @@ subscription_refresh:
 }
 
 func TestHandleSubscriptionConfigUpdatesIntervalWithoutRefresh(t *testing.T) {
+	subA := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
 subscriptions:
-  - https://example.test/sub-a
+  - ` + subA.URL + `
 subscription_refresh:
   enabled: true
   interval: 1h
@@ -4074,7 +4091,7 @@ subscription_refresh:
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-a"],"enabled":true,"interval":"61m"}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q],"enabled":true,"interval":"61m"}`, subA.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSubscriptionConfig(rec, req)
@@ -4101,13 +4118,15 @@ subscription_refresh:
 }
 
 func TestHandleSubscriptionConfigRejectsInvalidIntervalBeforePersisting(t *testing.T) {
+	subA := subscriptionTestServer(t)
+	subB := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
 subscriptions:
-  - https://example.test/sub-a
+  - ` + subA.URL + `
 subscription_refresh:
   enabled: true
   interval: 2h
@@ -4123,7 +4142,7 @@ subscription_refresh:
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-b"],"enabled":false,"interval":"bad-duration"}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q],"enabled":false,"interval":"bad-duration"}`, subB.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSubscriptionConfig(rec, req)
@@ -4134,26 +4153,28 @@ subscription_refresh:
 	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 0 {
 		t.Fatalf("invalid config should not update refresher: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
 	}
-	if server.cfgSrc.SubscriptionRefresh.Interval != 2*time.Hour || !server.cfgSrc.SubscriptionRefresh.Enabled || len(server.cfgSrc.Subscriptions) != 1 || server.cfgSrc.Subscriptions[0] != "https://example.test/sub-a" {
+	if server.cfgSrc.SubscriptionRefresh.Interval != 2*time.Hour || !server.cfgSrc.SubscriptionRefresh.Enabled || len(server.cfgSrc.Subscriptions) != 1 || server.cfgSrc.Subscriptions[0] != subA.URL {
 		t.Fatalf("invalid interval should not mutate memory: enabled=%v interval=%s subscriptions=%#v", server.cfgSrc.SubscriptionRefresh.Enabled, server.cfgSrc.SubscriptionRefresh.Interval, server.cfgSrc.Subscriptions)
 	}
 	reloaded, err := config.Load(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.SubscriptionRefresh.Interval != 2*time.Hour || !reloaded.SubscriptionRefresh.Enabled || len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != "https://example.test/sub-a" {
+	if reloaded.SubscriptionRefresh.Interval != 2*time.Hour || !reloaded.SubscriptionRefresh.Enabled || len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != subA.URL {
 		t.Fatalf("invalid interval should not be persisted: enabled=%v interval=%s subscriptions=%#v", reloaded.SubscriptionRefresh.Enabled, reloaded.SubscriptionRefresh.Interval, reloaded.Subscriptions)
 	}
 }
 
 func TestHandleSubscriptionConfigRejectsTooShortIntervalBeforePersisting(t *testing.T) {
+	subA := subscriptionTestServer(t)
+	subB := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
 subscriptions:
-  - https://example.test/sub-a
+  - ` + subA.URL + `
 subscription_refresh:
   enabled: true
   interval: 2h
@@ -4169,7 +4190,7 @@ subscription_refresh:
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-b"],"enabled":false,"interval":"1m"}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q],"enabled":false,"interval":"1m"}`, subB.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSubscriptionConfig(rec, req)
@@ -4184,19 +4205,20 @@ subscription_refresh:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.SubscriptionRefresh.Interval != 2*time.Hour || !reloaded.SubscriptionRefresh.Enabled || len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != "https://example.test/sub-a" {
+	if reloaded.SubscriptionRefresh.Interval != 2*time.Hour || !reloaded.SubscriptionRefresh.Enabled || len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != subA.URL {
 		t.Fatalf("too-short interval should not be persisted: enabled=%v interval=%s subscriptions=%#v", reloaded.SubscriptionRefresh.Enabled, reloaded.SubscriptionRefresh.Interval, reloaded.Subscriptions)
 	}
 }
 
 func TestHandleSubscriptionConfigRejectsInvalidURLBeforePersisting(t *testing.T) {
+	subA := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
 subscriptions:
-  - https://example.test/sub-a
+  - ` + subA.URL + `
 subscription_refresh:
   enabled: true
   interval: 1h
@@ -4212,7 +4234,7 @@ subscription_refresh:
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-a","not-a-url"],"enabled":true,"interval":"1h"}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q,"not-a-url"],"enabled":true,"interval":"1h"}`, subA.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSubscriptionConfig(rec, req)
@@ -4226,12 +4248,14 @@ subscription_refresh:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != "https://example.test/sub-a" {
+	if len(reloaded.Subscriptions) != 1 || reloaded.Subscriptions[0] != subA.URL {
 		t.Fatalf("invalid config should not be persisted: %#v", reloaded.Subscriptions)
 	}
 }
 
 func TestHandleSubscriptionConfigURLChangeRefreshesInBackground(t *testing.T) {
+	subA := subscriptionTestServer(t)
+	subB := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`nodes:
@@ -4250,7 +4274,7 @@ subscription_refresh:
 	}
 	// Avoid a real subscription fetch during test setup. The handler only
 	// needs the in-memory old URL to detect that the request changed URLs.
-	cfg.Subscriptions = []string{"https://example.test/sub-a"}
+	cfg.Subscriptions = []string{subA.URL}
 	refresher := &recordingSubscriptionRefresher{
 		status:               SubscriptionStatus{NodeCount: 9},
 		updateRefreshStarted: make(chan struct{}, 1),
@@ -4259,7 +4283,7 @@ subscription_refresh:
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-b"],"enabled":true,"interval":"1h"}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q],"enabled":true,"interval":"1h"}`, subB.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
@@ -4268,13 +4292,10 @@ subscription_refresh:
 		close(done)
 	}()
 
-	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
-		close(refresher.updateRefreshBlock)
-		t.Fatal("subscription config save blocked waiting for refresh completion")
-	}
-	close(refresher.updateRefreshBlock)
+	closeUpdateRefreshBlock := closeTestGate(refresher.updateRefreshBlock)
+	defer closeUpdateRefreshBlock()
+	waitTestSignal(t, done, 2*time.Second, "subscription config save blocked waiting for refresh completion")
+	closeUpdateRefreshBlock()
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -4290,24 +4311,22 @@ subscription_refresh:
 		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
 	}
 
-	select {
-	case <-refresher.updateRefreshStarted:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatalf("background config refresh was not triggered")
-	}
+	waitTestSignal(t, refresher.updateRefreshStarted, 2*time.Second, "background config refresh was not triggered")
 	if refresher.updateRefreshCalls != 1 {
 		t.Fatalf("updateRefreshCalls=%d, want 1", refresher.updateRefreshCalls)
 	}
 }
 
 func TestHandleSubscriptionConfigRefreshesWhenURLsChange(t *testing.T) {
+	subA := subscriptionTestServer(t)
+	subB := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
 subscriptions:
-  - https://example.test/sub-a
+  - ` + subA.URL + `
 subscription_refresh:
   enabled: true
   interval: 1h
@@ -4323,18 +4342,14 @@ subscription_refresh:
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-b"],"enabled":true,"interval":"1h"}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q],"enabled":true,"interval":"1h"}`, subB.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSubscriptionConfig(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	select {
-	case <-refresher.updateRefreshStarted:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatalf("background config refresh was not triggered")
-	}
+	waitTestSignal(t, refresher.updateRefreshStarted, 2*time.Second, "background config refresh was not triggered")
 	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 1 {
 		t.Fatalf("url change should refresh: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
 	}
@@ -4351,13 +4366,14 @@ subscription_refresh:
 }
 
 func TestHandleSubscriptionConfigDisableDoesNotRefresh(t *testing.T) {
+	subA := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
 subscriptions:
-  - https://example.test/sub-a
+  - ` + subA.URL + `
 subscription_refresh:
   enabled: true
   interval: 1h
@@ -4373,7 +4389,7 @@ subscription_refresh:
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-a"],"enabled":false,"interval":"1h"}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q],"enabled":false,"interval":"1h"}`, subA.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSubscriptionConfig(rec, req)
@@ -4399,13 +4415,14 @@ subscription_refresh:
 }
 
 func TestHandleSubscriptionConfigEnableRefreshesExistingURLs(t *testing.T) {
+	subA := subscriptionTestServer(t)
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
 subscriptions:
-  - https://example.test/sub-a
+  - ` + subA.URL + `
 subscription_refresh:
   enabled: false
   interval: 1h
@@ -4421,18 +4438,14 @@ subscription_refresh:
 	server := &Server{cfgSrc: cfg}
 	server.SetSubscriptionRefresher(refresher)
 
-	body := []byte(`{"subscriptions":["https://example.test/sub-a"],"enabled":true,"interval":"1h"}`)
+	body := []byte(fmt.Sprintf(`{"subscriptions":[%q],"enabled":true,"interval":"1h"}`, subA.URL))
 	req := httptest.NewRequest(http.MethodPut, "/api/subscription/config", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSubscriptionConfig(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	select {
-	case <-refresher.updateRefreshStarted:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatalf("background config refresh was not triggered")
-	}
+	waitTestSignal(t, refresher.updateRefreshStarted, 2*time.Second, "background config refresh was not triggered")
 	if refresher.updateCalls != 0 || refresher.updateRefreshCalls != 1 {
 		t.Fatalf("enable should refresh existing URLs: update=%d refresh=%d", refresher.updateCalls, refresher.updateRefreshCalls)
 	}
