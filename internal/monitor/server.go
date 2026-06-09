@@ -518,9 +518,18 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/free-proxy/refresh/status", s.withAuth(s.handleFreeProxyRefreshStatus))
 	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
-	s.handler = mux
-	s.srv = &http.Server{Addr: cfg.Listen, Handler: mux}
+	s.handler = defaultAPIContentType(mux)
+	s.srv = &http.Server{Addr: cfg.Listen, Handler: s.handler}
 	return s
+}
+
+func defaultAPIContentType(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "application/json")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // SetSubscriptionRefresher sets the subscription refresher for API endpoints.

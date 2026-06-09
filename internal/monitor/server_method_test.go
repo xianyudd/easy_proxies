@@ -10,6 +10,38 @@ import (
 	"time"
 )
 
+func TestDefaultAPIContentTypeKeepsStructuredErrorsJSON(t *testing.T) {
+	handler := defaultAPIContentType(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/example", nil))
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content-type=%q want application/json body=%s", got, rec.Body.String())
+	}
+}
+
+func TestDefaultAPIContentTypeAllowsSSEOverride(t *testing.T) {
+	handler := defaultAPIContentType(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {}\n\n"))
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/nodes/probe-all", nil))
+
+	if got := rec.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("content-type=%q want text/event-stream", got)
+	}
+}
+
 func TestHandleAuthRejectsNonPostMethodsWithoutPassword(t *testing.T) {
 	server := &Server{cfg: Config{Password: ""}}
 	req := httptest.NewRequest(http.MethodGet, "/api/auth", nil)
