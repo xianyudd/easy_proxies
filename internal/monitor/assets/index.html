@@ -2293,7 +2293,8 @@
         tb.innerHTML = debugNodes.map(n => {
           const calls = (n.success_count||0)+(n.failure_count||0);
           const sr = calls>0 ? ((n.success_count||0)/calls*100).toFixed(1) : 0;
-          const tl = (n.timeline||[]).map(t => `<div class="tl-dot ${t.success?'success':'error'}" title="${t.latency_ms}ms"></div>`).join('');
+          const timeline = safeArray(n.timeline);
+          const tl = timeline.map(t => `<div class="tl-dot ${t.success?'success':'error'}" title="${t.latency_ms}ms"></div>`).join('');
           return `<tr>
             <td><strong>${escapeHtml(n.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escapeHtml(n.tag)}</span></td>
             <td class="tt-mono ${sr>80?'':'badge-error'}">${sr}%</td>

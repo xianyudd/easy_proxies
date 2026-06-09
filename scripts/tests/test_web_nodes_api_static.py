@@ -74,9 +74,17 @@ def test_legacy_webui_defends_non_array_subscription_and_cached_rows():
     assert "reputationLastData = rows || []" not in text
 
 
+def test_legacy_webui_defends_non_array_debug_timeline():
+    text = LEGACY_INDEX.read_text()
+    assert "const timeline = safeArray(n.timeline);" in text
+    assert "const tl = timeline.map(t =>" in text
+    assert "(n.timeline||[]).map" not in text
+
+
 if __name__ == "__main__":
     test_nodes_page_query_preserves_availability_all()
     test_nodes_api_sanitizes_response_shape_before_pages_render()
     test_legacy_webui_defends_non_array_node_payloads()
     test_legacy_webui_defends_non_array_result_payloads()
     test_legacy_webui_defends_non_array_subscription_and_cached_rows()
+    test_legacy_webui_defends_non_array_debug_timeline()
