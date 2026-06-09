@@ -50,12 +50,14 @@ function latestCheckedAt(rows: Array<{ checked_at?: unknown; result?: unknown }>
 function cacheFreshLabel(value?: boolean) { return value ? '新鲜' : '需刷新' }
 function freeProxyRefreshTitle(state: 'idle' | 'refreshing' | 'failed', status?: FreeProxyRefreshStatus) {
   if (state === 'failed') return '免费源扫描失败'
+  if (status?.refresh_pending) return '免费源扫描已排队'
   if (status?.state === 'succeeded' && status.reload_started) return '免费源缓存已更新，正在重载入池'
   if (status?.state === 'succeeded' && status.cache_updated === false) return status.cache_fresh ? '免费源缓存仍新鲜，已复用本地缓存' : '免费源未产生新缓存，已复用旧缓存'
   return '免费源正在后台扫描'
 }
 function freeProxyRefreshDescription(state: 'idle' | 'refreshing' | 'failed', status?: FreeProxyRefreshStatus) {
   if (state === 'failed') return '免费源刷新未产生可入池节点，系统已保留现有缓存且不会自动重载；请检查源地址、探针或降低筛选等级。'
+  if (status?.refresh_pending) return '已有免费源扫描在运行，新配置刷新已排队；当前扫描完成后会自动继续下载、筛选并写入最新缓存。'
   if (status?.state === 'succeeded' && status.reload_started) return '候选代理已写入本地缓存；代理核心正在后台重载，完成后新节点才会出现在节点列表和质量检测中。'
   if (status?.state === 'succeeded' && status.cache_updated === false) {
     return status.cache_fresh ? '本地免费源缓存未过期，本次跳过远程下载和筛选，也不需要重载代理核心。' : '远程刷新没有产生可替换缓存，系统保留并复用旧缓存，避免清空当前节点池。'
@@ -226,7 +228,8 @@ export function SettingsPage() {
         return
       }
       const prefix = res?.subscription_refresh_started ? '设置已保存，订阅后台刷新已启动；' : '设置已保存，'
-      toast(res.free_proxy_refresh_started ? `${prefix}免费源开始后台扫描...` : `${prefix}已有免费源扫描在运行...`, 'ok')
+      const refreshPending = res.free_proxy_refresh_status?.refresh_pending || res.free_proxy_refresh_pending
+      toast(res.free_proxy_refresh_started ? `${prefix}免费源开始后台扫描...` : refreshPending ? `${prefix}已有免费源扫描在运行，新配置刷新已排队...` : `${prefix}已有免费源扫描在运行...`, 'ok')
       setFreeProxyRefreshState('refreshing')
       void freeProxyRefreshStatus.refetch()
       return
@@ -379,6 +382,7 @@ export function SettingsPage() {
         <span>{freeProxyRefreshDescription(freeProxyRefreshState, freeRefresh)}</span>
         <span>缓存：{freeRefresh?.cache_path || String(freeCache.path || '未配置')} · {freeRefreshCacheNodes} 条 · {cacheFreshLabel(freeRefresh?.cache_fresh)} · 最大年龄 {freeRefresh?.cache_max_age || String(freeCache.max_age || '6h0m0s')}</span>
         <span>策略：启用源 {freeRefreshSources} · 自动重载 {freeRefreshAutoReload ? '开' : '关'} · 筛选 {freeRefreshFilterEnabled ? '开' : '关'} · 最低等级 {freeRefresh?.filter_min_tier || String(freeFilter.min_tier || 'http_basic')} · 探测预算 {freeRefreshProbeBudget > 0 ? freeRefreshProbeBudget : '全量'}</span>
+        {freeRefresh?.refresh_pending ? <span>排队：新配置刷新已排队 · 来源 {freeRefresh.pending_requested_by || 'unknown'}</span> : null}
         {freeRefresh?.sources?.length ? <span>
           源结果：{freeRefresh.sources.map(src => `${src.name || 'unnamed'} ${src.accepted || 0}/${src.candidates || 0}${src.error ? ` 失败: ${src.error}` : ''}`).join('；')}
         </span> : null}

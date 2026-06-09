@@ -3,6 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "web" / "src" / "App.tsx"
 SETTINGS_PAGE = ROOT / "web" / "src" / "pages" / "SettingsPage.tsx"
+SETTINGS_TYPES = ROOT / "web" / "src" / "types" / "settings.ts"
 SERVER = ROOT / "internal" / "monitor" / "server.go"
 
 
@@ -27,6 +28,18 @@ def test_settings_page_tracks_reload_and_free_proxy_refresh_status():
     assert "freeProxyRefreshDescription" in text
     assert "free_proxy_refresh_started" in text
     assert "reload_started" in text
+
+
+def test_settings_page_surfaces_pending_free_proxy_refresh():
+    page = read(SETTINGS_PAGE)
+    types = read(SETTINGS_TYPES)
+    assert "refresh_pending?: boolean" in types
+    assert "pending_requested_by?: string" in types
+    assert "free_proxy_refresh_pending?: boolean" in types
+    assert "free_proxy_refresh_status?.refresh_pending" in page
+    assert "free_proxy_refresh_pending" in page
+    assert "新配置刷新已排队" in page
+    assert "pending_requested_by" in page
 
 
 def test_settings_section_hashes_route_and_scroll_reliably():
@@ -86,6 +99,7 @@ def test_management_rebound_url_hint_is_guarded():
 if __name__ == "__main__":
     test_settings_page_does_not_overwrite_dirty_draft_on_refetch()
     test_settings_page_tracks_reload_and_free_proxy_refresh_status()
+    test_settings_page_surfaces_pending_free_proxy_refresh()
     test_settings_section_hashes_route_and_scroll_reliably()
     test_disabled_only_free_proxy_source_changes_do_not_trigger_refresh()
     test_settings_page_refreshes_runtime_node_caches_after_background_changes()

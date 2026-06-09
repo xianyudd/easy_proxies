@@ -76,6 +76,8 @@ type freeProxyRefreshStatus struct {
 	ReloadStarted       bool                                  `json:"reload_started"`
 	ReloadStatus        *reloadStatus                         `json:"reload_status,omitempty"`
 	RequestedBy         string                                `json:"requested_by,omitempty"`
+	Pending             bool                                  `json:"refresh_pending"`
+	PendingRequestedBy  string                                `json:"pending_requested_by,omitempty"`
 	CachePath           string                                `json:"cache_path,omitempty"`
 	CacheMaxAge         string                                `json:"cache_max_age,omitempty"`
 	CacheNodeCount      int                                   `json:"cache_node_count"`
@@ -448,9 +450,14 @@ type Server struct {
 	reloadPending   bool
 	reloadPendingBy string
 
-	freeProxyRefreshMu     sync.Mutex
-	freeProxyRefreshState  string
-	freeProxyRefreshStatus freeProxyRefreshStatus
+	freeProxyRefreshMu               sync.Mutex
+	freeProxyRefreshState            string
+	freeProxyRefreshStatus           freeProxyRefreshStatus
+	freeProxyRefreshRunningSignature string
+	freeProxyRefreshPending          bool
+	freeProxyRefreshPendingBy        string
+	freeProxyRefreshPendingSignature string
+	freeProxyRefreshPendingConfig    *config.Config
 
 	qualityMu      sync.Mutex
 	qualityStop    chan struct{}
@@ -878,6 +885,8 @@ func (s *Server) enrichFreeProxyRefreshStatus(status freeProxyRefreshStatus) fre
 func (s *Server) currentFreeProxyRefreshStatus() freeProxyRefreshStatus {
 	s.freeProxyRefreshMu.Lock()
 	status := s.freeProxyRefreshStatus
+	status.Pending = s.freeProxyRefreshPending
+	status.PendingRequestedBy = s.freeProxyRefreshPendingBy
 	s.freeProxyRefreshMu.Unlock()
 	if status.State == "" {
 		status.State = "idle"
@@ -909,15 +918,31 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 		status := freeProxyRefreshStatus{State: "idle", RequestedBy: requestedBy}
 		return s.enrichFreeProxyRefreshStatus(status), false, nil
 	}
+	signature := freeProxyRefreshSignature(cfg)
 
 	now := time.Now()
 	s.freeProxyRefreshMu.Lock()
 	if s.freeProxyRefreshState == "running" {
+		if signature != "" && signature != s.freeProxyRefreshRunningSignature {
+			s.freeProxyRefreshPending = true
+			s.freeProxyRefreshPendingBy = requestedBy
+			s.freeProxyRefreshPendingSignature = signature
+			s.freeProxyRefreshPendingConfig = cfg
+			s.freeProxyRefreshStatus.Pending = true
+			s.freeProxyRefreshStatus.PendingRequestedBy = requestedBy
+		}
 		status := s.freeProxyRefreshStatus
+		status.Pending = s.freeProxyRefreshPending
+		status.PendingRequestedBy = s.freeProxyRefreshPendingBy
 		s.freeProxyRefreshMu.Unlock()
-		return status, false, nil
+		return s.enrichFreeProxyRefreshStatus(status), false, nil
 	}
 	s.freeProxyRefreshState = "running"
+	s.freeProxyRefreshRunningSignature = signature
+	s.freeProxyRefreshPending = false
+	s.freeProxyRefreshPendingBy = ""
+	s.freeProxyRefreshPendingSignature = ""
+	s.freeProxyRefreshPendingConfig = nil
 	s.freeProxyRefreshStatus = freeProxyRefreshStatus{
 		State:       "running",
 		StartedAt:   now,
@@ -926,47 +951,100 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 	status := s.freeProxyRefreshStatus
 	s.freeProxyRefreshMu.Unlock()
 
-	go func(started time.Time) {
-		summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
-		finished := time.Now()
-		reloadStarted := false
-		var reloadStatusSnapshot *reloadStatus
-		if err == nil && summary.CacheUpdated && summary.Count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
-			status, startedReload, reloadErr := s.startAsyncReload("free-proxy-refresh")
-			reloadStarted = startedReload
-			reloadStatusSnapshot = &status
-			if reloadErr != nil && s.logger != nil {
-				s.logger.Printf("❌ free proxy refresh auto-reload start failed: %v", reloadErr)
-			}
-		}
-
-		s.freeProxyRefreshMu.Lock()
-		defer s.freeProxyRefreshMu.Unlock()
-		s.freeProxyRefreshStatus.FinishedAt = finished
-		s.freeProxyRefreshStatus.DurationMS = finished.Sub(started).Milliseconds()
-		s.freeProxyRefreshStatus.Accepted = summary.Count
-		s.freeProxyRefreshStatus.CacheUpdated = summary.CacheUpdated
-		s.freeProxyRefreshStatus.Sources = summary.Sources
-		s.freeProxyRefreshStatus.ReloadStarted = reloadStarted
-		s.freeProxyRefreshStatus.ReloadStatus = reloadStatusSnapshot
-		if err != nil {
-			s.freeProxyRefreshState = "failed"
-			s.freeProxyRefreshStatus.State = "failed"
-			s.freeProxyRefreshStatus.Error = err.Error()
-			if s.logger != nil {
-				s.logger.Printf("❌ free proxy refresh failed: %v", err)
-			}
-			return
-		}
-		s.freeProxyRefreshState = "succeeded"
-		s.freeProxyRefreshStatus.State = "succeeded"
-		s.freeProxyRefreshStatus.Error = ""
-		if s.logger != nil {
-			s.logger.Printf("✅ free proxy refresh completed in %dms, accepted=%d", s.freeProxyRefreshStatus.DurationMS, summary.Count)
-		}
-	}(now)
+	go s.runFreeProxyRefresh(cfg, cache, signature, now)
 
 	return status, true, nil
+}
+
+func (s *Server) runFreeProxyRefresh(cfg *config.Config, cache config.FreeProxyCacheConfig, signature string, started time.Time) {
+	summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
+	finished := time.Now()
+	reloadStarted := false
+	var reloadStatusSnapshot *reloadStatus
+	if err == nil && summary.CacheUpdated && summary.Count > 0 && cache.AutoReloadValue() && s.nodeMgr != nil {
+		status, startedReload, reloadErr := s.startAsyncReload("free-proxy-refresh")
+		reloadStarted = startedReload
+		reloadStatusSnapshot = &status
+		if reloadErr != nil && s.logger != nil {
+			s.logger.Printf("❌ free proxy refresh auto-reload start failed: %v", reloadErr)
+		}
+	}
+
+	var nextCfg *config.Config
+	var nextSignature string
+	var nextRequestedBy string
+	var nextStarted time.Time
+	var nextCache config.FreeProxyCacheConfig
+
+	s.freeProxyRefreshMu.Lock()
+	s.freeProxyRefreshStatus.FinishedAt = finished
+	s.freeProxyRefreshStatus.DurationMS = finished.Sub(started).Milliseconds()
+	s.freeProxyRefreshStatus.Accepted = summary.Count
+	s.freeProxyRefreshStatus.CacheUpdated = summary.CacheUpdated
+	s.freeProxyRefreshStatus.Sources = summary.Sources
+	s.freeProxyRefreshStatus.ReloadStarted = reloadStarted
+	s.freeProxyRefreshStatus.ReloadStatus = reloadStatusSnapshot
+	if err != nil {
+		s.freeProxyRefreshStatus.State = "failed"
+		s.freeProxyRefreshStatus.Error = err.Error()
+	} else {
+		s.freeProxyRefreshStatus.State = "succeeded"
+		s.freeProxyRefreshStatus.Error = ""
+	}
+
+	if s.freeProxyRefreshPending && s.freeProxyRefreshPendingConfig != nil {
+		nextCfg = s.freeProxyRefreshPendingConfig
+		nextSignature = s.freeProxyRefreshPendingSignature
+		nextRequestedBy = s.freeProxyRefreshPendingBy
+		if strings.TrimSpace(nextRequestedBy) == "" {
+			nextRequestedBy = s.freeProxyRefreshStatus.RequestedBy
+		}
+		nextStarted = time.Now()
+		nextCache = nextCfg.FreeProxyCache.Normalized(nextCfg.FilePath(), len(nextCfg.FreeProxySources) > 0)
+		s.freeProxyRefreshPending = false
+		s.freeProxyRefreshPendingBy = ""
+		s.freeProxyRefreshPendingSignature = ""
+		s.freeProxyRefreshPendingConfig = nil
+		s.freeProxyRefreshState = "running"
+		s.freeProxyRefreshRunningSignature = nextSignature
+		s.freeProxyRefreshStatus = freeProxyRefreshStatus{
+			State:       "running",
+			StartedAt:   nextStarted,
+			RequestedBy: nextRequestedBy,
+		}
+		s.freeProxyRefreshMu.Unlock()
+		if s.logger != nil {
+			level := "completed"
+			if err != nil {
+				level = "failed"
+			}
+			s.logger.Printf("free proxy refresh %s in %dms; running queued refresh requested_by=%s", level, finished.Sub(started).Milliseconds(), nextRequestedBy)
+		}
+		go s.runFreeProxyRefresh(nextCfg, nextCache, nextSignature, nextStarted)
+		return
+	}
+
+	if err != nil {
+		s.freeProxyRefreshState = "failed"
+		s.freeProxyRefreshStatus.Pending = false
+		s.freeProxyRefreshStatus.PendingRequestedBy = ""
+		s.freeProxyRefreshRunningSignature = ""
+		s.freeProxyRefreshMu.Unlock()
+		if s.logger != nil {
+			s.logger.Printf("❌ free proxy refresh failed: %v", err)
+		}
+		return
+	}
+	s.freeProxyRefreshState = "succeeded"
+	s.freeProxyRefreshStatus.Pending = false
+	s.freeProxyRefreshStatus.PendingRequestedBy = ""
+	s.freeProxyRefreshRunningSignature = signature
+	durationMS := s.freeProxyRefreshStatus.DurationMS
+	accepted := s.freeProxyRefreshStatus.Accepted
+	s.freeProxyRefreshMu.Unlock()
+	if s.logger != nil {
+		s.logger.Printf("✅ free proxy refresh completed in %dms, accepted=%d", durationMS, accepted)
+	}
 }
 
 // getSettings returns current dynamic settings (thread-safe).
@@ -4018,6 +4096,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"reload_error":                 reloadError,
 			"free_proxy_refresh_needed":    needFreeProxyRefresh,
 			"free_proxy_refresh_started":   freeProxyRefreshStarted,
+			"free_proxy_refresh_pending":   freeProxyRefreshStatus.Pending,
 			"subscription_refresh_started": subscriptionRefreshStarted,
 			"free_proxy_refresh_status":    freeProxyRefreshStatus,
 			"free_proxy_refresh_error":     freeProxyRefreshError,
@@ -4496,6 +4575,9 @@ func (s *Server) handleFreeProxyRefresh(w http.ResponseWriter, r *http.Request) 
 func freeProxyRefreshMessage(started bool, status freeProxyRefreshStatus) string {
 	if started {
 		return "免费源刷新已启动"
+	}
+	if status.Pending {
+		return "已有免费源刷新在运行，新刷新已排队"
 	}
 	switch status.State {
 	case "disabled":

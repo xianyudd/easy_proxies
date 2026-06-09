@@ -64,6 +64,7 @@ export interface SaveSettingsResponse {
   reload_error?: string
   free_proxy_refresh_needed?: boolean
   free_proxy_refresh_started?: boolean
+  free_proxy_refresh_pending?: boolean
   subscription_refresh_started?: boolean
   free_proxy_refresh_status?: FreeProxyRefreshStatus
   free_proxy_refresh_error?: string
@@ -123,6 +124,8 @@ export interface FreeProxyRefreshStatus {
   reload_started?: boolean
   reload_status?: ReloadStatus
   requested_by?: string
+  refresh_pending?: boolean
+  pending_requested_by?: string
   cache_path?: string
   cache_max_age?: string
   cache_node_count?: number
