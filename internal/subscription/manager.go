@@ -111,7 +111,7 @@ func (m *Manager) Start() {
 	interval := m.baseCfg.SubscriptionRefresh.Interval
 	m.logger.Infof("starting subscription refresh, interval: %s", interval)
 
-	go m.refreshLoop(interval)
+	go m.refreshLoop(m.ctx, m.manualRefresh, interval)
 }
 
 // Stop stops the periodic refresh.
@@ -146,10 +146,11 @@ func (m *Manager) UpdateConfig(urls []string, enabled bool, interval time.Durati
 		m.cancel()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	manualRefresh := make(chan struct{}, 1)
 	m.mu.Lock()
 	m.ctx = ctx
 	m.cancel = cancel
-	m.manualRefresh = make(chan struct{}, 1)
+	m.manualRefresh = manualRefresh
 	m.mu.Unlock()
 
 	if len(urls) == 0 {
@@ -161,7 +162,7 @@ func (m *Manager) UpdateConfig(urls []string, enabled bool, interval time.Durati
 	// the new config. Do not trigger a fetch here: callers that need an
 	// immediate refresh must call RefreshNow or UpdateConfigAndRefresh.
 	m.logger.Infof("subscription config updated: %d URLs, enabled=%v, interval=%s", len(urls), enabled, m.baseCfg.SubscriptionRefresh.Interval)
-	go m.refreshLoop(m.baseCfg.SubscriptionRefresh.Interval)
+	go m.refreshLoop(ctx, manualRefresh, m.baseCfg.SubscriptionRefresh.Interval)
 }
 
 // UpdateConfigAndRefresh updates subscription config and synchronously waits for
@@ -230,7 +231,7 @@ func (m *Manager) Status() monitor.SubscriptionStatus {
 }
 
 // refreshLoop runs the periodic refresh.
-func (m *Manager) refreshLoop(interval time.Duration) {
+func (m *Manager) refreshLoop(ctx context.Context, manualRefresh <-chan struct{}, interval time.Duration) {
 	m.mu.RLock()
 	autoEnabled := m.baseCfg.SubscriptionRefresh.Enabled
 	m.mu.RUnlock()
@@ -247,7 +248,7 @@ func (m *Manager) refreshLoop(interval time.Duration) {
 
 	for {
 		select {
-		case <-m.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			// Only do periodic refresh when auto-refresh is enabled
@@ -258,7 +259,7 @@ func (m *Manager) refreshLoop(interval time.Duration) {
 			m.mu.Lock()
 			m.status.NextRefresh = time.Now().Add(interval)
 			m.mu.Unlock()
-		case <-m.manualRefresh:
+		case <-manualRefresh:
 			// Always honor manual/immediate refresh regardless of enabled flag
 			m.doRefresh()
 			if autoEnabled {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -66,5 +67,25 @@ func TestFetchSubscriptionRejectsBodyLargerThanLimit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "body too large") {
 		t.Fatalf("error=%v, want body too large", err)
+	}
+}
+
+func TestRefreshLoopUsesGenerationScopedContextAndManualChannel(t *testing.T) {
+	source, err := os.ReadFile("manager.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "func (m *Manager) refreshLoop(ctx context.Context, manualRefresh <-chan struct{}, interval time.Duration)") {
+		t.Fatalf("refreshLoop must accept generation-scoped ctx and manualRefresh channel")
+	}
+	start := strings.Index(text, "func (m *Manager) refreshLoop(")
+	end := strings.Index(text[start:], "// doRefresh performs")
+	if start < 0 || end < 0 {
+		t.Fatalf("refreshLoop body not found")
+	}
+	body := text[start : start+end]
+	if strings.Contains(body, "<-m.ctx.Done()") || strings.Contains(body, "<-m.manualRefresh") {
+		t.Fatalf("refreshLoop should not read mutable manager ctx/manualRefresh fields directly")
 	}
 }
