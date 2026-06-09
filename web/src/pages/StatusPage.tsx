@@ -16,6 +16,17 @@ function latencyLabel(value: unknown) {
   return Number.isFinite(ms) && ms >= 0 ? `${ms} ms` : '未测速'
 }
 
+function safeCount(input: unknown) {
+  const value = Number(input)
+  return Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0
+}
+
+function safeRate(input: unknown) {
+  const value = Number(input)
+  if (!Number.isFinite(value) || value < 0) return 0
+  return Math.min(100, value)
+}
+
 function regionLabel(region?: string) {
   return regionMeta(region).label
 }
@@ -45,14 +56,14 @@ export function StatusPage() {
   const data = nodes.data?.nodes || []
   const summaryData = summary.data
   const dataUnavailable = (nodes.isError && !nodes.data) || (summary.isError && !summary.data)
-  const healthyTotal = Object.values(summaryData?.region_healthy || {}).reduce((sum, count) => sum + Number(count || 0), 0)
-  const totalNodes = Number(summaryData?.total_nodes || nodes.data?.total_nodes || data.length || 0)
+  const healthyTotal = Object.values(summaryData?.region_healthy || {}).reduce((sum, count) => sum + safeCount(count), 0)
+  const totalNodes = safeCount(summaryData?.total_nodes || nodes.data?.total_nodes || data.length)
   const stats = useMemo(() => ({
     total: dataUnavailable ? null : totalNodes,
     healthy: dataUnavailable ? null : healthyTotal || data.filter(n=>n.available&&!n.blacklisted).length,
     bad: dataUnavailable ? null : Math.max(0, totalNodes - (healthyTotal || data.filter(n=>n.available&&!n.blacklisted).length)),
-    conn:data.reduce((s,n)=>s+(Number(n.active_connections)||0),0),
-    successRate: debug.isError && !debug.data ? null : Number(debug.data?.success_rate || 0),
+    conn:data.reduce((s,n)=>s+safeCount(n.active_connections),0),
+    successRate: debug.isError && !debug.data ? null : safeRate(debug.data?.success_rate),
   }), [data, dataUnavailable, debug.data, debug.isError, healthyTotal, totalNodes])
   const healthRate = stats.total && stats.healthy !== null ? Math.round((stats.healthy / stats.total) * 100) : null
   const regions = Object.entries(summaryData?.region_stats && Object.keys(summaryData.region_stats).length ? summaryData.region_stats : data.reduce((m,n)=>{ const r=String(n.region||'other'); m[r]=(m[r]||0)+1; return m }, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1])
