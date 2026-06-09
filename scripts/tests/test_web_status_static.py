@@ -23,5 +23,13 @@ def test_status_page_sanitizes_numeric_summary_fields():
     assert "Number(debug.data?.success_rate || 0)" not in text
 
 
+def test_status_page_defends_non_array_nodes_payload():
+    text = read(STATUS_PAGE)
+    assert "function safeRows<T>(rows: unknown): T[]" in text
+    assert "const data = safeRows<NodeSnapshot>(nodes.data?.nodes)" in text
+    assert "nodes.data?.nodes || []" not in text
+
+
 if __name__ == "__main__":
     test_status_page_sanitizes_numeric_summary_fields()
+    test_status_page_defends_non_array_nodes_payload()

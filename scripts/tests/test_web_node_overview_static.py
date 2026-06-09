@@ -23,6 +23,14 @@ def test_node_overview_reconciles_server_clamped_page_and_copies_stable_tag():
     assert "node.name || node.tag || '-'" in text
 
 
+def test_node_overview_defends_non_array_nodes_payload():
+    text = read_source()
+    assert "function safeRows<T>(rows: unknown): T[]" in text
+    assert "const rows = safeRows<NodeSnapshot>(data?.nodes)" in text
+    assert "data?.nodes || []" not in text
+
+
 if __name__ == "__main__":
     test_node_overview_labels_all_backend_regions()
     test_node_overview_reconciles_server_clamped_page_and_copies_stable_tag()
+    test_node_overview_defends_non_array_nodes_payload()

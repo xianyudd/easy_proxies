@@ -77,9 +77,17 @@ def test_node_config_reload_refreshes_runtime_node_caches():
     assert "queryClient.invalidateQueries({ queryKey: ['nodes-summary'] })" in page
 
 
+def test_node_config_page_defends_non_array_nodes_payload():
+    page = read(PAGE)
+    assert "function safeRows<T>(rows: unknown): T[]" in page
+    assert "const rows = useMemo(() => safeRows<ConfigNode>(nodesQuery.data?.nodes), [nodesQuery.data?.nodes])" in page
+    assert "nodesQuery.data?.nodes || []" not in page
+
+
 if __name__ == "__main__":
     test_node_config_page_is_routable_from_react_shell()
     test_node_config_api_client_covers_crud_and_reload()
     test_node_config_page_handles_crud_need_reload_and_reload_polling()
     test_node_config_page_filters_paginates_and_wraps_long_uri()
     test_node_config_reload_refreshes_runtime_node_caches()
+    test_node_config_page_defends_non_array_nodes_payload()

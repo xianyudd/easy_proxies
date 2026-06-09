@@ -35,6 +35,10 @@ function reloadText(state?: string) {
   }
 }
 
+function safeRows<T>(rows: unknown): T[] {
+  return Array.isArray(rows) ? rows : []
+}
+
 export function NodeConfigPage() {
   const queryClient = useQueryClient()
   const toast = useToast(s => s.show)
@@ -56,7 +60,7 @@ export function NodeConfigPage() {
     refetchInterval: reloadState === 'reloading' ? 800 : false,
   })
 
-  const rows = useMemo(() => nodesQuery.data?.nodes || [], [nodesQuery.data?.nodes])
+  const rows = useMemo(() => safeRows<ConfigNode>(nodesQuery.data?.nodes), [nodesQuery.data?.nodes])
   const sourceOptions = useMemo(() => {
     const sources = Array.from(new Set(rows.map(node => String(node.source || 'unknown')).filter(Boolean))).sort()
     return [{ value: 'all', label: '全部来源' }, ...sources.map(source => ({ value: source, label: sourceLabel(source) }))]

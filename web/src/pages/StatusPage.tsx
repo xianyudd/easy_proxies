@@ -27,6 +27,10 @@ function safeRate(input: unknown) {
   return Math.min(100, value)
 }
 
+function safeRows<T>(rows: unknown): T[] {
+  return Array.isArray(rows) ? rows : []
+}
+
 function regionLabel(region?: string) {
   return regionMeta(region).label
 }
@@ -53,7 +57,7 @@ export function StatusPage() {
   const nodes = useQuery({ queryKey:['status-nodes-all'], queryFn:getAllStatusNodes, refetchInterval:10000 })
   const summary = useQuery({ queryKey:['nodes-summary'], queryFn:getNodesSummary, refetchInterval:10000 })
   const debug = useQuery({ queryKey:['debug-summary'], queryFn:() => getDebugSummary() as Promise<DebugResponse>, refetchInterval:10000 })
-  const data = nodes.data?.nodes || []
+  const data = safeRows<NodeSnapshot>(nodes.data?.nodes)
   const summaryData = summary.data
   const dataUnavailable = (nodes.isError && !nodes.data) || (summary.isError && !summary.data)
   const healthyTotal = Object.values(summaryData?.region_healthy || {}).reduce((sum, count) => sum + safeCount(count), 0)

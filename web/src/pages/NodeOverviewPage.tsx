@@ -62,6 +62,10 @@ function latencyLabel(value: unknown) {
   return Number.isFinite(ms) && ms >= 0 ? `${ms} ms` : '未测速'
 }
 
+function safeRows<T>(rows: unknown): T[] {
+  return Array.isArray(rows) ? rows : []
+}
+
 export function NodeOverviewPage() {
   const [region, setRegion] = useState('all')
   const [source, setSource] = useState('all')
@@ -79,7 +83,7 @@ export function NodeOverviewPage() {
     refetchInterval: 10000,
   })
 
-  const rows = data?.nodes || []
+  const rows = safeRows<NodeSnapshot>(data?.nodes)
 
   useEffect(() => {
     if (data?.page && data.page !== page) {
