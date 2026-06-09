@@ -16,6 +16,13 @@ function truncateMessage(text: string, limit = 240) {
   return normalized.length > limit ? `${normalized.slice(0, limit)}…` : normalized
 }
 
+export const UNAUTHORIZED_EVENT = 'easy-proxies:unauthorized'
+
+function notifyUnauthorized(path: string, payload: unknown) {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: { path, payload } }))
+}
+
 function errorMessage(status: number, payload: unknown, path: string) {
   if (typeof payload === 'object' && payload) {
     const record = payload as Record<string, unknown>
@@ -40,6 +47,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   const contentType = res.headers.get('content-type') || ''
   const payload = contentType.includes('application/json') ? await res.json().catch(() => ({})) : parseTextPayload(await res.text())
   if (!res.ok) {
+    if (res.status === 401) notifyUnauthorized(path, payload)
     throw new ApiError(errorMessage(res.status, payload, path), res.status, payload, path)
   }
   return payload as T

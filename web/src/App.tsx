@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AppLayout } from './components/layout/AppLayout'
 import { useAppStore } from './store/appStore'
 import { getAuthStatus, login } from './api/logs'
+import { UNAUTHORIZED_EVENT } from './api/client'
 import { Button } from './components/ui/Button'
 import { useToast } from './components/ui/Toast'
 import { ExtractorPage } from './pages/ExtractorPage'
@@ -45,6 +46,7 @@ function LoginPage() {
 }
 
 export default function App() {
+  const queryClient = useQueryClient()
   const activeTab = useAppStore(s => s.activeTab)
   const authenticated = useAppStore(s => s.authenticated)
   const setAuthenticated = useAppStore(s => s.setAuthenticated)
@@ -60,6 +62,15 @@ export default function App() {
     window.addEventListener('hashchange', syncHash)
     return () => window.removeEventListener('hashchange', syncHash)
   }, [setActiveTab])
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      queryClient.clear()
+      setAuthenticated('unauthenticated')
+    }
+    window.addEventListener(UNAUTHORIZED_EVENT, handleUnauthorized)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, handleUnauthorized)
+  }, [queryClient, setAuthenticated])
+
   useEffect(() => {
     if (authProbe.isSuccess) {
       setAuthenticated(authProbe.data.authenticated ? 'authenticated' : 'unauthenticated')
