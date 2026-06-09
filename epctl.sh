@@ -868,13 +868,13 @@ wait_until_stopped() {
   local wait_seconds="$1" pids="$2" deadline alive
   deadline=$((SECONDS + wait_seconds))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    alive="$(alive_pids $pids)"
+    alive="$(alive_pids "$pids")"
     if [ -z "$alive" ]; then
       return 0
     fi
     sleep 1
   done
-  alive="$(alive_pids $pids)"
+  alive="$(alive_pids "$pids")"
   [ -z "$alive" ]
 }
 
@@ -902,7 +902,7 @@ stop_service() {
     return
   fi
 
-  alive="$(alive_pids $pids)"
+  alive="$(alive_pids "$pids")"
   echo "[WARN] graceful stop timed out after ${STOP_TIMEOUT}s, killing:${alive}"
   for pid in $alive; do kill -KILL "$pid" 2>/dev/null || true; done
   if wait_until_stopped "$KILL_TIMEOUT" "$alive"; then
@@ -911,7 +911,7 @@ stop_service() {
     return
   fi
 
-  echo "[ERROR] still running after kill:$(alive_pids $alive)" >&2
+  echo "[ERROR] still running after kill:$(alive_pids "$alive")" >&2
   exit 1
 }
 
@@ -1083,7 +1083,10 @@ web_typecheck() { (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_pro
 web_build() { (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run build); }
 
 if [ "${EPCTL_LIB_ONLY:-0}" = "1" ]; then
-  return 0 2>/dev/null || exit 0
+  if (return 0 2>/dev/null); then
+    return 0
+  fi
+  exit 0
 fi
 
 cmd="${1:-}"
