@@ -343,6 +343,39 @@ free_proxy_sources:
 	}
 }
 
+func TestLoadSkipsFreeProxyCacheWhenAllSourcesDisabled(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "free-cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://1.2.3.4:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "config.yaml")
+	content := `mode: pool
+nodes:
+  - name: inline
+    uri: http://127.0.0.1:1
+free_proxy_cache:
+  enabled: true
+  path: free-cache.txt
+free_proxy_sources:
+  - name: disabled
+    enabled: false
+    url: http://127.0.0.1:9/list.txt
+    format: txt
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+	if len(cfg.Nodes) != 1 || cfg.Nodes[0].Source == NodeSourceFreeProxy {
+		t.Fatalf("disabled free proxy sources must not materialize cached free nodes: %#v", cfg.Nodes)
+	}
+}
+
 func TestRefreshFreeProxyCacheDetailedReportsPerSourceFailures(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "cache.txt")

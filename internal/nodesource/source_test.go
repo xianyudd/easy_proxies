@@ -169,3 +169,36 @@ func TestDefaultFetchTimeoutIsBoundedForUnresponsiveSources(t *testing.T) {
 		t.Fatalf("default free proxy fetch timeout should stay bounded, got %s", DefaultFetchTimeout)
 	}
 }
+
+func TestFetchHTTPClientBypassesEnvironmentProxy(t *testing.T) {
+	client := newFetchHTTPClient(time.Second)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatal("free proxy source downloads must bypass environment proxy by default")
+	}
+}
+
+func TestProviderHTTPFetchIgnoresEnvironmentProxy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("1.2.3.4:8080\n"))
+	}))
+	defer server.Close()
+
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	t.Setenv("http_proxy", "http://127.0.0.1:1")
+	t.Setenv("https_proxy", "http://127.0.0.1:1")
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+
+	nodes, err := NewProvider(SourceConfig{Name: "remote", URL: server.URL, Format: "txt", Timeout: time.Second}).Load()
+	if err != nil {
+		t.Fatalf("expected free proxy source fetch to bypass environment proxy, got %v", err)
+	}
+	if len(nodes) != 1 || nodes[0].URI != "http://1.2.3.4:8080" {
+		t.Fatalf("unexpected nodes: %#v", nodes)
+	}
+}

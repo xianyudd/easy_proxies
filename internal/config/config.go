@@ -311,6 +311,9 @@ func (c *Config) appendFreeProxyNodes() error {
 	if c == nil || len(c.FreeProxySources) == 0 {
 		return nil
 	}
+	if !hasEnabledFreeProxySource(c.FreeProxySources) {
+		return nil
+	}
 	if c.FreeProxyCache.EnabledValue() && strings.TrimSpace(c.FreeProxyCache.Path) != "" {
 		return c.appendCachedFreeProxyNodes(c.FreeProxyCache.Path)
 	}

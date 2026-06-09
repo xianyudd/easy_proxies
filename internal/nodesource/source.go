@@ -137,11 +137,23 @@ func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
 	return body, nil
 }
 
+func newFetchHTTPClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = DefaultFetchTimeout
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Free-proxy source URLs are public data inputs. Bypass process-wide
+	// HTTP_PROXY/HTTPS_PROXY so source refresh behavior is stable even when the
+	// operator shell or Codex harness injects a local development proxy.
+	transport.Proxy = nil
+	return &http.Client{Timeout: timeout, Transport: transport}
+}
+
 func fetch(rawURL string, timeout time.Duration, maxBytes int64) ([]byte, error) {
 	if timeout <= 0 {
 		timeout = DefaultFetchTimeout
 	}
-	client := &http.Client{Timeout: timeout}
+	client := newFetchHTTPClient(timeout)
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch source: %w", err)
