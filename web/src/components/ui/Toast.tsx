@@ -9,13 +9,19 @@ interface ToastState {
   show: (message: string, kind?: ToastState['kind']) => void
 }
 
+let toastTimer: number | undefined
+
 export const useToast = create<ToastState>((set) => ({
   message: '',
   kind: 'info',
   nonce: 0,
   show: (content, kind = 'info') => {
+    if (toastTimer !== undefined) window.clearTimeout(toastTimer)
     set(state => ({ message: content, kind, nonce: state.nonce + 1 }))
-    window.setTimeout(() => set({ message: '' }), 2600)
+    toastTimer = window.setTimeout(() => {
+      set({ message: '' })
+      toastTimer = undefined
+    }, 2600)
   },
 }))
 
