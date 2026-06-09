@@ -23,11 +23,12 @@ export function EChart({ option, height = 320, className = '' }: { option: EChar
     if (!ref.current) return
     const chart = echarts.init(ref.current, null, { renderer: 'canvas' })
     const resize = () => chart.resize()
-    const observer = new ResizeObserver(resize)
-    observer.observe(ref.current)
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : undefined
+    observer?.observe(ref.current)
     window.addEventListener('resize', resize)
+    window.setTimeout(resize, 0)
     return () => {
-      observer.disconnect()
+      observer?.disconnect()
       window.removeEventListener('resize', resize)
       chart.dispose()
     }
