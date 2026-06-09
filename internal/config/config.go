@@ -2,7 +2,9 @@ package config
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1706,7 +1708,8 @@ func (c *Config) RefreshFreeProxyCacheSummary(ctx context.Context) (FreeProxyCac
 		return FreeProxyCacheRefreshSummary{}, nil
 	}
 
-	if count, fresh := freshCachedFreeProxyNodeCount(cache.Path, cache.MaxAge, time.Now()); fresh && count > 0 {
+	signature := c.freeProxyCacheSignature(cache)
+	if count, fresh := freshCachedFreeProxyNodeCount(cache.Path, cache.MaxAge, time.Now()); fresh && count > 0 && freeProxyCacheSignatureMatches(cache.Path, signature) {
 		log.Printf("ℹ️ Free proxy cache %q is fresh; reusing %d cached nodes without remote refresh", cache.Path, count)
 		return FreeProxyCacheRefreshSummary{Count: count, CacheUpdated: false, Sources: sourceRefreshResults(c.FreeProxySources, nil)}, nil
 	}
@@ -1825,8 +1828,79 @@ func (c *Config) RefreshFreeProxyCacheSummary(ctx context.Context) (FreeProxyCac
 	if err := writeFileWithLock(cache.Path, []byte(content), 0o644); err != nil {
 		return FreeProxyCacheRefreshSummary{Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, fmt.Errorf("write free proxy cache: %w", err)
 	}
+	if err := writeFreeProxyCacheSignature(cache.Path, signature); err != nil {
+		return FreeProxyCacheRefreshSummary{Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, fmt.Errorf("write free proxy cache metadata: %w", err)
+	}
 	log.Printf("✅ Refreshed free proxy cache %q with %d accepted nodes", cache.Path, len(accepted))
 	return FreeProxyCacheRefreshSummary{Count: len(accepted), CacheUpdated: true, Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, nil
+}
+
+type freeProxyCacheMetadata struct {
+	Signature string `json:"signature"`
+}
+
+type freeProxyCacheSignatureInput struct {
+	Sources      []nodesource.SourceConfig `json:"sources"`
+	MaxNodes     int                       `json:"max_nodes"`
+	Filter       nodesource.FilterConfig   `json:"filter"`
+	CacheWorkers int                       `json:"cache_workers"`
+}
+
+func (c *Config) freeProxyCacheSignature(cache FreeProxyCacheConfig) string {
+	if c == nil {
+		return ""
+	}
+	input := freeProxyCacheSignatureInput{
+		Sources:      append([]nodesource.SourceConfig(nil), c.FreeProxySources...),
+		MaxNodes:     c.FreeProxyMaxNodes,
+		Filter:       c.FreeProxyFilter.Normalized(),
+		CacheWorkers: cache.Workers,
+	}
+	data, err := json.Marshal(input)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func freeProxyCacheMetaPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return path + ".meta.json"
+}
+
+func freeProxyCacheSignatureMatches(path, signature string) bool {
+	if strings.TrimSpace(signature) == "" {
+		return false
+	}
+	data, err := os.ReadFile(freeProxyCacheMetaPath(path))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true
+		}
+		return false
+	}
+	var meta freeProxyCacheMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return false
+	}
+	return meta.Signature == signature
+}
+
+func writeFreeProxyCacheSignature(path, signature string) error {
+	metaPath := freeProxyCacheMetaPath(path)
+	if metaPath == "" || strings.TrimSpace(signature) == "" {
+		return nil
+	}
+	data, err := json.MarshalIndent(freeProxyCacheMetadata{Signature: signature}, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return writeFileWithLock(metaPath, data, 0o644)
 }
 
 func freshCachedFreeProxyNodeCount(path string, maxAge time.Duration, now time.Time) (int, bool) {

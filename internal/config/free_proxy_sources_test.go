@@ -409,6 +409,10 @@ func TestRefreshFreeProxyCacheUsesFreshCacheWithoutFetchingRemote(t *testing.T) 
 		FreeProxyCache:  FreeProxyCacheConfig{Path: cachePath, MaxAge: time.Hour},
 		FreeProxyFilter: nodesource.FilterConfig{Enabled: false},
 	}
+	cache := cfg.FreeProxyCache.Normalized(cfg.filePath, true)
+	if err := writeFreeProxyCacheSignature(cache.Path, cfg.freeProxyCacheSignature(cache)); err != nil {
+		t.Fatalf("write cache metadata: %v", err)
+	}
 
 	started := time.Now()
 	summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
@@ -426,6 +430,92 @@ func TestRefreshFreeProxyCacheUsesFreshCacheWithoutFetchingRemote(t *testing.T) 
 	}
 	if hits != 0 {
 		t.Fatalf("remote hits=%d, want 0", hits)
+	}
+}
+
+func TestRefreshFreeProxyCacheReusesFreshLegacyCacheWithoutMetadata(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hits := 0
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		t.Fatal("fresh legacy cache refresh should not fetch remote source")
+	}))
+	defer remote.Close()
+
+	cfg := &Config{
+		filePath: filepath.Join(dir, "config.yaml"),
+		FreeProxySources: []nodesource.SourceConfig{
+			{Name: "remote", URL: remote.URL, Format: "txt", Timeout: time.Second},
+		},
+		FreeProxyCache:  FreeProxyCacheConfig{Path: cachePath, MaxAge: time.Hour},
+		FreeProxyFilter: nodesource.FilterConfig{Enabled: false},
+	}
+
+	summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
+	if err != nil {
+		t.Fatalf("refresh should reuse fresh legacy cache: %v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("remote hits=%d, want 0", hits)
+	}
+	if summary.Count != 1 || summary.CacheUpdated {
+		t.Fatalf("summary=%#v, want one cached node without cache update", summary)
+	}
+}
+
+func TestRefreshFreeProxyCacheRefetchesFreshCacheWhenSignatureChanged(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hits := 0
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte("http://7.7.7.7:8080\n"))
+	}))
+	defer remote.Close()
+
+	cfg := &Config{
+		filePath: filepath.Join(dir, "config.yaml"),
+		FreeProxySources: []nodesource.SourceConfig{
+			{Name: "remote", URL: remote.URL, Format: "txt", Timeout: time.Second},
+		},
+		FreeProxyCache:  FreeProxyCacheConfig{Path: cachePath, MaxAge: time.Hour},
+		FreeProxyFilter: nodesource.FilterConfig{Enabled: false},
+	}
+	oldCfg := *cfg
+	oldCfg.FreeProxyMaxNodes = 1
+	cache := cfg.FreeProxyCache.Normalized(cfg.filePath, true)
+	if err := writeFreeProxyCacheSignature(cache.Path, oldCfg.freeProxyCacheSignature(cache)); err != nil {
+		t.Fatalf("write stale cache metadata: %v", err)
+	}
+
+	summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
+	if err != nil {
+		t.Fatalf("refresh should fetch remote after signature change: %v", err)
+	}
+	if hits != 1 {
+		t.Fatalf("remote hits=%d, want 1", hits)
+	}
+	if summary.Count != 1 || !summary.CacheUpdated {
+		t.Fatalf("summary=%#v, want one refreshed node with cache update", summary)
+	}
+	content, readErr := os.ReadFile(cachePath)
+	if readErr != nil {
+		t.Fatalf("read cache: %v", readErr)
+	}
+	if got, want := string(content), "http://7.7.7.7:8080\n"; got != want {
+		t.Fatalf("cache content=%q, want %q", got, want)
+	}
+	if !freeProxyCacheSignatureMatches(cache.Path, cfg.freeProxyCacheSignature(cache)) {
+		t.Fatalf("cache metadata should be updated to current free proxy signature")
 	}
 }
 

@@ -3,6 +3,8 @@ package monitor
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2485,6 +2487,7 @@ free_proxy_sources:
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeMatchingFreeProxyCacheMetadata(t, cfg, configPath)
 	server := &Server{cfgSrc: cfg, nodeMgr: &fakeNodeManager{done: make(chan struct{})}, reloadState: "idle"}
 	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
 		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
@@ -2552,6 +2555,7 @@ free_proxy_sources:
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeMatchingFreeProxyCacheMetadata(t, cfg, configPath)
 	fake := &fakeNodeManager{done: make(chan struct{})}
 	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
 
@@ -4145,5 +4149,37 @@ func TestHandleSubscriptionStatusWithoutRefresherReportsRuntimeSubscriptionNodes
 	}
 	if resp.Enabled || resp.NodeCount != 1 {
 		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
+	}
+}
+
+type testFreeProxyCacheSignatureInput struct {
+	Sources      []nodesource.SourceConfig `json:"sources"`
+	MaxNodes     int                       `json:"max_nodes"`
+	Filter       nodesource.FilterConfig   `json:"filter"`
+	CacheWorkers int                       `json:"cache_workers"`
+}
+
+func writeMatchingFreeProxyCacheMetadata(t *testing.T, cfg *config.Config, configPath string) {
+	t.Helper()
+	cache := cfg.FreeProxyCache.Normalized(configPath, len(cfg.FreeProxySources) > 0)
+	input := testFreeProxyCacheSignatureInput{
+		Sources:      append([]nodesource.SourceConfig(nil), cfg.FreeProxySources...),
+		MaxNodes:     cfg.FreeProxyMaxNodes,
+		Filter:       cfg.FreeProxyFilter.Normalized(),
+		CacheWorkers: cache.Workers,
+	}
+	data, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal free proxy cache signature input: %v", err)
+	}
+	sum := sha256.Sum256(data)
+	meta := map[string]string{"signature": hex.EncodeToString(sum[:])}
+	metaData, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal free proxy cache metadata: %v", err)
+	}
+	metaData = append(metaData, '\n')
+	if err := os.WriteFile(cache.Path+".meta.json", metaData, 0o644); err != nil {
+		t.Fatalf("write free proxy cache metadata: %v", err)
 	}
 }
