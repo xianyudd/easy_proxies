@@ -22,6 +22,14 @@ type LogFilter = typeof LOG_LEVELS[number]['value']
 type LogRow = { id: number; text: string; level: LogLevel }
 type FailureBucket = { key: string; label: string; value: number }
 
+function safeRows<T>(rows: unknown): T[] {
+  return Array.isArray(rows) ? rows : []
+}
+
+function safeText(value: unknown) {
+  return typeof value === 'string' ? value : ''
+}
+
 function percentValue(value: unknown) {
   const num = Number(value)
   return Number.isFinite(num) ? `${num.toFixed(1)}%` : '-'
@@ -126,7 +134,11 @@ export function DiagnosticsPage() {
   const toast = useToast(s=>s.show)
   const debug = useQuery({ queryKey:['debug'], queryFn:getDebug, refetchInterval:15000 })
   const logQuery = useQuery({ queryKey:['logs'], queryFn:getLogs, refetchInterval:auto?2000:false })
-  useEffect(()=>{ if(logQuery.data) setLogs(String(logQuery.data.logs || '')) }, [logQuery.data])
+  useEffect(()=>{
+    if(!logQuery.data) return
+    const safeLogs = safeText(logQuery.data?.logs)
+    setLogs(safeLogs)
+  }, [logQuery.data])
   const logRows = useMemo<LogRow[]>(() => logs ? logs.split('\n').map((text, id) => ({ id, text, level: detectLogLevel(text) })) : [], [logs])
   const normalizedKeyword = keyword.trim()
   const filteredLogRows = useMemo(() => logRows.filter(row => (levelFilter === 'all' || row.level === levelFilter) && includesKeyword(row.text, normalizedKeyword, caseSensitive)), [caseSensitive, levelFilter, logRows, normalizedKeyword])
@@ -141,7 +153,7 @@ export function DiagnosticsPage() {
   const errorLines = useMemo(() => logRows.filter(row => row.level === 'error').length, [logRows])
   const warnLines = useMemo(() => logRows.filter(row => row.level === 'warn').length, [logRows])
   const debugData = useMemo(() => debug.data || {}, [debug.data])
-  const debugNodes = useMemo<Record<string, unknown>[]>(() => Array.isArray(debugData.nodes) ? debugData.nodes as Record<string, unknown>[] : [], [debugData])
+  const debugNodes = useMemo<Record<string, unknown>[]>(() => safeRows<Record<string, unknown>>(debugData.nodes), [debugData])
   const failureBuckets = useMemo(() => buildFailureBuckets(logRows, debugNodes), [debugNodes, logRows])
   const diagnosticSummary = useMemo(() => {
     const activeConnections = sumNumbers(debugNodes, 'active_connections')
@@ -177,7 +189,7 @@ export function DiagnosticsPage() {
     try {
       const result = await logQuery.refetch()
       if (result.error) throw result.error
-      setLogs(String(result.data?.logs || ''))
+      setLogs(safeText(result.data?.logs))
       toast('日志已刷新','ok')
     } catch (error) {
       toast(error instanceof Error ? `日志刷新失败：${error.message}` : '日志刷新失败','error')

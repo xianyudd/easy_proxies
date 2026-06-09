@@ -107,6 +107,16 @@ def test_management_rebound_url_hint_is_guarded():
     assert "target.href" in text
 
 
+def test_settings_page_defends_non_array_free_proxy_refresh_sources():
+    text = read(SETTINGS_PAGE)
+    assert "type FreeProxyRefreshSource" in text
+    assert "const freeRefreshSourceRows = safeRows<FreeProxyRefreshSource>(freeRefresh?.sources)" in text
+    assert "freeRefreshSourceRows.length" in text
+    assert "freeRefreshSourceRows.map(src =>" in text
+    assert "freeRefresh?.sources?.length" not in text
+    assert "freeRefresh.sources.map" not in text
+
+
 if __name__ == "__main__":
     test_settings_page_does_not_overwrite_dirty_draft_on_refetch()
     test_settings_page_tracks_reload_and_free_proxy_refresh_status()
@@ -117,3 +127,4 @@ if __name__ == "__main__":
     test_settings_page_polls_subscription_refresh_and_refreshes_node_caches()
     test_settings_page_defends_non_array_quality_cache_rows()
     test_management_rebound_url_hint_is_guarded()
+    test_settings_page_defends_non_array_free_proxy_refresh_sources()

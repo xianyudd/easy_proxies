@@ -13,6 +13,8 @@ import type { FreeProxyCache, FreeProxyFilter, FreeProxyRefreshStatus, FreeProxy
 import type { CloudflareResult } from '../types/cloudflare'
 import type { ReputationResult } from '../types/reputation'
 
+type FreeProxyRefreshSource = NonNullable<FreeProxyRefreshStatus['sources']>[number]
+
 function listValue(value: unknown) { return Array.isArray(value) ? value.join('\n') : '' }
 function boolValue(value: unknown) { return value === true || value === 'true' }
 function clampNumber(value: unknown, fallback: number, min: number, max: number) {
@@ -285,6 +287,7 @@ export function SettingsPage() {
   const cfCacheUnavailable = cfCache.isError && !cfCache.data
   const repCacheUnavailable = repCache.isError && !repCache.data
   const freeRefresh = freeProxyRefreshStatus.data
+  const freeRefreshSourceRows = safeRows<FreeProxyRefreshSource>(freeRefresh?.sources)
   const freeRefreshCacheNodes = Number(freeRefresh?.cache_node_count || 0)
   const freeRefreshSources = `${Number(freeRefresh?.enabled_sources ?? freeSources.filter(s => s.enabled !== false).length)}/${Number(freeRefresh?.total_sources ?? freeSources.length)}`
   const freeRefreshProbeBudget = Number(freeRefresh?.filter_probe_budget ?? freeFilter.max_probe_candidates ?? 0)
@@ -384,8 +387,8 @@ export function SettingsPage() {
         <span>缓存：{freeRefresh?.cache_path || String(freeCache.path || '未配置')} · {freeRefreshCacheNodes} 条 · {cacheFreshLabel(freeRefresh?.cache_fresh)} · 最大年龄 {freeRefresh?.cache_max_age || String(freeCache.max_age || '6h0m0s')}</span>
         <span>策略：启用源 {freeRefreshSources} · 自动重载 {freeRefreshAutoReload ? '开' : '关'} · 筛选 {freeRefreshFilterEnabled ? '开' : '关'} · 最低等级 {freeRefresh?.filter_min_tier || String(freeFilter.min_tier || 'http_basic')} · 探测预算 {freeRefreshProbeBudget > 0 ? freeRefreshProbeBudget : '全量'}</span>
         {freeRefresh?.refresh_pending ? <span>排队：新配置刷新已排队 · 来源 {freeRefresh.pending_requested_by || 'unknown'}</span> : null}
-        {freeRefresh?.sources?.length ? <span>
-          源结果：{freeRefresh.sources.map(src => `${src.name || 'unnamed'} ${src.accepted || 0}/${src.candidates || 0}${src.error ? ` 失败: ${src.error}` : ''}`).join('；')}
+        {freeRefreshSourceRows.length ? <span>
+          源结果：{freeRefreshSourceRows.map(src => `${src.name || 'unnamed'} ${src.accepted || 0}/${src.candidates || 0}${src.error ? ` 失败: ${src.error}` : ''}`).join('；')}
         </span> : null}
       </div>
     </div>}
