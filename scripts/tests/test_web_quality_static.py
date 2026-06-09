@@ -68,6 +68,24 @@ def test_quality_page_refreshes_cache_when_background_job_finishes():
     assert "后台任务结果已同步到质量缓存" in text
 
 
+
+def test_quality_page_normalizes_non_array_api_rows():
+    text = read(QUALITY_PAGE)
+    assert "function safeRows<T>(rows: unknown): T[]" in text
+    assert "Array.isArray(rows) ? rows : []" in text
+    assert "safeRows<CloudflareResult>(d.data)" in text
+    assert "safeRows<CloudflareResult>(cf.data?.data)" in text
+    assert "safeRows<ReputationResult>(rep.data?.data)" in text
+    assert "safeRows<QualityJobResult>(jobResults.data?.data)" in text
+
+
+def test_quality_charts_defend_non_array_rows_props():
+    text = read(ROOT / "web" / "src" / "components" / "charts" / "QualityCharts.tsx")
+    assert "function safeRows<T>(rows: unknown): T[]" in text
+    assert text.count("const chartRows = safeRows") >= 3
+    assert "chartRows.filter" in text
+    assert "[...chartRows]" in text
+
 def test_quality_page_sample_and_cache_refresh_exit_job_result_mode():
     text = read(QUALITY_PAGE)
     assert "setJobId('')" in text
@@ -85,4 +103,6 @@ if __name__ == "__main__":
     test_quality_page_matches_reputation_cache_by_ip_or_exit_ip()
     test_reputation_check_supports_source_filter()
     test_quality_page_refreshes_cache_when_background_job_finishes()
+    test_quality_page_normalizes_non_array_api_rows()
+    test_quality_charts_defend_non_array_rows_props()
     test_quality_page_sample_and_cache_refresh_exit_job_result_mode()

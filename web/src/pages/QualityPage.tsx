@@ -39,6 +39,9 @@ function mergeRepRows(current: ReputationResult[], incoming: ReputationResult[])
   incoming.forEach(row => map.set(rowKey(row), row))
   return [...map.values()]
 }
+function safeRows<T>(rows: unknown): T[] {
+  return Array.isArray(rows) ? rows : []
+}
 function cfFromJobRow(row: QualityJobResult): CloudflareResult {
   const cf = (row.cf || {}) as Record<string, unknown>
   return {
@@ -126,7 +129,7 @@ export function QualityPage() {
     setTerminalSyncedJobId('')
     setResultPage(1)
   }
-  const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { showCacheMode(); setCfRows(d.data || []); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
+  const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { showCacheMode(); setCfRows(safeRows<CloudflareResult>(d.data)); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
   const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true }) })
   const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true, retry_failed: true, replace: true }) })
   const cancelScan = useMutation({ mutationFn: () => cancelQualityJob(jobId), onSuccess: () => { void jobQuery.refetch(); void jobResults.refetch(); toast('后台任务已取消', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '取消任务失败', 'error') })
@@ -149,8 +152,8 @@ export function QualityPage() {
       const failed = [cf.error, rep.error].find(Boolean)
       if (failed) throw failed
       showCacheMode()
-      setCfRows(cf.data?.data || [])
-      setRepRows(rep.data?.data || [])
+      setCfRows(safeRows<CloudflareResult>(cf.data?.data))
+      setRepRows(safeRows<ReputationResult>(rep.data?.data))
       toast('缓存结果已加载', 'ok')
     } catch (e) {
       toast(e instanceof Error ? `加载质量缓存失败：${e.message}` : '加载质量缓存失败', 'error')
@@ -172,15 +175,15 @@ export function QualityPage() {
     setTerminalSyncedJobId(jobId)
     void Promise.all([cfCache.refetch(), repCache.refetch()])
       .then(([cf, rep]) => {
-        setCfRows(prev => mergeCfRows(prev, cf.data?.data || []))
-        setRepRows(prev => mergeRepRows(prev, rep.data?.data || []))
+        setCfRows(prev => mergeCfRows(prev, safeRows<CloudflareResult>(cf.data?.data)))
+        setRepRows(prev => mergeRepRows(prev, safeRows<ReputationResult>(rep.data?.data)))
         if (jobQuery.data?.status === 'completed') toast('后台任务结果已同步到质量缓存', 'ok')
       })
       .catch(e => toast(e instanceof Error ? `质量缓存同步失败：${e.message}` : '质量缓存同步失败', 'error'))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, terminalSyncedJobId, jobQuery.data?.status])
 
-  const jobRows = useMemo(() => jobResults.data?.data || [], [jobResults.data?.data])
+  const jobRows = useMemo(() => safeRows<QualityJobResult>(jobResults.data?.data), [jobResults.data?.data])
   const jobCfRows = useMemo(() => jobRows.map(cfFromJobRow), [jobRows])
   const jobRepRows = useMemo(() => jobRows.map(repFromJobRow), [jobRows])
   const activeCfRows = jobId ? jobCfRows : cfRows

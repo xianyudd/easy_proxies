@@ -71,8 +71,13 @@ def test_settings_page_polls_subscription_refresh_and_refreshes_node_caches():
 def test_management_rebound_url_hint_is_guarded():
     text = read(SETTINGS_PAGE)
     assert "function buildManagementRedirectUrl" in text
+    assert "function isSafeManagementRedirectTarget" in text
     assert "try {" in text
     assert "new URL(hint, window.location.href)" in text
+    assert "target.protocol === 'http:' || target.protocol === 'https:'" in text
+    assert "target.hostname === window.location.hostname" in text
+    assert "['127.0.0.1', 'localhost', '::1'].includes(target.hostname)" in text
+    assert "if (!isSafeManagementRedirectTarget(target)) return ''" in text
     assert "catch" in text
     assert "管理端口已热切换，但后端返回的跳转地址无效" in text
     assert "target.href" in text

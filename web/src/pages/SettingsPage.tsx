@@ -63,9 +63,17 @@ function freeProxyRefreshDescription(state: 'idle' | 'refreshing' | 'failed', st
   return '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。'
 }
 
+function isSafeManagementRedirectTarget(target: URL) {
+  const isHttp = target.protocol === 'http:' || target.protocol === 'https:'
+  const isSameHost = target.hostname === window.location.hostname
+  const isLocalHost = ['127.0.0.1', 'localhost', '::1'].includes(target.hostname)
+  return isHttp && (isSameHost || isLocalHost)
+}
+
 function buildManagementRedirectUrl(hint: string, needReload?: boolean) {
   try {
     const target = new URL(hint, window.location.href)
+    if (!isSafeManagementRedirectTarget(target)) return ''
     if (needReload) target.searchParams.set('autoReload', '1')
     else target.searchParams.delete('autoReload')
     target.hash = 'settings'
