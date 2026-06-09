@@ -3037,6 +3037,87 @@ free_proxy_sources:
 	}
 }
 
+func TestHandleSettingsAutoReloadsWhenEnablingSourceWithFreshFreeProxyCache(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+  max_age: 1h
+free_proxy_filter:
+  enabled: false
+  min_tier: http_basic
+  workers: 1
+  timeout: 100ms
+free_proxy_sources:
+  - name: remote
+    url: http://127.0.0.1:1/missing.txt
+    format: txt
+    enabled: false
+    timeout: 1s
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metaCfg := *cfg
+	metaCfg.FreeProxySources = append([]nodesource.SourceConfig(nil), cfg.FreeProxySources...)
+	enabled := true
+	metaCfg.FreeProxySources[0].Enabled = &enabled
+	writeMatchingFreeProxyCacheMetadata(t, &metaCfg, configPath)
+	fake := &fakeNodeManager{done: make(chan struct{})}
+	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
+
+	body := []byte(`{
+		"free_proxy_sources": [
+			{"name":"remote","url":"http://127.0.0.1:1/missing.txt","format":"txt","enabled":true,"timeout":"1s"}
+		],
+		"free_proxy_cache": {"enabled":true,"path":"` + cachePath + `","auto_reload":true,"workers":1,"max_age":"1h"},
+		"free_proxy_filter": {"enabled":false,"min_tier":"http_basic","workers":1,"timeout":"200ms","max_candidates":0}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedReload              bool `json:"need_reload"`
+		ReloadStarted           bool `json:"reload_started"`
+		FreeProxyRefreshNeeded  bool `json:"free_proxy_refresh_needed"`
+		FreeProxyRefreshStarted bool `json:"free_proxy_refresh_started"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.NeedReload || resp.ReloadStarted || !resp.FreeProxyRefreshNeeded || !resp.FreeProxyRefreshStarted {
+		t.Fatalf("enabling free proxy source should be handled by refresh reload: %#v body=%s", resp, rec.Body.String())
+	}
+	status := waitFreeProxyRefreshDone(t, server, 500*time.Millisecond)
+	if status.State != "succeeded" || status.Accepted != 1 || status.CacheUpdated || !status.ReloadStarted {
+		t.Fatalf("enabling source with fresh cache should auto reload cached nodes: %#v", status)
+	}
+	select {
+	case <-fake.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto reload did not run after enabling source with fresh free proxy cache")
+	}
+	if fake.ReloadCalls() != 1 {
+		t.Fatalf("reloadCalls = %d, want 1", fake.ReloadCalls())
+	}
+}
+
 func TestHandleFreeProxyRefreshStatusSerializesCacheReuseFields(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
