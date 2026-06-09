@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -120,6 +121,44 @@ func TestHandleExtractorRejectsInvalidCount(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.handleExtractor(rec, req)
 		assertExtractorErrorCode(t, rec, http.StatusBadRequest, "invalid_count")
+	}
+}
+
+func TestHandleExtractorClampsHugeCount(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for idx := 0; idx < 600; idx++ {
+		node := mgr.Register(NodeInfo{Tag: fmt.Sprintf("node-%03d", idx), Name: fmt.Sprintf("Node %03d", idx), URI: fmt.Sprintf("http://10.0.0.%d:80", idx%255), ListenAddress: "127.0.0.1", Port: uint16(31000 + idx), Region: "us"})
+		node.MarkInitialCheckDone(true)
+	}
+	srv := &Server{
+		mgr:    mgr,
+		cfg:    Config{ProxyUsername: "user", ProxyPassword: "pass"},
+		cfgSrc: &config.Config{Mode: "multi-port"},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/extractor?region=all&mode=multi-port&format=json&count=999999", nil)
+	rec := httptest.NewRecorder()
+	srv.handleExtractor(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		RequestedCount int             `json:"requested_count"`
+		OutputCount    int             `json:"output_count"`
+		Entries        json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(body.Entries, &entries); err != nil {
+		t.Fatal(err)
+	}
+	if body.RequestedCount != 500 || body.OutputCount != 500 || len(entries) != 500 {
+		t.Fatalf("extractor requested=%d output=%d entries=%d, want clamp to 500 body=%s", body.RequestedCount, body.OutputCount, len(entries), rec.Body.String())
 	}
 }
 

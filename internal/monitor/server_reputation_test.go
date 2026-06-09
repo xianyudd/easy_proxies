@@ -137,6 +137,36 @@ func TestQualityCompanionChecksRejectInvalidBoolQuery(t *testing.T) {
 	}
 }
 
+func TestQualityCompanionChecksRejectNegativeAndOverflowCount(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true})
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil || srv.srv == nil {
+		t.Fatal("expected server")
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "cloudflare negative", path: "/api/cloudflare/check?region=all&mode=multi-port&count=-1"},
+		{name: "cloudflare overflow", path: "/api/cloudflare/check?region=all&mode=multi-port&count=999999999999999999999999999"},
+		{name: "reputation negative", path: "/api/reputation/check?region=all&mode=multi-port&count=-1"},
+		{name: "reputation overflow", path: "/api/reputation/check?region=all&mode=multi-port&count=999999999999999999999999999"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+
+			srv.srv.Handler.ServeHTTP(rec, req)
+
+			assertMonitorAPIErrorCode(t, rec, http.StatusBadRequest, "invalid_count")
+		})
+	}
+}
+
 func TestQualityCompanionHandlersRejectMethodsWithStructuredCode(t *testing.T) {
 	mgr, err := NewManager(Config{Enabled: true})
 	if err != nil {
