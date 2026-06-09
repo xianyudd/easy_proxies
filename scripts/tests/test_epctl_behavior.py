@@ -379,6 +379,7 @@ status_service
     assert "webui 127.0.0.1:19093 current-profile" in result.stdout
     assert "clash 127.0.0.1:19094 other-owner" in result.stdout
     assert "listener 127.0.0.1:12340 unknown-owner" in result.stdout
+    assert "geoip 127.0.0.1:12341 free" in result.stdout
     assert "multi_base 127.0.0.1:30000 free" in result.stdout
 
 

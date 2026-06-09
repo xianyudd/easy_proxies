@@ -718,6 +718,14 @@ preflight_ports() {
   printf 'android_base\t%s\t%s\n' "${preflight_android_host:-127.0.0.1}" "$preflight_android_base"
 }
 
+status_ports() {
+  local status_geo_host status_geo_port
+  preflight_ports
+  status_geo_host="$(cfg_value geoip listen || true)"
+  status_geo_port="$(configured_port geoip port 1221)"
+  printf 'geoip\t%s\t%s\n' "${status_geo_host:-127.0.0.1}" "$status_geo_port"
+}
+
 preflight_ports_available() {
   local label host port lines line conflict=0
   while IFS=$'\t' read -r label host port; do
@@ -787,7 +795,7 @@ print_port_status_summary() {
     printf '%s %s:%s %s' "$label" "${host:-127.0.0.1}" "$port" "$status"
     [ -z "$owner" ] || printf ' owner=%s' "$owner"
     printf '\n'
-  done < <(preflight_ports)
+  done < <(status_ports)
 }
 
 run_service_foreground() {
