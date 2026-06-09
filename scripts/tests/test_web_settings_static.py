@@ -83,6 +83,15 @@ def test_settings_page_polls_subscription_refresh_and_refreshes_node_caches():
     assert "refreshRuntimeNodeCaches()" in text
 
 
+def test_settings_page_defends_non_array_quality_cache_rows():
+    text = read(SETTINGS_PAGE)
+    assert "function safeRows<T>(rows: unknown): T[]" in text
+    assert "const cfRows = safeRows<CloudflareResult>(cfCache.data?.data)" in text
+    assert "const repRows = safeRows<ReputationResult>(repCache.data?.data)" in text
+    assert "cfCache.data?.data || []" not in text
+    assert "repCache.data?.data || []" not in text
+
+
 def test_management_rebound_url_hint_is_guarded():
     text = read(SETTINGS_PAGE)
     assert "function buildManagementRedirectUrl" in text
@@ -106,4 +115,5 @@ if __name__ == "__main__":
     test_disabled_only_free_proxy_source_changes_do_not_trigger_refresh()
     test_settings_page_refreshes_runtime_node_caches_after_background_changes()
     test_settings_page_polls_subscription_refresh_and_refreshes_node_caches()
+    test_settings_page_defends_non_array_quality_cache_rows()
     test_management_rebound_url_hint_is_guarded()

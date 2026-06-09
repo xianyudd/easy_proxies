@@ -28,6 +28,7 @@ function shortDate(value: unknown) {
 function splitLines(value: string) { return value.split('\n').map(s => s.trim()).filter(Boolean) }
 function editableLines(value: string) { return value === '' ? [] : value.split('\n') }
 function isWideOpen(value: unknown) { return String(value || '').trim() === '0.0.0.0' }
+function safeRows<T>(rows: unknown): T[] { return Array.isArray(rows) ? rows : [] }
 function freeSourceKey(src: FreeProxySource) { return `${src.name || ''}|${src.url || ''}|${src.file || ''}` }
 function normalizeFreeSourcesForSave(draftSources: FreeProxySource[], serverSources: FreeProxySource[]) {
   const serverEnabled = new Map(serverSources.map(src => [freeSourceKey(src), src.enabled !== false]))
@@ -277,8 +278,8 @@ export function SettingsPage() {
   const status = subStatus.data || {}
   const subItems = editableLines(subs)
   const cleanSubItems = splitLines(subs)
-  const cfRows = (cfCache.data?.data || []) as CloudflareResult[]
-  const repRows = (repCache.data?.data || []) as ReputationResult[]
+  const cfRows = safeRows<CloudflareResult>(cfCache.data?.data)
+  const repRows = safeRows<ReputationResult>(repCache.data?.data)
   const settingsUnavailable = settings.isLoading || (settings.isError && !settings.data)
   const subStatusUnavailable = subStatus.isError && !subStatus.data
   const cfCacheUnavailable = cfCache.isError && !cfCache.data
