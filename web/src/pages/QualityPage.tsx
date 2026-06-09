@@ -131,6 +131,7 @@ export function QualityPage() {
   const cacheLoading = cfCache.isFetching || repCache.isFetching
   const jobProgressLoading = jobQuery.isFetching || jobResults.isFetching
   const canCreatePipeline = !nodesSummary.isLoading && !hasSummaryError && !jobRunning && hasPipelineTargets
+  const canRetryPipeline = !nodesSummary.isLoading && !hasSummaryError && hasPipelineTargets
   const canRunSampleCheck = !nodesSummary.isLoading && !hasSummaryError && !jobRunning
   const scanAllLabel = nodesSummary.isLoading ? 'Pipeline 扫描节点（统计加载中）' : hasSummaryError ? 'Pipeline 扫描节点（数量未知）' : !hasPipelineTargets ? 'Pipeline 无可扫描节点' : `Pipeline 扫描 ${pipelineCount} 个节点`
   const qualitySource = source === 'all' ? undefined : source
@@ -251,7 +252,7 @@ export function QualityPage() {
     {jobId && jobQuery.isError && <QueryErrorBanner title="后台任务状态加载失败" error={jobQuery.error} onRetry={() => { void jobQuery.refetch() }} />}
     {jobId && jobResults.isError && <QueryErrorBanner title="后台任务结果加载失败" error={jobResults.error} onRetry={() => { void jobResults.refetch() }} />}
     <div className="card quality-control-card">
-      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测；同步 CF 抽样最多 50 个节点。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => { void startQualityJob(false) }}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canCreatePipeline || retryScan.isPending} onClick={() => { void startQualityJob(true) }}>{retryScan.isPending ? '重试中...' : 'Pipeline 重试失败节点'}</Button><Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button><Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button></div></div>
+      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测；同步 CF 抽样最多 50 个节点。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => { void startQualityJob(false) }}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canRetryPipeline || retryScan.isPending} onClick={() => { void startQualityJob(true) }}>{retryScan.isPending ? '重试中...' : jobRunning ? '替换当前任务并重试失败节点' : 'Pipeline 重试失败节点'}</Button><Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button><Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button></div></div>
       <div className="quality-filter-grid modern-filter-grid">
         <div className="field console-field">
           <label>地区范围</label>

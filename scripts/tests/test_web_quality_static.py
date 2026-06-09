@@ -137,6 +137,16 @@ def test_quality_page_does_not_fallback_to_total_count_for_empty_source():
     assert "sourceCount || nodesSummary.data?.total_nodes" not in text
 
 
+def test_quality_page_allows_retry_replace_while_job_is_running():
+    text = read(QUALITY_PAGE)
+    assert "const canCreatePipeline = !nodesSummary.isLoading && !hasSummaryError && !jobRunning && hasPipelineTargets" in text
+    assert "const canRetryPipeline = !nodesSummary.isLoading && !hasSummaryError && hasPipelineTargets" in text
+    assert "retry_failed: true, replace: true" in text
+    assert "disabled={!canRetryPipeline || retryScan.isPending}" in text
+    assert "disabled={!canCreatePipeline || retryScan.isPending}" not in text
+    assert "替换当前任务并重试失败节点" in text
+
+
 if __name__ == "__main__":
     test_api_client_parses_json_text_fallback_for_accepted_jobs()
     test_quality_page_validates_job_id_and_renders_job_panel_path()
@@ -153,3 +163,4 @@ if __name__ == "__main__":
     test_quality_charts_defend_non_array_rows_props()
     test_quality_page_sample_and_cache_refresh_exit_job_result_mode()
     test_quality_page_does_not_fallback_to_total_count_for_empty_source()
+    test_quality_page_allows_retry_replace_while_job_is_running()
