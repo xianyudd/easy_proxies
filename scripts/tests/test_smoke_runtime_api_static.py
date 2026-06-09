@@ -94,6 +94,16 @@ def test_smoke_script_uses_env_configurable_base_url_and_password():
     assert 'runtime-partial-secret' in text
 
 
+def test_smoke_script_refuses_main_port_without_explicit_override():
+    text = read_source()
+    assert "assert_safe_smoke_target" in text
+    assert "EP_SMOKE_ALLOW_MAIN_PORT" in text
+    assert "urllib.parse.urlparse(BASE_URL)" in text
+    assert "parsed.port == 9091" in text
+    assert "Refusing to run mutating smoke checks against port 9091" in text
+    assert "assert_safe_smoke_target()" in text
+
+
 def test_smoke_script_checks_config_node_crud_without_auto_reload():
     text = read_source()
     assert "check_config_node_crud" in text
@@ -114,3 +124,4 @@ if __name__ == "__main__":
     test_smoke_script_checks_auth_negative_paths_by_default()
     test_smoke_script_can_exercise_local_free_proxy_fixture_safely()
     test_smoke_script_uses_env_configurable_base_url_and_password()
+    test_smoke_script_refuses_main_port_without_explicit_override()

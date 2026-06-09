@@ -632,6 +632,81 @@ ensure_isolated_config_defaults() {
 }
 
 
+
+listener_line_owned_by_current_profile() {
+  local line="$1" pid
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    if pid_matches_profile "$pid"; then
+      return 0
+    fi
+  done < <(printf '%s\n' "$line" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)
+  return 1
+}
+
+port_listener_lines() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -H -ltnp 2>/dev/null | awk -v port=":${port}" '$4 ~ port"$" {print}'
+  fi
+}
+
+preflight_ports() {
+  local preflight_web_host preflight_web_port
+  local preflight_clash_listen preflight_clash_host preflight_clash_port
+  local preflight_listener_host preflight_listener_port
+  local preflight_multi_host preflight_multi_base
+  local preflight_android_host preflight_android_base
+
+  preflight_web_host="$(configured_host "$WEBUI_URL")"
+  preflight_web_port="$(webui_port)"
+  preflight_clash_listen="$(cfg_value management clash_api_listen || true)"
+  preflight_listener_host="$(cfg_value listener address || true)"
+  preflight_listener_port="$(configured_port listener port 2323)"
+  preflight_multi_host="$(cfg_value multi_port address || true)"
+  preflight_multi_base="$(configured_port multi_port base_port 24000)"
+  preflight_android_host="$(cfg_value android_proxy listen || true)"
+  preflight_android_base="$(configured_port android_proxy base_port 13001)"
+
+  printf 'webui\t%s\t%s\n' "${preflight_web_host:-127.0.0.1}" "$preflight_web_port"
+  if [ -n "$preflight_clash_listen" ]; then
+    preflight_clash_host="$(configured_host "$preflight_clash_listen")"
+    preflight_clash_port="$(configured_listen_port "$preflight_clash_listen")"
+    printf 'clash\t%s\t%s\n' "${preflight_clash_host:-127.0.0.1}" "$preflight_clash_port"
+  fi
+  printf 'listener\t%s\t%s\n' "${preflight_listener_host:-127.0.0.1}" "$preflight_listener_port"
+  printf 'multi_base\t%s\t%s\n' "${preflight_multi_host:-127.0.0.1}" "$preflight_multi_base"
+  printf 'android_base\t%s\t%s\n' "${preflight_android_host:-127.0.0.1}" "$preflight_android_base"
+}
+
+preflight_ports_available() {
+  local label host port lines line conflict=0
+  while IFS=$'\t' read -r label host port; do
+    [ -n "$port" ] || continue
+    lines="$(port_listener_lines "$port" || true)"
+    if [ -z "$lines" ]; then
+      continue
+    fi
+    local owned_by_profile=0
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      if listener_line_owned_by_current_profile "$line"; then
+        owned_by_profile=1
+      else
+        echo "[ERROR] port conflict before start: profile=$EP_PROFILE label=$label address=${host}:${port} owner=${line}" >&2
+        conflict=1
+      fi
+    done <<<"$lines"
+    if [ "$owned_by_profile" = "1" ] && [ "$conflict" = "0" ]; then
+      echo "[INFO] port preflight: ${label} ${host}:${port} owned by current profile"
+    fi
+  done < <(preflight_ports)
+  if [ "$conflict" = "1" ]; then
+    echo "[ERROR] aborting start because one or more required ports are already listening and are not owned by the current visible profile instance" >&2
+    return 1
+  fi
+}
+
 run_service_foreground() {
   if [ ! -f "$CONFIG_FILE" ] && [ "$EP_PROFILE" = "isolated" ]; then
     write_isolated_config
@@ -664,6 +739,7 @@ start_service() {
     echo "Build first: ./epctl.sh service:build"
     exit 1
   fi
+  preflight_ports_available
   if [ "${EP_KEEP_PROXY_ENV:-0}" != "1" ]; then
     clean_proxy_env
   fi

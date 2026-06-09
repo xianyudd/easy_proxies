@@ -37,6 +37,7 @@ POLL_SECONDS = float(os.environ.get("EP_SMOKE_POLL_SECONDS", "20"))
 SKIP_RELOAD = os.environ.get("EP_SMOKE_SKIP_RELOAD", "").lower() in {"1", "true", "yes"}
 ALLOW_NO_PASSWORD = os.environ.get("EP_SMOKE_ALLOW_NO_PASSWORD", "").lower() in {"1", "true", "yes"}
 FREE_PROXY_FIXTURE = os.environ.get("EP_SMOKE_FREE_PROXY_FIXTURE", "").lower() in {"1", "true", "yes"}
+ALLOW_MAIN_PORT = os.environ.get("EP_SMOKE_ALLOW_MAIN_PORT", "").lower() in {"1", "true", "yes"}
 
 
 def request(opener: urllib.request.OpenerDirector, method: str, path: str, payload: Any | None = None, *, retry_connect: bool = False) -> tuple[int, Any]:
@@ -73,6 +74,15 @@ def parse_body(content_type: str, body: bytes) -> Any:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeSmokeError(message)
+
+
+def assert_safe_smoke_target() -> None:
+    parsed = urllib.parse.urlparse(BASE_URL)
+    if parsed.port == 9091 and not ALLOW_MAIN_PORT:
+        raise RuntimeSmokeError(
+            "Refusing to run mutating smoke checks against port 9091. "
+            "Use the isolated WebUI port 19093, or set EP_SMOKE_ALLOW_MAIN_PORT=1 explicitly."
+        )
 
 
 def wait_for_webui_ready() -> None:
@@ -434,6 +444,7 @@ def main() -> int:
     original_settings: dict[str, Any] | None = None
     exit_code = 0
     try:
+        assert_safe_smoke_target()
         wait_for_webui_ready()
         check_auth_negative_paths()
         login(opener)
