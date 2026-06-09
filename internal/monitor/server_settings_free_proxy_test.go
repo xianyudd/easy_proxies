@@ -202,6 +202,29 @@ func (f *fakeNodeManager) ReloadCalls() int {
 	return f.reloadCalls
 }
 
+func waitFreeProxyRefreshDone(t *testing.T, server *Server, timeout time.Duration) freeProxyRefreshStatus {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		status := server.currentFreeProxyRefreshStatus()
+		if (status.State == "succeeded" || status.State == "failed") && !status.Pending {
+			return status
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("free proxy refresh did not finish, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func releaseTestGate(ch chan struct{}) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(ch) })
+	}
+}
+
 func TestManagementHandlersRejectMethodsWithStructuredCode(t *testing.T) {
 	server := &Server{}
 	cases := []struct {
@@ -2467,23 +2490,9 @@ free_proxy_filter:
 		t.Fatalf("free proxy settings should be handled by refresh instead of immediate reload: %#v body=%s", resp, rec.Body.String())
 	}
 
-	deadline := time.After(2 * time.Second)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" {
-			if status.Accepted != 1 || !status.ReloadStarted || status.ReloadStatus == nil || status.ReloadStatus.State == "" {
-				t.Fatalf("unexpected refresh status: %#v", status)
-			}
-			break
-		}
-		if status.State == "failed" {
-			t.Fatalf("refresh failed: %#v", status)
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("refresh did not finish, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status := waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "succeeded" || status.Accepted != 1 || !status.ReloadStarted || status.ReloadStatus == nil || status.ReloadStatus.State == "" {
+		t.Fatalf("unexpected refresh status: %#v", status)
 	}
 	select {
 	case <-fake.done:
@@ -2493,7 +2502,7 @@ free_proxy_filter:
 	if fake.ReloadCalls() != 1 {
 		t.Fatalf("reloadCalls = %d, want 1", fake.ReloadCalls())
 	}
-	status := server.currentFreeProxyRefreshStatus()
+	status = server.currentFreeProxyRefreshStatus()
 	if status.ReloadStatus == nil || status.ReloadStatus.State != "succeeded" {
 		t.Fatalf("refresh status should include completed reload status, got %#v", status)
 	}
@@ -2536,23 +2545,12 @@ free_proxy_sources:
 	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
 		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
 	}
-	deadline := time.After(2 * time.Second)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "failed" {
-			if status.Accepted != 0 || len(status.Sources) != 1 || status.ReloadStarted {
-				t.Fatalf("unexpected failed status: %#v", status)
-			}
-			if status.Sources[0].Name != "missing-source" || status.Sources[0].Error == "" {
-				t.Fatalf("missing source failure details: %#v", status.Sources)
-			}
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("refresh did not fail, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status := waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "failed" || status.Accepted != 0 || len(status.Sources) != 1 || status.ReloadStarted {
+		t.Fatalf("unexpected failed status: %#v", status)
+	}
+	if status.Sources[0].Name != "missing-source" || status.Sources[0].Error == "" {
+		t.Fatalf("missing source failure details: %#v", status.Sources)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/free-proxy/refresh/status", nil)
 	rec := httptest.NewRecorder()
@@ -2583,6 +2581,8 @@ func TestFreeProxyRefreshUsesConfigSnapshotFromStart(t *testing.T) {
 	cachePath := filepath.Join(tmp, "cache.txt")
 	requested := make(chan struct{})
 	release := make(chan struct{})
+	releaseGate := releaseTestGate(release)
+	defer releaseGate()
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
@@ -2625,25 +2625,11 @@ free_proxy_sources:
 	server.cfgMu.Lock()
 	server.cfgSrc.FreeProxyMaxNodes = 1
 	server.cfgMu.Unlock()
-	close(release)
+	releaseGate()
 
-	deadline := time.After(2 * time.Second)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" {
-			if status.Accepted != 2 {
-				t.Fatalf("refresh should use start-time config snapshot and accept 2 nodes, got %#v", status)
-			}
-			break
-		}
-		if status.State == "failed" {
-			t.Fatalf("refresh failed: %#v", status)
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("refresh did not finish, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status := waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "succeeded" || status.Accepted != 2 {
+		t.Fatalf("refresh should use start-time config snapshot and accept 2 nodes, got %#v", status)
 	}
 }
 
@@ -2653,6 +2639,8 @@ func TestStartFreeProxyRefreshQueuesLatestSettingsWhenRunning(t *testing.T) {
 	cachePath := filepath.Join(tmp, "cache.txt")
 	requested := make(chan struct{})
 	release := make(chan struct{})
+	releaseGate := releaseTestGate(release)
+	defer releaseGate()
 	sourceA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
@@ -2710,25 +2698,11 @@ free_proxy_sources:
 	if status.State != "running" || !status.Pending || status.PendingRequestedBy != "settings" {
 		t.Fatalf("running status should expose pending settings refresh, got %#v", status)
 	}
-	close(release)
+	releaseGate()
 
-	deadline := time.After(2 * time.Second)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" && !status.Pending {
-			if status.Accepted != 1 {
-				t.Fatalf("unexpected final status: %#v", status)
-			}
-			break
-		}
-		if status.State == "failed" {
-			t.Fatalf("refresh failed: %#v", status)
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("queued refresh did not finish, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status = waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "succeeded" || status.Accepted != 1 {
+		t.Fatalf("unexpected final status: %#v", status)
 	}
 	if sourceBRequests != 1 {
 		t.Fatalf("latest pending source requests=%d, want 1", sourceBRequests)
@@ -2748,6 +2722,8 @@ func TestStartFreeProxyRefreshDoesNotQueueSameSignatureWhileRunning(t *testing.T
 	cachePath := filepath.Join(tmp, "cache.txt")
 	requested := make(chan struct{})
 	release := make(chan struct{})
+	releaseGate := releaseTestGate(release)
+	defer releaseGate()
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
@@ -2792,25 +2768,11 @@ free_proxy_sources:
 	if started || status.Pending {
 		t.Fatalf("same-signature refresh should not start or queue, started=%v status=%#v", started, status)
 	}
-	close(release)
+	releaseGate()
 
-	deadline := time.After(2 * time.Second)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" {
-			if status.Pending {
-				t.Fatalf("same-signature refresh should not leave pending work, status=%#v", status)
-			}
-			break
-		}
-		if status.State == "failed" {
-			t.Fatalf("refresh failed: %#v", status)
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("refresh did not finish before test cleanup, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status = waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "succeeded" {
+		t.Fatalf("refresh failed: %#v", status)
 	}
 }
 
@@ -2820,6 +2782,8 @@ func TestFreeProxyRefreshFailureStillDrainsPendingSnapshot(t *testing.T) {
 	cachePath := filepath.Join(tmp, "cache.txt")
 	requested := make(chan struct{})
 	release := make(chan struct{})
+	releaseGate := releaseTestGate(release)
+	defer releaseGate()
 	sourceA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
@@ -2871,19 +2835,11 @@ free_proxy_sources:
 	if started || !status.Pending {
 		t.Fatalf("pending recovery refresh not queued, started=%v status=%#v", started, status)
 	}
-	close(release)
+	releaseGate()
 
-	deadline := time.After(2 * time.Second)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" && !status.Pending {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("pending recovery refresh did not finish, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status = waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "succeeded" {
+		t.Fatalf("pending recovery refresh failed: %#v", status)
 	}
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
@@ -2900,6 +2856,8 @@ func TestHandleSettingsQueuesFreeProxyRefreshWhenAlreadyRunning(t *testing.T) {
 	cachePath := filepath.Join(tmp, "cache.txt")
 	requested := make(chan struct{})
 	release := make(chan struct{})
+	releaseGate := releaseTestGate(release)
+	defer releaseGate()
 	sourceA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
@@ -2970,22 +2928,11 @@ free_proxy_sources:
 	if resp.FreeProxyRefreshStatus.State != "running" || !resp.FreeProxyRefreshStatus.Pending || resp.FreeProxyRefreshStatus.PendingRequestedBy != "settings" {
 		t.Fatalf("settings status should expose pending refresh, got %#v body=%s", resp.FreeProxyRefreshStatus, rec.Body.String())
 	}
-	close(release)
+	releaseGate()
 
-	deadline := time.After(2 * time.Second)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" && !status.Pending {
-			break
-		}
-		if status.State == "failed" {
-			t.Fatalf("refresh failed: %#v", status)
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("queued settings refresh did not finish, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status := waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "succeeded" {
+		t.Fatalf("queued settings refresh failed: %#v", status)
 	}
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
@@ -3058,20 +3005,9 @@ free_proxy_sources:
 	if resp.NeedReload || resp.ReloadStarted || !resp.FreeProxyRefreshNeeded || !resp.FreeProxyRefreshStarted {
 		t.Fatalf("unexpected response: %#v body=%s", resp, rec.Body.String())
 	}
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" {
-			if status.Accepted != 1 || status.CacheUpdated || status.ReloadStarted {
-				t.Fatalf("fresh cache reuse should not reload: %#v", status)
-			}
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("refresh did not finish quickly, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status := waitFreeProxyRefreshDone(t, server, 500*time.Millisecond)
+	if status.State != "succeeded" || status.Accepted != 1 || status.CacheUpdated || status.ReloadStarted {
+		t.Fatalf("fresh cache reuse should not reload: %#v", status)
 	}
 }
 
@@ -3113,16 +3049,9 @@ free_proxy_sources:
 	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
 		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
 	}
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		if status := server.currentFreeProxyRefreshStatus(); status.State == "succeeded" {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("refresh did not finish quickly")
-		case <-time.After(10 * time.Millisecond):
-		}
+	status := waitFreeProxyRefreshDone(t, server, 500*time.Millisecond)
+	if status.State != "succeeded" {
+		t.Fatalf("refresh did not finish quickly: %#v", status)
 	}
 
 	rec := httptest.NewRecorder()
@@ -3208,23 +3137,12 @@ free_proxy_sources:
 	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
 		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
 	}
-	deadline := time.After(500 * time.Millisecond)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" {
-			if status.Accepted != 1 || status.CacheUpdated || status.ReloadStarted {
-				t.Fatalf("fresh cache refresh should succeed without update/reload, got %#v", status)
-			}
-			if status.DurationMS > 200 {
-				t.Fatalf("fresh cache refresh too slow: %#v", status)
-			}
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("refresh did not finish quickly, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status := waitFreeProxyRefreshDone(t, server, 500*time.Millisecond)
+	if status.State != "succeeded" || status.Accepted != 1 || status.CacheUpdated || status.ReloadStarted {
+		t.Fatalf("fresh cache refresh should succeed without update/reload, got %#v", status)
+	}
+	if status.DurationMS > 200 {
+		t.Fatalf("fresh cache refresh too slow: %#v", status)
 	}
 	select {
 	case <-fake.done:
@@ -3271,23 +3189,12 @@ free_proxy_sources:
 	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
 		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
 	}
-	deadline := time.After(2 * time.Second)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" {
-			if status.Accepted != 1 || status.CacheUpdated || status.ReloadStarted {
-				t.Fatalf("stale cache refresh should succeed without reload, got %#v", status)
-			}
-			if len(status.Sources) != 1 || status.Sources[0].Error == "" {
-				t.Fatalf("source failure telemetry missing: %#v", status.Sources)
-			}
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("refresh did not finish, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status := waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "succeeded" || status.Accepted != 1 || status.CacheUpdated || status.ReloadStarted {
+		t.Fatalf("stale cache refresh should succeed without reload, got %#v", status)
+	}
+	if len(status.Sources) != 1 || status.Sources[0].Error == "" {
+		t.Fatalf("source failure telemetry missing: %#v", status.Sources)
 	}
 	select {
 	case <-fake.done:
@@ -3345,23 +3252,9 @@ free_proxy_sources:
 	if !resp.Started || resp.Status.State != "running" || resp.Status.RequestedBy != "manual" {
 		t.Fatalf("unexpected manual refresh response: %#v body=%s", resp, rec.Body.String())
 	}
-	deadline := time.After(2 * time.Second)
-	for {
-		status := server.currentFreeProxyRefreshStatus()
-		if status.State == "succeeded" {
-			if status.Accepted != 1 {
-				t.Fatalf("accepted=%d, want 1: %#v", status.Accepted, status)
-			}
-			break
-		}
-		if status.State == "failed" {
-			t.Fatalf("manual refresh failed: %#v", status)
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("manual refresh did not finish, status=%#v", status)
-		case <-time.After(10 * time.Millisecond):
-		}
+	status := waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "succeeded" || status.Accepted != 1 {
+		t.Fatalf("unexpected manual refresh status: %#v", status)
 	}
 }
 
