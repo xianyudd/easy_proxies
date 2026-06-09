@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,35 @@ func (monitorFakeRunner) CheckCloudflare(ctx context.Context, target quality.Tar
 
 func (monitorFakeRunner) CheckReputation(ctx context.Context, target quality.Target, expectedCountry string) quality.Result {
 	return quality.Result{Kind: quality.CheckReputation, Target: target, TargetIndex: target.Index, TargetID: target.ID, Status: "completed", Success: true, Score: 80, Reputation: map[string]any{"risk_level": "low"}}
+}
+
+type monitorSlowRunner struct {
+	delay time.Duration
+	calls atomic.Int32
+}
+
+func (r *monitorSlowRunner) CheckQuick(ctx context.Context, target quality.Target) quality.Result {
+	return r.check(ctx, quality.CheckQuick, target)
+}
+
+func (r *monitorSlowRunner) CheckCloudflare(ctx context.Context, target quality.Target) quality.Result {
+	return r.check(ctx, quality.CheckCloudflare, target)
+}
+
+func (r *monitorSlowRunner) CheckReputation(ctx context.Context, target quality.Target, expectedCountry string) quality.Result {
+	return r.check(ctx, quality.CheckReputation, target)
+}
+
+func (r *monitorSlowRunner) check(ctx context.Context, kind quality.CheckKind, target quality.Target) quality.Result {
+	r.calls.Add(1)
+	if r.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return quality.Result{Kind: kind, Target: target, TargetIndex: target.Index, TargetID: target.ID, Status: "failed", Error: ctx.Err().Error()}
+		case <-time.After(r.delay):
+		}
+	}
+	return quality.Result{Kind: kind, Target: target, TargetIndex: target.Index, TargetID: target.ID, Status: "completed", Success: true, Score: 90}
 }
 
 func TestQualityJobAPI(t *testing.T) {
@@ -83,6 +113,64 @@ func TestQualityJobAPI(t *testing.T) {
 	if page.Count != 2 || page.Page != 1 || page.PageSize != 1 || !page.HasNext || len(page.Data) != 1 {
 		t.Fatalf("bad page: %#v", page)
 	}
+}
+
+func TestQualityJobAPIRejectsActiveJobAndReplaceCancelsPrevious(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+	runner := &monitorSlowRunner{delay: 100 * time.Millisecond}
+	srv.qualitySvc = quality.NewService(quality.ServiceOptions{TargetSource: newMonitorQualityTargetSource(srv), QuickRunner: runner, CloudflareRunner: runner, ReputationRunner: runner, MaxWorkers: 1})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(`{"kind":"cloudflare","region":"all","count":2,"include_unavailable":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var first struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && runner.calls.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if runner.calls.Load() == 0 {
+		t.Fatal("first job did not start before active-job assertions")
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(`{"kind":"cloudflare","region":"all","count":2,"include_unavailable":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second create status=%d, want 409 body=%s", rec.Code, rec.Body.String())
+	}
+	assertQualityErrorCode(t, rec, "active_job")
+
+	req = httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(`{"kind":"cloudflare","region":"all","count":2,"include_unavailable":true,"replace":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("replace create status=%d, want 202 body=%s", rec.Code, rec.Body.String())
+	}
+	var replacement struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &replacement); err != nil {
+		t.Fatal(err)
+	}
+	if replacement.JobID == "" || replacement.JobID == first.JobID {
+		t.Fatalf("replacement should create a distinct job: first=%#v replacement=%#v", first, replacement)
+	}
+	cancelled := waitForMonitorQualityJob(t, srv, first.JobID)
+	if cancelled.Status != quality.JobCancelled {
+		t.Fatalf("first job status=%q, want cancelled: %#v", cancelled.Status, cancelled)
+	}
+	_ = srv.qualitySvc.CancelJob(replacement.JobID)
 }
 
 func TestQualityJobResultsRejectInvalidPagination(t *testing.T) {
