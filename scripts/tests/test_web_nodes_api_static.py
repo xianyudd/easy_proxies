@@ -61,8 +61,22 @@ def test_legacy_webui_defends_non_array_result_payloads():
     assert "(data.data || []).map" not in text
 
 
+def test_legacy_webui_defends_non_array_subscription_and_cached_rows():
+    text = LEGACY_INDEX.read_text()
+    assert "const subscriptions = safeArray(sd.subscriptions);" in text
+    assert "document.getElementById('settingSubURLs').value = subscriptions.join('\\n');" in text
+    assert "_savedSubSnapshot = JSON.stringify({urls: subscriptions.join('\\n')" in text
+    assert "cloudflareLastData = safeArray(rows);" in text
+    assert "cloudflareVisibleData = safeArray(cloudflareLastData).filter" in text
+    assert "reputationLastData = safeArray(rows);" in text
+    assert "(sd.subscriptions || []).join" not in text
+    assert "cloudflareLastData || []" not in text
+    assert "reputationLastData = rows || []" not in text
+
+
 if __name__ == "__main__":
     test_nodes_page_query_preserves_availability_all()
     test_nodes_api_sanitizes_response_shape_before_pages_render()
     test_legacy_webui_defends_non_array_node_payloads()
     test_legacy_webui_defends_non_array_result_payloads()
+    test_legacy_webui_defends_non_array_subscription_and_cached_rows()

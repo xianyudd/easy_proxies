@@ -2423,8 +2423,9 @@
           let matched = false;
           for (let opt of sel.options) { if (iv === opt.value || iv === opt.value.replace('m','m0s') || iv.startsWith(opt.value)) { sel.value = opt.value; matched = true; break; } }
           if (!matched) sel.value = '1h';
-          document.getElementById('settingSubURLs').value = (sd.subscriptions || []).join('\n');
-          _savedSubSnapshot = JSON.stringify({urls: (sd.subscriptions || []).join('\n'), enabled: sd.enabled || false, interval: sel.value});
+          const subscriptions = safeArray(sd.subscriptions);
+          document.getElementById('settingSubURLs').value = subscriptions.join('\n');
+          _savedSubSnapshot = JSON.stringify({urls: subscriptions.join('\n'), enabled: sd.enabled || false, interval: sel.value});
         } catch(e){}
         // Take core snapshot after all fields are populated
         _savedCoreSnapshot = _buildCoreSnapshot();
@@ -2636,12 +2637,12 @@
     }
 
     function renderCloudflareRows(rows) {
-      if (Array.isArray(rows)) cloudflareLastData = rows;
+      cloudflareLastData = safeArray(rows);
       const body = document.getElementById('cfTableBody');
       if (!body) return;
       const filter = document.getElementById('cfLevelFilter') ? document.getElementById('cfLevelFilter').value : 'all';
       const sortMode = document.getElementById('cfSortMode') ? document.getElementById('cfSortMode').value : 'score_desc';
-      cloudflareVisibleData = (cloudflareLastData || []).filter(item => filter === 'all' || item.level === filter);
+      cloudflareVisibleData = safeArray(cloudflareLastData).filter(item => filter === 'all' || item.level === filter);
       cloudflareVisibleData.sort((a,b) => {
         if (sortMode === 'latency_asc') return (a.latency_ms || 999999999) - (b.latency_ms || 999999999);
         if (sortMode === 'node_asc') return String(a.node_name || a.node_tag || '').localeCompare(String(b.node_name || b.node_tag || ''));
@@ -2792,7 +2793,7 @@
     }
 
     function renderReputationRows(rows) {
-      reputationLastData = rows || [];
+      reputationLastData = safeArray(rows);
       const body = document.getElementById('repTableBody');
       if (!body) return;
       if (!reputationLastData.length) {
