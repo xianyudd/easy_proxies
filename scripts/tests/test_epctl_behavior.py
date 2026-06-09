@@ -94,6 +94,42 @@ def test_pid_matches_profile_rejects_different_config_argument():
     assert result.returncode != 0
 
 
+def test_find_service_pids_uses_profile_parser_and_proc_root():
+    script = f"""
+set -euo pipefail
+tmp="$(mktemp -d)"
+matched="$$"
+other="5678"
+mkdir -p "$tmp/$matched" "$tmp/$other"
+python3 - "$tmp/$matched/cmdline" /tmp/epctl-bin --verbose --config=/tmp/epctl-test.yaml <<'PY'
+import sys
+path = sys.argv[1]
+args = sys.argv[2:]
+with open(path, 'wb') as fh:
+    fh.write(b'\\0'.join(arg.encode() for arg in args) + b'\\0')
+PY
+python3 - "$tmp/$other/cmdline" /tmp/epctl-bin --config=/tmp/other.yaml <<'PY'
+import sys
+path = sys.argv[1]
+args = sys.argv[2:]
+with open(path, 'wb') as fh:
+    fh.write(b'\\0'.join(arg.encode() for arg in args) + b'\\0')
+PY
+EPCTL_LIB_ONLY=1
+EPCTL_PROC_ROOT="$tmp"
+BIN="/tmp/epctl-bin"
+CONFIG_FILE="/tmp/epctl-test.yaml"
+source {shell_quote(str(EPCTL))}
+out="$(find_service_pids)"
+if [ "$out" != "$matched" ]; then
+  echo "expected $matched, got $out" >&2
+  exit 1
+fi
+"""
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr
+
+
 def test_listener_line_owner_label_reports_unknown_without_pid():
     script = f"""
 set -euo pipefail
@@ -243,6 +279,7 @@ if __name__ == "__main__":
     test_pid_matches_profile_accepts_equals_config_argument()
     test_pid_matches_profile_accepts_separate_config_argument()
     test_pid_matches_profile_rejects_different_config_argument()
+    test_find_service_pids_uses_profile_parser_and_proc_root()
     test_listener_line_owner_label_reports_unknown_without_pid()
     test_listener_line_owner_label_reports_pid_list()
     test_preflight_allows_listener_owned_by_current_profile()

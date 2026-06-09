@@ -420,17 +420,13 @@ webui_http_code() {
 }
 
 find_service_pids() {
-  local bin_abs cfg_abs
-  bin_abs="$(normalize_path "$BIN")"
-  cfg_abs="$(normalize_path "$CONFIG_FILE")"
-  for f in /proc/[0-9]*/cmdline; do
+  local f pid
+  for f in "$EPCTL_PROC_ROOT"/[0-9]*/cmdline; do
     [ -r "$f" ] || continue
-    local pid cmdline
-    pid="${f#/proc/}"; pid="${pid%/cmdline}"
-    cmdline="$(tr '\0' ' ' 2>/dev/null <"$f" || true)"
-    case "$cmdline" in
-      *"$bin_abs"*" --config $cfg_abs"*|*"$BIN"*" --config $CONFIG_FILE"*) echo "$pid" ;;
-    esac
+    pid="${f#"$EPCTL_PROC_ROOT"/}"; pid="${pid%/cmdline}"
+    if pid_matches_profile "$pid"; then
+      echo "$pid"
+    fi
   done
 }
 
