@@ -33,13 +33,15 @@ def test_nodes_api_sanitizes_response_shape_before_pages_render():
 
 def test_legacy_webui_defends_non_array_node_payloads():
     text = LEGACY_INDEX.read_text()
-    assert "allNodesCache = Array.isArray(data.nodes) ? data.nodes : [];" in text
-    assert "configNodes = Array.isArray(data.nodes) ? data.nodes : [];" in text
+    assert "allNodesCache = safeArray(data.nodes).filter(n => n && typeof n === 'object');" in text
+    assert "configNodes = safeArray(data.nodes).filter(n => n && typeof n === 'object');" in text
     assert "const debugNodes = safeArray(d.nodes).filter(n => n && typeof n === 'object');" in text
     assert "tb.innerHTML = debugNodes.map(n =>" in text
     assert "window._debugNodes = debugNodes;" in text
     assert "allNodesCache = data.nodes || [];" not in text
+    assert "allNodesCache = Array.isArray(data.nodes) ? data.nodes : [];" not in text
     assert "configNodes = data.nodes || [];" not in text
+    assert "configNodes = Array.isArray(data.nodes) ? data.nodes : [];" not in text
     assert "(d.nodes||[]).map" not in text
     assert "window._debugNodes = d.nodes || [];" not in text
 
@@ -52,12 +54,13 @@ def test_legacy_webui_defends_non_array_result_payloads():
     assert "renderExtractorCards(extractorEntries, data);" in text
     assert "formatExtractorOutput(extractorEntries, data.effective_format);" in text
     assert "renderCloudflareRows(safeArray(data.data));" in text
-    assert "const rows = safeArray(data.data);" in text
+    assert "const rows = safeArray(data.data).filter(item => item && typeof item === 'object');" in text
     assert "renderReputationRows(safeArray(data.data));" in text
     assert "const rows = safeArray(data.data).map(r => ({ result: r }));" in text
     assert "data.entries || []" not in text
     assert "data.warnings || []" not in text
     assert "data.data || []" not in text
+    assert "const rows = safeArray(data.data);" not in text
     assert "(data.data || []).map" not in text
 
 
@@ -104,6 +107,33 @@ def test_legacy_webui_defends_non_array_debug_and_export_state():
     assert "(cloudflareVisibleData.length ? cloudflareVisibleData : cloudflareLastData).forEach" not in text
 
 
+def test_legacy_webui_defends_non_object_json_payloads():
+    text = LEGACY_INDEX.read_text()
+    assert "function safeObject(value)" in text
+    assert "const data = safeObject(rawData);" in text
+    assert "const d = safeObject(rawData);" in text
+    assert "const d = safeObject(await r.json());" in text
+    assert "const sd = safeObject(await sr.json());" in text
+    assert "const s = safeObject(await fetch('/api/subscription/status').then(r=>r.json()));" in text
+    assert "const res = safeObject(await r.json());" in text
+    assert "const multiPortSettings = safeObject(data.multi_port);" in text
+    assert "const listenerSettings = safeObject(data.listener);" in text
+    assert "const ls = safeObject(d.listener);" in text
+    assert "const mp = safeObject(d.multi_port);" in text
+    assert "const pl = safeObject(d.pool);" in text
+    assert "const mgmt = safeObject(d.management);" in text
+    assert "const geo = safeObject(d.geoip);" in text
+    assert "const logCfg = safeObject(d.log);" in text
+    assert "const iv = typeof sd.interval === 'string' ? sd.interval : '';" in text
+    assert "const ls = d.listener || {};" not in text
+    assert "const iv = sd.interval || '';" not in text
+    assert "const data = await res.json();" not in text
+    assert "const d = await res.json();" not in text
+    assert "const sd = await sr.json();" not in text
+    assert "const s = await fetch('/api/subscription/status').then(r=>r.json());" not in text
+    assert "const res = await r.json();" not in text
+
+
 if __name__ == "__main__":
     test_nodes_page_query_preserves_availability_all()
     test_nodes_api_sanitizes_response_shape_before_pages_render()
@@ -112,3 +142,4 @@ if __name__ == "__main__":
     test_legacy_webui_defends_non_array_subscription_and_cached_rows()
     test_legacy_webui_defends_non_array_debug_timeline()
     test_legacy_webui_defends_non_array_debug_and_export_state()
+    test_legacy_webui_defends_non_object_json_payloads()

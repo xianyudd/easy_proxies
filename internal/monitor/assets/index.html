@@ -1577,12 +1577,17 @@
       return Array.isArray(value) ? value : [];
     }
 
+    function safeObject(value) {
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    }
+
     async function refresh() {
       try {
         const res = await fetch('/api/nodes');
         if (res.status === 401) { document.getElementById('loginOverlay').classList.add('show'); stopAutoRefresh(); return; }
-        const data = await res.json();
-        allNodesCache = Array.isArray(data.nodes) ? data.nodes : [];
+        const rawData = await res.json();
+        const data = safeObject(rawData);
+        allNodesCache = safeArray(data.nodes).filter(n => n && typeof n === 'object');
         updateDashboardStats(data);
         filterByRegion(currentRegionFilter);
         document.getElementById('lastUpdate').textContent = `Sync: ${new Date().toLocaleTimeString()}`;
@@ -2050,7 +2055,8 @@
       try {
         const q = new URLSearchParams({ region, mode, format, count, reveal: reveal ? '1' : '0' });
         const res = await fetch('/api/extractor?' + q.toString());
-        const data = await res.json();
+        const rawData = await res.json();
+        const data = safeObject(rawData);
         if (!res.ok || data.error) {
           clearExtractorOutput('提取失败，请重新生成');
           showToast(data.error || '提取失败', 'error');
@@ -2087,6 +2093,7 @@
     function renderExtractorCards(entries, data) {
       const el = document.getElementById('extractorCards');
       if (!el) return;
+      const meta = safeObject(data);
       const safeEntries = safeArray(entries);
       if (!safeEntries.length) {
         el.innerHTML = '<div class="extractor-empty-note">还没有生成代理，先使用上方快捷提取或高级参数生成结果。</div>';
@@ -2101,11 +2108,11 @@
         const displayEntry = rawEntry && !rawEntry.url && !rawEntry.http && !rawEntry.https
           ? JSON.stringify(rawEntry, null, 2)
           : String(entry);
-        const cardMode = escapeHtml(String(rawEntry?.mode || data.mode || 'extractor'));
-        const cardRegion = escapeHtml(String(rawEntry?.region || data.region || 'all'));
+        const cardMode = escapeHtml(String(rawEntry?.mode || meta.mode || 'extractor'));
+        const cardRegion = escapeHtml(String(rawEntry?.region || meta.region || 'all'));
         const cardRemark = rawEntry?.remark ? `<span class="extractor-chip">${escapeHtml(String(rawEntry.remark))}</span>` : '';
         const cardNode = rawEntry?.node_name ? `<span class="extractor-chip">${escapeHtml(String(rawEntry.node_name))}</span>` : '';
-        const copyLabel = data.masked ? '复制脱敏' : '复制本条';
+        const copyLabel = meta.masked ? '复制脱敏' : '复制本条';
         const curlCommand = proxyToCurlCommand(entry);
         const curlButton = curlCommand ? `<button class="btn btn-sm" onclick="copySingleExtractorEntry('${encodeURIComponent(curlCommand)}')">复制 curl</button>` : '';
         return `
@@ -2116,7 +2123,7 @@
                 <div style="display:flex; flex-wrap:wrap; gap:8px;">
                   <span class="extractor-badge">${cardMode}</span>
                   <span class="extractor-chip">${cardRegion}</span>
-                  <span class="extractor-chip">${escapeHtml(String(data.effective_format || 'unknown'))}</span>
+                  <span class="extractor-chip">${escapeHtml(String(meta.effective_format || 'unknown'))}</span>
                   ${cardRemark}
                   ${cardNode}
                 </div>
@@ -2201,7 +2208,8 @@
       try {
         const res = await fetch('/api/subscription/status');
         if(!res.ok) return;
-        const d = await res.json();
+        const rawData = await res.json();
+        const d = safeObject(rawData);
         const btn = document.getElementById('refreshSubBtn');
         if(!d.enabled) { btn.style.display='none'; return; }
         btn.style.display='inline-flex';
@@ -2212,11 +2220,11 @@
     
     async function refreshSubscription() {
       try {
-        const s = await fetch('/api/subscription/status').then(r=>r.json());
+        const s = safeObject(await fetch('/api/subscription/status').then(r=>r.json()));
         if(s.nodes_modified && !confirm('本地节点已修改，刷新将覆盖，继续？')) return;
         showToast('开始刷新订阅...');
         const r = await fetch('/api/subscription/refresh', {method:'POST'});
-        const res = await r.json();
+        const res = safeObject(await r.json());
         if(res.error) showToast(res.error, 'error'); else { showToast(`成功获取 ${res.node_count} 节点`); refresh(); }
       } catch(e) { showToast('失败'+e, 'error'); }
     }
@@ -2225,8 +2233,9 @@
     async function loadConfigNodes() {
       try {
         const res = await fetch('/api/nodes/config');
-        const data = await res.json();
-        configNodes = Array.isArray(data.nodes) ? data.nodes : [];
+        const rawData = await res.json();
+        const data = safeObject(rawData);
+        configNodes = safeArray(data.nodes).filter(n => n && typeof n === 'object');
         const tbody = document.getElementById('configNodesTableBody');
         tbody.innerHTML = configNodes.map((n, i) => `
           <tr>
@@ -2285,7 +2294,8 @@
     async function loadDebugData() {
       try {
         const res = await fetch('/api/debug');
-        const d = await res.json();
+        const rawData = await res.json();
+        const d = safeObject(rawData);
         document.getElementById('debugTotalCalls').textContent = d.total_calls||0;
         document.getElementById('debugTotalSuccess').textContent = d.total_success||0;
         document.getElementById('debugSuccessRate').textContent = (d.success_rate||0).toFixed(1)+'%';
@@ -2375,35 +2385,35 @@
     // Settings
     async function loadSettingsPage() {
       try {
-        const r = await fetch('/api/settings'); const d = await r.json();
+        const r = await fetch('/api/settings'); const d = safeObject(await r.json());
         // General
         document.getElementById('settingMode').value = d.mode || 'pool';
         document.getElementById('settingExternalIP').value = d.external_ip||'';
         document.getElementById('settingProbeTarget').value = d.probe_target||'';
         document.getElementById('settingSkipCertVerify').checked = d.skip_cert_verify||false;
         // Listener
-        const ls = d.listener || {};
+        const ls = safeObject(d.listener);
         document.getElementById('settingListenerAddr').value = ls.address || '';
         document.getElementById('settingListenerPort').value = ls.port || '';
         document.getElementById('settingListenerUser').value = ls.username || '';
         document.getElementById('settingListenerPass').value = ls.password || '';
         // Multi-port
-        const mp = d.multi_port || {};
+        const mp = safeObject(d.multi_port);
         document.getElementById('settingMPAddr').value = mp.address || '';
         document.getElementById('settingMPBasePort').value = mp.base_port || '';
         document.getElementById('settingMPUser').value = mp.username || '';
         document.getElementById('settingMPPass').value = mp.password || '';
         // Pool
-        const pl = d.pool || {};
+        const pl = safeObject(d.pool);
         document.getElementById('settingPoolMode').value = pl.mode || 'random';
         document.getElementById('settingPoolFailure').value = pl.failure_threshold || 3;
         document.getElementById('settingPoolBlacklist').value = pl.blacklist_duration || '24h';
         // Management
-        const mgmt = d.management || {};
+        const mgmt = safeObject(d.management);
         document.getElementById('settingMgmtListen').value = mgmt.listen || '';
         document.getElementById('settingMgmtPassword').value = mgmt.password || '';
         // GeoIP
-        const geo = d.geoip || {};
+        const geo = safeObject(d.geoip);
         document.getElementById('settingGeoIPEnabled').checked = geo.enabled || false;
         document.getElementById('settingGeoIPDBPath').value = geo.database_path || '';
         document.getElementById('settingGeoIPListen').value = geo.listen || '';
@@ -2411,7 +2421,7 @@
         document.getElementById('settingGeoIPAutoUpdate').checked = geo.auto_update_enabled || false;
         document.getElementById('settingGeoIPUpdateInterval').value = geo.auto_update_interval || '24h0m0s';
         // Log
-        const logCfg = d.log || {};
+        const logCfg = safeObject(d.log);
         document.getElementById('settingLogOutput').value = logCfg.output || 'stdout';
         document.getElementById('settingLogMaxSize').value = logCfg.max_size || 50;
         document.getElementById('settingLogMaxBackups').value = logCfg.max_backups || 3;
@@ -2420,9 +2430,9 @@
         toggleLogFileSettings();
         // Subscription
         try {
-          const sr = await fetch('/api/subscription/config'); const sd = await sr.json();
+          const sr = await fetch('/api/subscription/config'); const sd = safeObject(await sr.json());
           document.getElementById('settingSubEnabled').checked = sd.enabled || false;
-          const iv = sd.interval || '';
+          const iv = typeof sd.interval === 'string' ? sd.interval : '';
           const sel = document.getElementById('settingSubInterval');
           let matched = false;
           for (let opt of sel.options) { if (iv === opt.value || iv === opt.value.replace('m','m0s') || iv.startsWith(opt.value)) { sel.value = opt.value; matched = true; break; } }
@@ -2551,7 +2561,7 @@
           const sr = await fetch('/api/subscription/config', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(subPayload)});
           hideFullscreenLoading();
           if(!sr.ok) { showToast('订阅配置保存失败', 'error'); saveBtn.disabled = false; saveBtn.textContent = originalText; saveBtn.style.opacity = '1'; return; }
-          const sd = await sr.json();
+          const sd = safeObject(await sr.json());
           _savedSubSnapshot = currentSubSnapshot;
           if (sd.refresh_error) {
             showToast('订阅已保存，但刷新失败: ' + sd.refresh_error, 'error');
@@ -2609,8 +2619,13 @@
     async function loadCloudflareProxySettings() {
       try {
         const res = await fetch('/api/settings');
-        const data = await res.json();
-        if (res.ok) cloudflareProxySettings = data.multi_port || data.listener || null;
+        const rawData = await res.json();
+        const data = safeObject(rawData);
+        if (res.ok) {
+          const multiPortSettings = safeObject(data.multi_port);
+          const listenerSettings = safeObject(data.listener);
+          cloudflareProxySettings = Object.keys(multiPortSettings).length ? multiPortSettings : (Object.keys(listenerSettings).length ? listenerSettings : null);
+        }
       } catch(e) {}
     }
 
@@ -2687,7 +2702,8 @@
         await loadCloudflareProxySettings();
         const include = includeUnavailable ? '&include_unavailable=true&background=true' : '';
         const res = await fetch(`/api/cloudflare/check?region=${encodeURIComponent(region)}&mode=multi-port&count=${encodeURIComponent(count)}${include}`);
-        const data = await res.json();
+        const rawData = await res.json();
+        const data = safeObject(rawData);
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         if (data.job_id) {
           status.textContent = `后台任务已创建：${data.job_id}。请到当前新版节点质量页查看进度。`;
@@ -2709,9 +2725,10 @@
       try {
         await loadCloudflareProxySettings();
         const res = await fetch('/api/cloudflare/cache');
-        const data = await res.json();
+        const rawData = await res.json();
+        const data = safeObject(rawData);
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        const rows = safeArray(data.data);
+        const rows = safeArray(data.data).filter(item => item && typeof item === 'object');
         renderCloudflareRows(rows);
         const summary = {excellent:0, good:0, fair:0, poor:0, failed:0};
         rows.forEach(item => { const l = item.level; if (summary[l] !== undefined) summary[l]++; });
@@ -2839,7 +2856,8 @@
       status.textContent = '同步检查最多 5 条；更多节点请使用后台质量任务。';
       try {
         const res = await fetch(`/api/reputation/check?region=${encodeURIComponent(region)}&mode=multi-port&count=${encodeURIComponent(count)}`);
-        const data = await res.json();
+        const rawData = await res.json();
+        const data = safeObject(rawData);
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         updateReputationSummary(data.summary);
         renderReputationRows(safeArray(data.data));
@@ -2855,7 +2873,8 @@
       if (status) status.textContent = '读取缓存中...';
       try {
         const res = await fetch('/api/reputation/cache');
-        const data = await res.json();
+        const rawData = await res.json();
+        const data = safeObject(rawData);
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         const rows = safeArray(data.data).map(r => ({ result: r }));
         renderReputationRows(rows);
