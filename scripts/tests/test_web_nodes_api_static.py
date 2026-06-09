@@ -44,7 +44,25 @@ def test_legacy_webui_defends_non_array_node_payloads():
     assert "window._debugNodes = d.nodes || [];" not in text
 
 
+def test_legacy_webui_defends_non_array_result_payloads():
+    text = LEGACY_INDEX.read_text()
+    assert "function safeArray(value)" in text
+    assert "const extractorEntries = safeArray(data.entries);" in text
+    assert "const warnings = safeArray(data.warnings);" in text
+    assert "renderExtractorCards(extractorEntries, data);" in text
+    assert "formatExtractorOutput(extractorEntries, data.effective_format);" in text
+    assert "renderCloudflareRows(safeArray(data.data));" in text
+    assert "const rows = safeArray(data.data);" in text
+    assert "renderReputationRows(safeArray(data.data));" in text
+    assert "const rows = safeArray(data.data).map(r => ({ result: r }));" in text
+    assert "data.entries || []" not in text
+    assert "data.warnings || []" not in text
+    assert "data.data || []" not in text
+    assert "(data.data || []).map" not in text
+
+
 if __name__ == "__main__":
     test_nodes_page_query_preserves_availability_all()
     test_nodes_api_sanitizes_response_shape_before_pages_render()
     test_legacy_webui_defends_non_array_node_payloads()
+    test_legacy_webui_defends_non_array_result_payloads()

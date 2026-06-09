@@ -1573,6 +1573,10 @@
       const div = document.createElement('div'); div.textContent = text; return div.innerHTML;
     }
 
+    function safeArray(value) {
+      return Array.isArray(value) ? value : [];
+    }
+
     async function refresh() {
       try {
         const res = await fetch('/api/nodes');
@@ -2053,15 +2057,16 @@
           return;
         }
         extractorLastMasked = !!data.masked;
-        const output = formatExtractorOutput(data.entries, data.effective_format);
+        const extractorEntries = safeArray(data.entries);
+        const output = formatExtractorOutput(extractorEntries, data.effective_format);
         extractorLastText = output;
         document.getElementById('extractorOutput').value = output;
-        renderExtractorCards(data.entries || [], data);
+        renderExtractorCards(extractorEntries, data);
         document.getElementById('extractorMeta').textContent =
           `模式: ${data.mode} | 区域: ${data.region} | 格式: ${data.effective_format} | 输出: ${data.output_count}/${data.requested_count} | ${data.masked ? '已脱敏' : '真实凭据'}`;
         const resultState = document.getElementById('extractorResultState');
         if (resultState) resultState.textContent = data.masked ? '脱敏显示' : '真实密码';
-        const warnings = data.warnings || [];
+        const warnings = safeArray(data.warnings);
         const warningsEl = document.getElementById('extractorWarnings');
         if (warnings.length) {
           warningsEl.style.display = 'block';
@@ -2685,7 +2690,7 @@
           return;
         }
         updateCloudflareSummary(data.summary);
-        renderCloudflareRows(data.data || []);
+        renderCloudflareRows(safeArray(data.data));
         status.textContent = `完成：检测 ${data.checked_count || 0} 条，地区 ${data.region || region}${data.include_unavailable ? '，包含不可用节点' : ''}。注意：这是本地兼容评分，不是官方 Bot Score。`;
       } catch (e) {
         status.textContent = '检测失败：' + e.message;
@@ -2701,7 +2706,7 @@
         const res = await fetch('/api/cloudflare/cache');
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        const rows = data.data || [];
+        const rows = safeArray(data.data);
         renderCloudflareRows(rows);
         const summary = {excellent:0, good:0, fair:0, poor:0, failed:0};
         rows.forEach(item => { const l = item.level; if (summary[l] !== undefined) summary[l]++; });
@@ -2824,7 +2829,7 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         updateReputationSummary(data.summary);
-        renderReputationRows(data.data || []);
+        renderReputationRows(safeArray(data.data));
         status.textContent = `完成：检查 ${data.checked_count || 0} 条，地区 ${data.region || region}`;
       } catch (e) {
         status.textContent = '检查失败：' + e.message;
@@ -2839,7 +2844,7 @@
         const res = await fetch('/api/reputation/cache');
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        const rows = (data.data || []).map(r => ({ result: r }));
+        const rows = safeArray(data.data).map(r => ({ result: r }));
         renderReputationRows(rows);
         const summary = {low:0, medium:0, high:0, failed:0};
         rows.forEach(x => { const l = x.result && x.result.risk_level; if (summary[l] !== undefined) summary[l]++; });
