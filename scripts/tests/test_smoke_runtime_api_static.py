@@ -39,6 +39,12 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
     assert 'quality job response missing job_id' in text
 
 
+def test_smoke_script_replaces_active_quality_job_instead_of_skipping():
+    text = read_source()
+    assert '"replace": True' in text
+    assert 'quality: create job skipped because another job is active' not in text
+
+
 def test_smoke_script_retries_reload_status_during_control_plane_rebind():
     text = read_source()
     assert "retry_connect" in text
@@ -128,6 +134,7 @@ def test_smoke_script_checks_config_node_crud_without_auto_reload():
 
 if __name__ == "__main__":
     test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths()
+    test_smoke_script_replaces_active_quality_job_instead_of_skipping()
     test_smoke_script_retries_reload_status_during_control_plane_rebind()
     test_smoke_script_waits_for_webui_ready_before_checks()
     test_smoke_script_checks_config_node_crud_without_auto_reload()

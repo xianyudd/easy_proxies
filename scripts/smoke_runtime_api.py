@@ -256,10 +256,8 @@ def check_quality_paths(opener: urllib.request.OpenerDirector) -> None:
         "source": "subscription",
         "count": 1,
         "include_unavailable": True,
+        "replace": True,
     })
-    if code == 409 and isinstance(job, dict) and job.get("code") == "active_job":
-        print("quality: create job skipped because another job is active")
-        return
     require(code == 202 and isinstance(job, dict), f"POST quality job failed HTTP {code}: {job!r}")
     job_id = str(job.get("job_id") or "")
     require(job_id, f"quality job response missing job_id: {job!r}")
