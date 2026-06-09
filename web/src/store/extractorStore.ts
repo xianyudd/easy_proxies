@@ -19,6 +19,10 @@ export const defaultExtractorParams: ExtractorParams = {
   reveal: true,
 }
 
+function safeArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value : []
+}
+
 export const useExtractorStore = create<ExtractorState>((set) => ({
   params: defaultExtractorParams,
   entries: [],
@@ -26,8 +30,8 @@ export const useExtractorStore = create<ExtractorState>((set) => ({
   warnings: [],
   setParams: (patch) => set((state) => ({ params: { ...state.params, ...patch } })),
   setResult: (data) => set({
-    entries: data.entries || [],
-    warnings: data.warnings || [],
+    entries: safeArray<ExtractorEntry>(data.entries),
+    warnings: safeArray<string>(data.warnings),
     meta: `模式: ${data.mode} | 区域: ${data.region} | 格式: ${data.effective_format} | 输出: ${data.output_count}/${data.requested_count} | ${data.masked ? '已脱敏' : '真实凭据'}`,
   }),
   clear: () => set({ entries: [], warnings: [], meta: '尚未生成' }),

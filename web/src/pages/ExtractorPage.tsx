@@ -8,7 +8,11 @@ import { QuickExtractBar } from '../components/extractor/QuickExtractBar'
 import { ProxyResultList, entriesToText } from '../components/extractor/ProxyResultList'
 import { useExtractorStore } from '../store/extractorStore'
 import { copyToClipboard } from '../lib/clipboard'
-import type { ExtractorParams } from '../types/extractor'
+import type { ExtractorEntry, ExtractorParams } from '../types/extractor'
+
+function safeArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? value : []
+}
 
 export function ExtractorPage() {
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
@@ -34,7 +38,8 @@ export function ExtractorPage() {
     try {
       const data = await mutation.mutateAsync(params)
       setResult(data)
-      const out = entriesToText(data.entries || [])
+      const generatedEntries = safeArray<ExtractorEntry>(data.entries)
+      const out = entriesToText(generatedEntries)
       if (out) await copyToClipboard(out, toast, '已生成并复制')
       else toast('已生成，但没有可复制的内容', 'info')
     } catch (e) {
