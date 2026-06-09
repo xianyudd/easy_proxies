@@ -2087,11 +2087,12 @@
     function renderExtractorCards(entries, data) {
       const el = document.getElementById('extractorCards');
       if (!el) return;
-      if (!entries || !entries.length) {
+      const safeEntries = safeArray(entries);
+      if (!safeEntries.length) {
         el.innerHTML = '<div class="extractor-empty-note">还没有生成代理，先使用上方快捷提取或高级参数生成结果。</div>';
         return;
       }
-      const previewEntries = entries.slice(0, 20);
+      const previewEntries = safeEntries.slice(0, 20);
       el.innerHTML = previewEntries.map((item, index) => {
         const rawEntry = item && typeof item === 'object' ? item : null;
         const entry = rawEntry
@@ -2129,8 +2130,8 @@
           </div>
         `;
       }).join('');
-      if (entries.length > 20) {
-        el.innerHTML += `<div class="extractor-empty-note">当前共生成 ${entries.length} 条代理，卡片区仅展示前 20 条，完整结果请在下方文本框查看或下载 TXT。</div>`;
+      if (safeEntries.length > 20) {
+        el.innerHTML += `<div class="extractor-empty-note">当前共生成 ${safeEntries.length} 条代理，卡片区仅展示前 20 条，完整结果请在下方文本框查看或下载 TXT。</div>`;
       }
     }
 
@@ -2289,11 +2290,11 @@
         document.getElementById('debugTotalSuccess').textContent = d.total_success||0;
         document.getElementById('debugSuccessRate').textContent = (d.success_rate||0).toFixed(1)+'%';
         const tb = document.getElementById('debugNodesTableBody');
-        const debugNodes = Array.isArray(d.nodes) ? d.nodes : [];
+        const debugNodes = safeArray(d.nodes).filter(n => n && typeof n === 'object');
         tb.innerHTML = debugNodes.map(n => {
           const calls = (n.success_count||0)+(n.failure_count||0);
           const sr = calls>0 ? ((n.success_count||0)/calls*100).toFixed(1) : 0;
-          const timeline = safeArray(n.timeline);
+          const timeline = safeArray(n.timeline).filter(t => t && typeof t === 'object');
           const tl = timeline.map(t => `<div class="tl-dot ${t.success?'success':'error'}" title="${t.latency_ms}ms"></div>`).join('');
           return `<tr>
             <td><strong>${escapeHtml(n.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escapeHtml(n.tag)}</span></td>
@@ -2640,7 +2641,7 @@
     }
 
     function renderCloudflareRows(rows) {
-      cloudflareLastData = safeArray(rows);
+      cloudflareLastData = safeArray(rows).filter(item => item && typeof item === 'object');
       const body = document.getElementById('cfTableBody');
       if (!body) return;
       const filter = document.getElementById('cfLevelFilter') ? document.getElementById('cfLevelFilter').value : 'all';
@@ -2727,20 +2728,24 @@
       navigator.clipboard.writeText(JSON.stringify(cfRows, null, 2)).then(() => showToast('已复制 CF JSON'));
     }
 
+    function cloudflareVisibleItem(idx) {
+      return safeArray(cloudflareVisibleData)[idx];
+    }
+
     function copyCloudflareProxy(idx) {
-      const item = cloudflareVisibleData[idx];
+      const item = cloudflareVisibleItem(idx);
       if (!item) return;
       navigator.clipboard.writeText(cfProxyUrl(item)).then(() => showToast('已复制代理 URL'));
     }
 
     function copyCloudflareCurl(idx) {
-      const item = cloudflareVisibleData[idx];
+      const item = cloudflareVisibleItem(idx);
       if (!item) return;
       navigator.clipboard.writeText(`curl -x ${cfProxyUrl(item)} http://cp.cloudflare.com/generate_204`).then(() => showToast('已复制 curl 命令'));
     }
 
     function extractCloudflareToExtractor(idx) {
-      const item = cloudflareVisibleData[idx];
+      const item = cloudflareVisibleItem(idx);
       if (!item) return;
       const url = cfProxyUrl(item);
       switchTab('extractor');
@@ -2800,7 +2805,7 @@
     }
 
     function renderReputationRows(rows) {
-      reputationLastData = safeArray(rows);
+      reputationLastData = safeArray(rows).filter(item => item && typeof item === 'object');
       const body = document.getElementById('repTableBody');
       if (!body) return;
       if (!reputationLastData.length) {

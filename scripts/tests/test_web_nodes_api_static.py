@@ -35,7 +35,7 @@ def test_legacy_webui_defends_non_array_node_payloads():
     text = LEGACY_INDEX.read_text()
     assert "allNodesCache = Array.isArray(data.nodes) ? data.nodes : [];" in text
     assert "configNodes = Array.isArray(data.nodes) ? data.nodes : [];" in text
-    assert "const debugNodes = Array.isArray(d.nodes) ? d.nodes : [];" in text
+    assert "const debugNodes = safeArray(d.nodes).filter(n => n && typeof n === 'object');" in text
     assert "tb.innerHTML = debugNodes.map(n =>" in text
     assert "window._debugNodes = debugNodes;" in text
     assert "allNodesCache = data.nodes || [];" not in text
@@ -66,9 +66,9 @@ def test_legacy_webui_defends_non_array_subscription_and_cached_rows():
     assert "const subscriptions = safeArray(sd.subscriptions);" in text
     assert "document.getElementById('settingSubURLs').value = subscriptions.join('\\n');" in text
     assert "_savedSubSnapshot = JSON.stringify({urls: subscriptions.join('\\n')" in text
-    assert "cloudflareLastData = safeArray(rows);" in text
+    assert "cloudflareLastData = safeArray(rows).filter(item => item && typeof item === 'object');" in text
     assert "cloudflareVisibleData = safeArray(cloudflareLastData).filter" in text
-    assert "reputationLastData = safeArray(rows);" in text
+    assert "reputationLastData = safeArray(rows).filter(item => item && typeof item === 'object');" in text
     assert "(sd.subscriptions || []).join" not in text
     assert "cloudflareLastData || []" not in text
     assert "reputationLastData = rows || []" not in text
@@ -76,7 +76,7 @@ def test_legacy_webui_defends_non_array_subscription_and_cached_rows():
 
 def test_legacy_webui_defends_non_array_debug_timeline():
     text = LEGACY_INDEX.read_text()
-    assert "const timeline = safeArray(n.timeline);" in text
+    assert "const timeline = safeArray(n.timeline).filter(t => t && typeof t === 'object');" in text
     assert "const tl = timeline.map(t =>" in text
     assert "(n.timeline||[]).map" not in text
 
@@ -96,6 +96,10 @@ def test_legacy_webui_defends_non_array_debug_and_export_state():
     assert "window._debugNodes.forEach" not in text
     assert "window._debugNodes.filter" not in text
     assert "reputationLastData.forEach" not in text
+    assert "function cloudflareVisibleItem(idx)" in text
+    assert "return safeArray(cloudflareVisibleData)[idx];" in text
+    assert "const item = cloudflareVisibleItem(idx);" in text
+    assert "cloudflareVisibleData[idx]" not in text
     assert "cloudflareVisibleData.length ? cloudflareVisibleData : cloudflareLastData" not in text
     assert "(cloudflareVisibleData.length ? cloudflareVisibleData : cloudflareLastData).forEach" not in text
 
