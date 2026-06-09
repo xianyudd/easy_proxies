@@ -127,6 +127,16 @@ def test_quality_page_sample_and_cache_refresh_exit_job_result_mode():
     assert "缓存结果已加载" in text
 
 
+def test_quality_page_does_not_fallback_to_total_count_for_empty_source():
+    text = read(QUALITY_PAGE)
+    assert "const pipelineCount = source === 'all' ? Math.max(sourceCount, 500) : sourceCount" in text
+    assert "const hasPipelineTargets = pipelineCount > 0" in text
+    assert "!hasPipelineTargets" in text
+    assert "Pipeline 无可扫描节点" in text
+    assert "count: pipelineCount" in text
+    assert "sourceCount || nodesSummary.data?.total_nodes" not in text
+
+
 if __name__ == "__main__":
     test_api_client_parses_json_text_fallback_for_accepted_jobs()
     test_quality_page_validates_job_id_and_renders_job_panel_path()
@@ -142,3 +152,4 @@ if __name__ == "__main__":
     test_quality_page_table_row_key_does_not_depend_on_array_index()
     test_quality_charts_defend_non_array_rows_props()
     test_quality_page_sample_and_cache_refresh_exit_job_result_mode()
+    test_quality_page_does_not_fallback_to_total_count_for_empty_source()

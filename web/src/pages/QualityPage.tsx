@@ -125,13 +125,14 @@ export function QualityPage() {
   const sourceCountLabel = (key: string) => hasSummaryError ? '未知' : String(sourceStats[key] || 0)
   const sourceCount = source === 'all' ? (nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0) : Number(sourceStats[source] || 0)
   const scanCount = Math.min(50, Math.max(1, count))
-  const allCount = Math.max(sourceCount || nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0, source === 'all' ? 500 : 1)
+  const pipelineCount = source === 'all' ? Math.max(sourceCount, 500) : sourceCount
+  const hasPipelineTargets = pipelineCount > 0
   const jobRunning = !!jobId && !isTerminalJob(jobQuery.data)
   const cacheLoading = cfCache.isFetching || repCache.isFetching
   const jobProgressLoading = jobQuery.isFetching || jobResults.isFetching
-  const canCreatePipeline = !nodesSummary.isLoading && !hasSummaryError && !jobRunning
+  const canCreatePipeline = !nodesSummary.isLoading && !hasSummaryError && !jobRunning && hasPipelineTargets
   const canRunSampleCheck = !nodesSummary.isLoading && !hasSummaryError && !jobRunning
-  const scanAllLabel = nodesSummary.isLoading ? 'Pipeline 扫描节点（统计加载中）' : hasSummaryError ? 'Pipeline 扫描节点（数量未知）' : `Pipeline 扫描 ${allCount} 个节点`
+  const scanAllLabel = nodesSummary.isLoading ? 'Pipeline 扫描节点（统计加载中）' : hasSummaryError ? 'Pipeline 扫描节点（数量未知）' : !hasPipelineTargets ? 'Pipeline 无可扫描节点' : `Pipeline 扫描 ${pipelineCount} 个节点`
   const qualitySource = source === 'all' ? undefined : source
   const showCacheMode = () => {
     setJobId('')
@@ -139,8 +140,8 @@ export function QualityPage() {
     setResultPage(1)
   }
   const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { showCacheMode(); setCfRows(safeRows<CloudflareResult>(d.data)); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
-  const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true }) })
-  const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: allCount, include_unavailable: true, retry_failed: true, replace: true }) })
+  const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: pipelineCount, include_unavailable: true }) })
+  const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: pipelineCount, include_unavailable: true, retry_failed: true, replace: true }) })
   const cancelScan = useMutation({ mutationFn: () => cancelQualityJob(jobId), onSuccess: () => { void jobQuery.refetch(); void jobResults.refetch(); toast('后台任务已取消', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '取消任务失败', 'error') })
   const startQualityJob = async (retryFailed = false) => {
     const mutation = retryFailed ? retryScan : fullScan
