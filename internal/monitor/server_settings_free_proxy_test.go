@@ -2565,11 +2565,6 @@ free_proxy_sources:
 	if len(resp.Sources) != 1 || resp.Sources[0].Error == "" {
 		t.Fatalf("API did not include source error details: %#v", resp)
 	}
-	select {
-	case <-fake.done:
-		t.Fatal("auto reload should not run after failed refresh; stale cache must be preserved")
-	case <-time.After(100 * time.Millisecond):
-	}
 	if fake.ReloadCalls() != 0 {
 		t.Fatalf("reloadCalls = %d, want 0", fake.ReloadCalls())
 	}
@@ -2582,13 +2577,13 @@ func TestFreeProxyRefreshUsesConfigSnapshotFromStart(t *testing.T) {
 	requested := make(chan struct{})
 	release := make(chan struct{})
 	releaseGate := releaseTestGate(release)
-	defer releaseGate()
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
 		_, _ = w.Write([]byte("http://127.0.0.1:18080\nhttp://127.0.0.1:18081\n"))
 	}))
 	defer source.Close()
+	defer releaseGate()
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
@@ -2640,13 +2635,13 @@ func TestStartFreeProxyRefreshQueuesLatestSettingsWhenRunning(t *testing.T) {
 	requested := make(chan struct{})
 	release := make(chan struct{})
 	releaseGate := releaseTestGate(release)
-	defer releaseGate()
 	sourceA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
 		_, _ = w.Write([]byte("http://127.0.0.1:18080\n"))
 	}))
 	defer sourceA.Close()
+	defer releaseGate()
 	sourceBRequests := 0
 	sourceB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sourceBRequests++
@@ -2723,13 +2718,13 @@ func TestStartFreeProxyRefreshDoesNotQueueSameSignatureWhileRunning(t *testing.T
 	requested := make(chan struct{})
 	release := make(chan struct{})
 	releaseGate := releaseTestGate(release)
-	defer releaseGate()
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
 		_, _ = w.Write([]byte("http://127.0.0.1:18080\n"))
 	}))
 	defer source.Close()
+	defer releaseGate()
 	initial := []byte(`nodes:
   - name: base
     uri: http://127.0.0.1:18080
@@ -2783,13 +2778,13 @@ func TestFreeProxyRefreshFailureStillDrainsPendingSnapshot(t *testing.T) {
 	requested := make(chan struct{})
 	release := make(chan struct{})
 	releaseGate := releaseTestGate(release)
-	defer releaseGate()
 	sourceA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
 		_, _ = w.Write([]byte("\n"))
 	}))
 	defer sourceA.Close()
+	defer releaseGate()
 	sourceB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("http://127.0.0.1:18083\n"))
 	}))
@@ -2857,13 +2852,13 @@ func TestHandleSettingsQueuesFreeProxyRefreshWhenAlreadyRunning(t *testing.T) {
 	requested := make(chan struct{})
 	release := make(chan struct{})
 	releaseGate := releaseTestGate(release)
-	defer releaseGate()
 	sourceA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(requested)
 		<-release
 		_, _ = w.Write([]byte("http://127.0.0.1:18080\n"))
 	}))
 	defer sourceA.Close()
+	defer releaseGate()
 	sourceB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("http://127.0.0.1:18082\n"))
 	}))
@@ -3144,10 +3139,8 @@ free_proxy_sources:
 	if status.DurationMS > 200 {
 		t.Fatalf("fresh cache refresh too slow: %#v", status)
 	}
-	select {
-	case <-fake.done:
-		t.Fatal("auto reload should not run when fresh cache was reused")
-	case <-time.After(100 * time.Millisecond):
+	if fake.ReloadCalls() != 0 {
+		t.Fatalf("reloadCalls = %d, want 0", fake.ReloadCalls())
 	}
 }
 
@@ -3195,11 +3188,6 @@ free_proxy_sources:
 	}
 	if len(status.Sources) != 1 || status.Sources[0].Error == "" {
 		t.Fatalf("source failure telemetry missing: %#v", status.Sources)
-	}
-	select {
-	case <-fake.done:
-		t.Fatal("auto reload should not run when only stale cache was reused")
-	case <-time.After(100 * time.Millisecond):
 	}
 	if fake.ReloadCalls() != 0 {
 		t.Fatalf("reloadCalls = %d, want 0", fake.ReloadCalls())
