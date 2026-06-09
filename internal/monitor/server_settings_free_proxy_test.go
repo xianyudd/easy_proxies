@@ -36,6 +36,7 @@ type fakeNodeManager struct {
 	done        chan struct{}
 	doneOnce    sync.Once
 	reloadCh    chan int
+	reloadBlock chan struct{}
 	nodes       []config.NodeConfig
 	created     []config.NodeConfig
 	updated     []config.NodeConfig
@@ -186,6 +187,13 @@ func (f *fakeNodeManager) TriggerReload(ctx context.Context) error {
 	}
 	if f.done != nil {
 		defer f.doneOnce.Do(func() { close(f.done) })
+	}
+	if f.reloadBlock != nil {
+		select {
+		case <-f.reloadBlock:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	if f.delay > 0 {
 		select {
@@ -1594,6 +1602,10 @@ func TestHandleSettingsAcceptsRoundTripZeroDurationDefaults(t *testing.T) {
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("round-trip PUT status = %d, body = %s", putRec.Code, putRec.Body.String())
 	}
+	status := server.currentFreeProxyRefreshStatus()
+	if status.State == "running" || status.Pending {
+		waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	}
 }
 
 func TestHandleSettingsAcceptsRoundTripFreeProxySourceDefaultTimeout(t *testing.T) {
@@ -1641,6 +1653,10 @@ func TestHandleSettingsAcceptsRoundTripFreeProxySourceDefaultTimeout(t *testing.
 	server.handleSettings(putRec, putReq)
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("round-trip PUT status = %d, body = %s", putRec.Code, putRec.Body.String())
+	}
+	status := server.currentFreeProxyRefreshStatus()
+	if status.State == "running" || status.Pending {
+		waitFreeProxyRefreshDone(t, server, 2*time.Second)
 	}
 }
 
@@ -2335,7 +2351,8 @@ management:
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &fakeNodeManager{delay: 120 * time.Millisecond, reloadCh: make(chan int, 4)}
+	reloadBlock := make(chan struct{})
+	fake := &fakeNodeManager{reloadCh: make(chan int, 4), reloadBlock: reloadBlock}
 	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
 
 	body1 := []byte(`{
@@ -2382,6 +2399,7 @@ management:
 	if !resp.NeedReload || resp.ReloadStarted || resp.ReloadStatus.State != "running" || !resp.ReloadStatus.Pending {
 		t.Fatalf("expected queued reload response, got %#v body=%s", resp, rec2.Body.String())
 	}
+	close(reloadBlock)
 	select {
 	case <-fake.reloadCh:
 	case <-time.After(2 * time.Second):
