@@ -676,6 +676,16 @@ listener_line_owned_by_current_profile() {
   return 1
 }
 
+listener_line_owner_label() {
+  local line="$1" pids
+  pids="$(printf '%s\n' "$line" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u | paste -sd, - || true)"
+  if [ -z "$pids" ]; then
+    echo "unknown-no-pid line=${line}"
+  else
+    echo "pid=${pids} line=${line}"
+  fi
+}
+
 port_listener_lines() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then
@@ -725,7 +735,7 @@ preflight_ports_available() {
       if listener_line_owned_by_current_profile "$line"; then
         owned_by_profile=1
       else
-        echo "[ERROR] port conflict before start: profile=$EP_PROFILE label=$label address=${host}:${port} owner=${line}" >&2
+        echo "[ERROR] port conflict before start: profile=$EP_PROFILE label=$label address=${host}:${port} owner=$(listener_line_owner_label "$line")" >&2
         conflict=1
       fi
     done <<<"$lines"
@@ -787,6 +797,7 @@ start_service() {
   else
     echo "[ERROR] failed to start, see $LOG_FILE"
     tail -n 80 "$LOG_FILE" 2>/dev/null || true
+    rm -f "$PID_FILE"
     exit 1
   fi
 }

@@ -75,10 +75,20 @@ def test_isolated_port_preflight_uses_profile_configured_key_ports():
 def test_port_preflight_allows_current_profile_owner_and_fails_fast_other_owners():
     text = read_source()
     assert 'listener_line_owned_by_current_profile()' in text
+    assert 'listener_line_owner_label()' in text
     assert 'pid_matches_profile "$pid"' in text
     assert 'owned by current profile' in text
+    assert 'unknown-no-pid line=${line}' in text
     assert '[ERROR] port conflict before start:' in text
     assert 'return 1' in text[text.index('preflight_ports_available()'):text.index('run_service_foreground()')]
+
+
+def test_start_failure_removes_stale_pid_file():
+    text = read_source()
+    start = text[text.index('start_service()'):text.index('alive_pids()')]
+    assert 'echo $! >"$PID_FILE"' in start
+    failed = start[start.index('echo "[ERROR] failed to start, see $LOG_FILE"'):]
+    assert 'rm -f "$PID_FILE"' in failed[:failed.index('exit 1')]
 
 
 def test_restart_builds_temp_binary_before_stop_and_swap():
@@ -116,5 +126,6 @@ if __name__ == "__main__":
     test_start_service_runs_port_preflight_before_launching_background_process()
     test_isolated_port_preflight_uses_profile_configured_key_ports()
     test_port_preflight_allows_current_profile_owner_and_fails_fast_other_owners()
+    test_start_failure_removes_stale_pid_file()
     test_restart_builds_temp_binary_before_stop_and_swap()
     test_pid_profile_matching_parses_config_argument_forms()
