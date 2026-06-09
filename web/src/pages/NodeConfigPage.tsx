@@ -61,6 +61,8 @@ export function NodeConfigPage() {
   })
 
   const rows = useMemo(() => safeRows<ConfigNode>(nodesQuery.data?.nodes), [nodesQuery.data?.nodes])
+  const nodesLoadingWithoutData = nodesQuery.isLoading && !nodesQuery.data
+  const countText = (count: number) => nodesLoadingWithoutData ? '-' : count
   const sourceOptions = useMemo(() => {
     const sources = Array.from(new Set(rows.map(node => String(node.source || 'unknown')).filter(Boolean))).sort()
     return [{ value: 'all', label: '全部来源' }, ...sources.map(source => ({ value: source, label: sourceLabel(source) }))]
@@ -76,6 +78,7 @@ export function NodeConfigPage() {
     })
   }, [rows, searchTerm, sourceFilter])
   const editableRows = rows.filter(node => node.source !== 'free_proxy')
+  const listSubtitle = nodesLoadingWithoutData ? '加载中...' : `共 ${rows.length} 条，当前筛选 ${filteredRows.length} 条。订阅模式下手动节点会写入节点文件；免费源缓存节点不会在这里编辑。`
   const pagedRows = useMemo(() => {
     const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
     const safePage = Math.min(page, totalPages)
@@ -193,9 +196,9 @@ export function NodeConfigPage() {
     </div>}
 
     <div className="summary-grid overview-summary">
-      <div className="metric"><div className="label">配置节点</div><div className="value">{nodesQuery.isError ? '-' : rows.length}</div></div>
-      <div className="metric"><div className="label">可编辑节点</div><div className="value success">{nodesQuery.isError ? '-' : editableRows.length}</div></div>
-      <div className="metric"><div className="label">筛选结果</div><div className="value">{nodesQuery.isError ? '-' : filteredRows.length}</div></div>
+      <div className="metric"><div className="label">配置节点</div><div className="value">{nodesQuery.isError ? '-' : countText(rows.length)}</div></div>
+      <div className="metric"><div className="label">可编辑节点</div><div className="value success">{nodesQuery.isError ? '-' : countText(editableRows.length)}</div></div>
+      <div className="metric"><div className="label">筛选结果</div><div className="value">{nodesQuery.isError ? '-' : countText(filteredRows.length)}</div></div>
       <div className="metric"><div className="label">待重载</div><div className="value">{needReload ? '是' : '否'}</div></div>
       <div className="metric"><div className="label">重载状态</div><div className="value">{reloadText(reloadState === 'reloading' ? reloadStatus.data?.state : reloadState)}</div></div>
     </div>
@@ -216,7 +219,7 @@ export function NodeConfigPage() {
 
     <section className="card">
       <div className="panel-header">
-        <div><div className="panel-title">配置节点列表</div><div className="panel-subtitle">共 {rows.length} 条，当前筛选 {filteredRows.length} 条。订阅模式下手动节点会写入节点文件；免费源缓存节点不会在这里编辑。</div></div>
+        <div><div className="panel-title">配置节点列表</div><div className="panel-subtitle">{listSubtitle}</div></div>
       </div>
       <div className="form-grid-3 compact-form-grid node-config-filters">
         <div className="field settings-form-item"><label>搜索</label><Input aria-label="搜索节点配置" className="settings-input" value={searchTerm} onChange={event => { setSearchTerm(event.target.value); setPage(1) }} placeholder="名称 / URI / 来源 / 端口" /></div>
