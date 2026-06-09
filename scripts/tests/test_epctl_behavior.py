@@ -43,6 +43,42 @@ pid_matches_profile "$pid"
 """
 
 
+def preflight_script(listener_line: str, current_profile_owner: bool = False) -> str:
+    escaped_line = shell_quote(listener_line)
+    proc_setup = ""
+    if current_profile_owner:
+        escaped_line = '"LISTEN 0 4096 127.0.0.1:19093 0.0.0.0:* users:((\\"easy\\",pid=${pid},fd=7))"'
+        proc_setup = """
+pid="$$"
+mkdir -p "$tmp/$pid"
+python3 - "$tmp/$pid/cmdline" /tmp/epctl-bin --config=/tmp/epctl-test.yaml <<'PY'
+import sys
+path = sys.argv[1]
+args = sys.argv[2:]
+with open(path, 'wb') as fh:
+    fh.write(b'\\0'.join(arg.encode() for arg in args) + b'\\0')
+PY
+"""
+    return f"""
+set -euo pipefail
+tmp="$(mktemp -d)"
+{proc_setup}
+EPCTL_LIB_ONLY=1
+EPCTL_PROC_ROOT="$tmp"
+BIN="/tmp/epctl-bin"
+CONFIG_FILE="/tmp/epctl-test.yaml"
+WEBUI_URL="http://127.0.0.1:19093"
+source {shell_quote(str(EPCTL))}
+preflight_ports() {{ printf 'webui\\t127.0.0.1\\t19093\\n'; }}
+port_listener_lines() {{ echo {escaped_line}; }}
+set +e
+preflight_ports_available
+code="$?"
+echo "exit=$code"
+exit "$code"
+"""
+
+
 def test_pid_matches_profile_accepts_equals_config_argument():
     result = run_bash(pid_match_script(["/tmp/epctl-bin", "--config=/tmp/epctl-test.yaml"]))
     assert result.returncode == 0, result.stderr
@@ -82,9 +118,33 @@ listener_line_owner_label 'LISTEN users:(("easy",pid=123,fd=7),("easy",pid=456,f
     assert "pid=123,456" in result.stdout
 
 
+def test_preflight_allows_listener_owned_by_current_profile():
+    script = preflight_script("", current_profile_owner=True)
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr
+    assert "owned by current profile" in result.stdout
+
+
+def test_preflight_rejects_other_visible_owner():
+    result = run_bash(preflight_script('LISTEN 0 4096 127.0.0.1:19093 0.0.0.0:* users:(("other",pid=1,fd=7))'))
+    assert result.returncode != 0
+    assert "port conflict before start" in result.stderr
+    assert "owner=pid=1" in result.stderr
+
+
+def test_preflight_rejects_unknown_owner_without_pid():
+    result = run_bash(preflight_script('LISTEN 0 4096 127.0.0.1:19093 0.0.0.0:*'))
+    assert result.returncode != 0
+    assert "port conflict before start" in result.stderr
+    assert "unknown-no-pid" in result.stderr
+
+
 if __name__ == "__main__":
     test_pid_matches_profile_accepts_equals_config_argument()
     test_pid_matches_profile_accepts_separate_config_argument()
     test_pid_matches_profile_rejects_different_config_argument()
     test_listener_line_owner_label_reports_unknown_without_pid()
     test_listener_line_owner_label_reports_pid_list()
+    test_preflight_allows_listener_owned_by_current_profile()
+    test_preflight_rejects_other_visible_owner()
+    test_preflight_rejects_unknown_owner_without_pid()
