@@ -162,6 +162,36 @@ func TestStoreResultPaginationMetadata(t *testing.T) {
 	}
 }
 
+func TestStoreListResultsHugePageDoesNotOverflow(t *testing.T) {
+	store := NewStore()
+	snapshot, err := store.CreateJob(JobRequest{Kind: CheckCloudflare})
+	if err != nil {
+		t.Fatalf("CreateJob returned error: %v", err)
+	}
+	if err := store.StartJob(snapshot.ID); err != nil {
+		t.Fatalf("StartJob returned error: %v", err)
+	}
+	if err := store.AddResult(snapshot.ID, Result{
+		JobID:    snapshot.ID,
+		Kind:     CheckCloudflare,
+		NodeTag:  "node-01",
+		ProxyURL: "socks://127.0.0.1:1001",
+	}); err != nil {
+		t.Fatalf("AddResult returned error: %v", err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("ListResults panicked for huge page: %v", r)
+		}
+	}()
+
+	page := store.ListResults(snapshot.ID, ResultQuery{Page: int(^uint(0) >> 1), PageSize: 500})
+	if page.Count != 1 || page.PageSize != 500 || page.TotalPages != 1 || page.HasNext || len(page.Data) != 0 {
+		t.Fatalf("huge page should return a safe empty page, got %#v", page)
+	}
+}
+
 func TestStoreResultStableOrder(t *testing.T) {
 	store := NewStore()
 	snapshot, err := store.CreateJob(JobRequest{Kind: CheckCombined})

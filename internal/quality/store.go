@@ -235,10 +235,11 @@ func (s *Store) ListResults(jobID string, q ResultQuery) PagedResults {
 	if count > 0 {
 		totalPages = (count + pageSize - 1) / pageSize
 	}
-	start := (page - 1) * pageSize
-	if start >= count {
+	if count == 0 || page > totalPages {
 		return PagedResults{Data: []Result{}, Count: count, Page: page, PageSize: pageSize, TotalPages: totalPages, HasNext: false}
 	}
+
+	start := (page - 1) * pageSize
 	end := start + pageSize
 	if end > count {
 		end = count

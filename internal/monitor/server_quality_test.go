@@ -121,6 +121,50 @@ func TestQualityJobResultsRejectInvalidPagination(t *testing.T) {
 	}
 }
 
+func TestQualityJobResultsHugePageDoesNotPanic(t *testing.T) {
+	srv := newQualityAPITestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/quality/jobs", strings.NewReader(`{"kind":"combined","region":"all","count":2,"include_unavailable":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		JobID      string `json:"job_id"`
+		ResultsURL string `json:"results_url"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	waitForMonitorQualityJob(t, srv, created.JobID)
+
+	req = httptest.NewRequest(http.MethodGet, created.ResultsURL+"?page=9223372036854775807&page_size=500", nil)
+	rec = httptest.NewRecorder()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("quality results handler panicked for huge page: %v", r)
+		}
+	}()
+
+	srv.srv.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK && rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 200 safe empty page or 400 body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Code == http.StatusBadRequest {
+		return
+	}
+	var page quality.PagedResults
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.PageSize != 500 || len(page.Data) != 0 || page.HasNext {
+		t.Fatalf("huge page should return a safe empty page, got %#v", page)
+	}
+}
+
 func TestBackgroundQualityCheckRejectsInvalidMode(t *testing.T) {
 	srv := newQualityAPITestServer(t)
 

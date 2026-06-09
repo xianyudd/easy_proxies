@@ -11,20 +11,37 @@ interface NodesResponse {
 
 export async function getNodes() {
   const data = await api.get<NodesResponse | NodeSnapshot[]>('/api/nodes')
-  return Array.isArray(data) ? data : (data.nodes || [])
+  return Array.isArray(data) ? safeNodes(data) : safeNodes(data.nodes)
 }
 
-function normalizeNodesPage(data: Partial<NodesPage>): NodesPage {
+function safeNodes(value: unknown): NodeSnapshot[] {
+  return Array.isArray(value) ? value : []
+}
+
+function safeRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, raw]) => [key, safeCount(raw)]),
+  )
+}
+
+function safeCount(input: unknown, fallback = 0) {
+  const value = Number(input)
+  return Number.isFinite(value) && value >= 0 ? Math.trunc(value) : fallback
+}
+
+function normalizeNodesPage(data: Partial<NodesPage> | unknown): NodesPage {
+  const source = data && typeof data === 'object' && !Array.isArray(data) ? data as Partial<NodesPage> : {}
   return {
-    nodes: data.nodes || [],
-    total_nodes: data.total_nodes || 0,
-    total_filtered: data.total_filtered ?? data.total_nodes ?? 0,
-    page: data.page || 1,
-    page_size: data.page_size || 100,
-    has_next: !!data.has_next,
-    region_stats: data.region_stats || {},
-    region_healthy: data.region_healthy || {},
-    source_stats: data.source_stats || {},
+    nodes: safeNodes(source.nodes),
+    total_nodes: safeCount(source.total_nodes),
+    total_filtered: safeCount(source.total_filtered ?? source.total_nodes),
+    page: safeCount(source.page, 1) || 1,
+    page_size: safeCount(source.page_size, 100) || 100,
+    has_next: source.has_next === true,
+    region_stats: safeRecord(source.region_stats),
+    region_healthy: safeRecord(source.region_healthy),
+    source_stats: safeRecord(source.source_stats),
   }
 }
 
