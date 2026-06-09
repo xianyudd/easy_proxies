@@ -215,7 +215,7 @@ export function QualityPage() {
         const latencyPenalty = Number(r.latency_ms) > 3000 ? 12 : Number(r.latency_ms) > 1000 ? 6 : Number(r.latency_ms) > 500 ? 3 : 0
         const rawJob = jobMetaByKey.get(rowKey(r))
         const score = jobId && typeof rawJob?.final_score === 'number' ? Number(rawJob.final_score) : Math.max(0, Math.min(100, Math.round(cfScore - riskPenalty(repRisk) - latencyPenalty)))
-        return { key: `${r.node_tag || r.node_name || r.port || 'row'}-${idx}`, row: r, rep, repRisk, score, tier: rawJob?.tier, pool: rawJob?.pool }
+        return { key: rowKey(r), row: r, rep, repRisk, score, tier: rawJob?.tier, pool: rawJob?.pool }
       })
     const filtered = mapped.filter(item => (tierFilter === 'all' || item.tier === tierFilter) && (poolFilter === 'all' || item.pool === poolFilter))
     return jobId ? filtered : filtered.sort((a, b) => b.score - a.score || (Number(a.row.latency_ms) || 0) - (Number(b.row.latency_ms) || 0))

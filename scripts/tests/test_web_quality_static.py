@@ -104,6 +104,12 @@ def test_quality_page_job_metadata_is_joined_by_stable_row_key():
     assert "jobRows[idx]" not in text
 
 
+def test_quality_page_table_row_key_does_not_depend_on_array_index():
+    text = read(QUALITY_PAGE)
+    assert "key: rowKey(r)" in text
+    assert "key: `${r.node_tag || r.node_name || r.port || 'row'}-${idx}`" not in text
+
+
 def test_quality_charts_defend_non_array_rows_props():
     text = read(ROOT / "web" / "src" / "components" / "charts" / "QualityCharts.tsx")
     assert "function safeRows<T>(rows: unknown): T[]" in text
@@ -133,5 +139,6 @@ if __name__ == "__main__":
     test_quality_page_normalizes_active_rows_before_filter_map_spread()
     test_quality_page_row_key_has_stable_fallbacks_for_partial_rows()
     test_quality_page_job_metadata_is_joined_by_stable_row_key()
+    test_quality_page_table_row_key_does_not_depend_on_array_index()
     test_quality_charts_defend_non_array_rows_props()
     test_quality_page_sample_and_cache_refresh_exit_job_result_mode()
