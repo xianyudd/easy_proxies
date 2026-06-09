@@ -746,6 +746,50 @@ preflight_ports_available() {
   fi
 }
 
+port_status_label() {
+  local port="$1" lines="$2" line saw_unknown=0 saw_other=0 saw_current=0
+  if [ -z "$lines" ]; then
+    echo "free"
+    return
+  fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if listener_line_owned_by_current_profile "$line"; then
+      saw_current=1
+    elif printf '%s\n' "$line" | grep -qE 'pid=[0-9]+'; then
+      saw_other=1
+    else
+      saw_unknown=1
+    fi
+  done <<<"$lines"
+  if [ "$saw_other" = "1" ]; then
+    echo "other-owner"
+  elif [ "$saw_unknown" = "1" ]; then
+    echo "unknown-owner"
+  elif [ "$saw_current" = "1" ]; then
+    echo "current-profile"
+  else
+    echo "free"
+  fi
+}
+
+print_port_status_summary() {
+  local label host port lines status owner
+  echo "Port status (key ports):"
+  while IFS=$'\t' read -r label host port; do
+    [ -n "$port" ] || continue
+    lines="$(port_listener_lines "$port" || true)"
+    status="$(port_status_label "$port" "$lines")"
+    owner=""
+    if [ -n "$lines" ]; then
+      owner="$(printf '%s\n' "$lines" | while IFS= read -r line; do [ -n "$line" ] && listener_line_owner_label "$line"; done | paste -sd ';' -)"
+    fi
+    printf '%s %s:%s %s' "$label" "${host:-127.0.0.1}" "$port" "$status"
+    [ -z "$owner" ] || printf ' owner=%s' "$owner"
+    printf '\n'
+  done < <(preflight_ports)
+}
+
 run_service_foreground() {
   if [ ! -f "$CONFIG_FILE" ] && [ "$EP_PROFILE" = "isolated" ]; then
     write_isolated_config
@@ -878,7 +922,7 @@ restart_service() {
 
 status_service() {
   clean_proxy_env
-  local web node_json settings_json pids listen_re pid_file
+  local web node_json settings_json pids pid_file
   web="$(webui_http_code)"
   echo "Profile: $EP_PROFILE"
   echo "Config:  $CONFIG_FILE"
@@ -905,16 +949,7 @@ status_service() {
     fi
   fi
   echo
-  local pool_port android_base multi_base clash_port geo_port web_port
-  pool_port="$(configured_port listener port 2323)"
-  android_base="$(configured_port android_proxy base_port 13001)"
-  multi_base="$(configured_port multi_port base_port 24000)"
-  web_port="$(webui_port)"
-  clash_port="$(cfg_value management clash_api_listen || true)"; clash_port="${clash_port##*:}"
-  geo_port="$(configured_port geoip port 1221)"
-  listen_re=":(${web_port}|${pool_port}|${geo_port}|${multi_base}|${android_base}|${clash_port:-0})"
-  echo "Listening ports (key ports):"
-  ss -ltnp 2>/dev/null | grep -E "$listen_re" || true
+  print_port_status_summary
   echo
   if [ "$web" = "200" ]; then
     node_json="$(webui_api_optional GET "/api/nodes?summary_only=true&availability=all" || true)"

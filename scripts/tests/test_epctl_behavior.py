@@ -322,6 +322,66 @@ status_service
     assert "stale/unverified pid file=999999" in result.stdout
 
 
+def test_status_summarizes_key_port_ownership():
+    script = f"""
+set -euo pipefail
+tmp="$(mktemp -d)"
+pid="$$"
+mkdir -p "$tmp/$pid"
+python3 - "$tmp/$pid/cmdline" /tmp/epctl-bin --config=/tmp/epctl-test.yaml <<'PY'
+import sys
+path = sys.argv[1]
+args = sys.argv[2:]
+with open(path, 'wb') as fh:
+    fh.write(b'\\0'.join(arg.encode() for arg in args) + b'\\0')
+PY
+CONFIG_FILE="/tmp/epctl-test.yaml"
+BIN="/tmp/epctl-bin"
+LOG_FILE="$tmp/service.log"
+PID_FILE="$tmp/service.pid"
+WEBUI_URL="http://127.0.0.1:19093"
+EPCTL_LIB_ONLY=1
+EPCTL_PROC_ROOT="$tmp"
+source {shell_quote(str(EPCTL))}
+clean_proxy_env() {{ :; }}
+webui_http_code() {{ echo 000; }}
+find_service_pids() {{ :; }}
+configured_port() {{
+  case "$1.$2" in
+    listener.port) echo 12340 ;;
+    multi_port.base_port) echo 30000 ;;
+    android_proxy.base_port) echo 30150 ;;
+    geoip.port) echo 12341 ;;
+    *) echo "$3" ;;
+  esac
+}}
+cfg_value() {{
+  if [ "$1.$2" = "management.clash_api_listen" ]; then
+    echo "127.0.0.1:19094"
+    return 0
+  fi
+  return 1
+}}
+webui_port() {{ echo 19093; }}
+port_listener_lines() {{
+  case "$1" in
+    19093) echo "LISTEN 0 4096 127.0.0.1:19093 0.0.0.0:* users:((\\"easy\\",pid=${{pid}},fd=7))" ;;
+    19094) echo "LISTEN 0 4096 127.0.0.1:19094 0.0.0.0:* users:((\\"other\\",pid=1,fd=7))" ;;
+    12340) echo "LISTEN 0 4096 127.0.0.1:12340 0.0.0.0:*" ;;
+    *) : ;;
+  esac
+}}
+status_service
+"""
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr
+    assert "Port status (key ports):" in result.stdout
+    assert "webui 127.0.0.1:19093 current-profile" in result.stdout
+    assert "clash 127.0.0.1:19094 other-owner" in result.stdout
+    assert "listener 127.0.0.1:12340 unknown-owner" in result.stdout
+    assert "multi_base 127.0.0.1:30000 free" in result.stdout
+
+
 if __name__ == "__main__":
     test_pid_matches_profile_accepts_equals_config_argument()
     test_pid_matches_profile_accepts_separate_config_argument()
@@ -336,3 +396,4 @@ if __name__ == "__main__":
     test_start_service_fails_when_control_plane_not_ready_but_preserves_running_pid()
     test_restart_service_removes_temp_binary_when_stop_fails()
     test_status_reports_stale_unverified_pid_file_when_not_running()
+    test_status_summarizes_key_port_ownership()
