@@ -1578,7 +1578,7 @@
         const res = await fetch('/api/nodes');
         if (res.status === 401) { document.getElementById('loginOverlay').classList.add('show'); stopAutoRefresh(); return; }
         const data = await res.json();
-        allNodesCache = data.nodes || [];
+        allNodesCache = Array.isArray(data.nodes) ? data.nodes : [];
         updateDashboardStats(data);
         filterByRegion(currentRegionFilter);
         document.getElementById('lastUpdate').textContent = `Sync: ${new Date().toLocaleTimeString()}`;
@@ -2220,7 +2220,7 @@
       try {
         const res = await fetch('/api/nodes/config');
         const data = await res.json();
-        configNodes = data.nodes || [];
+        configNodes = Array.isArray(data.nodes) ? data.nodes : [];
         const tbody = document.getElementById('configNodesTableBody');
         tbody.innerHTML = configNodes.map((n, i) => `
           <tr>
@@ -2284,7 +2284,8 @@
         document.getElementById('debugTotalSuccess').textContent = d.total_success||0;
         document.getElementById('debugSuccessRate').textContent = (d.success_rate||0).toFixed(1)+'%';
         const tb = document.getElementById('debugNodesTableBody');
-        tb.innerHTML = (d.nodes||[]).map(n => {
+        const debugNodes = Array.isArray(d.nodes) ? d.nodes : [];
+        tb.innerHTML = debugNodes.map(n => {
           const calls = (n.success_count||0)+(n.failure_count||0);
           const sr = calls>0 ? ((n.success_count||0)/calls*100).toFixed(1) : 0;
           const tl = (n.timeline||[]).map(t => `<div class="tl-dot ${t.success?'success':'error'}" title="${t.latency_ms}ms"></div>`).join('');
@@ -2297,7 +2298,7 @@
           </tr>`
         }).join('');
         
-        window._debugNodes = d.nodes || [];
+        window._debugNodes = debugNodes;
         updateDebugCharts(d.success_rate || 0);
 
       } catch(e){}

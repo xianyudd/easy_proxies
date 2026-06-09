@@ -10,6 +10,7 @@ function chartText() { return cssVar('--text', '#eef2ff') }
 function chartMuted() { return cssVar('--muted', '#94a3b8') }
 function chartPanel() { return cssVar('--panel', '#111827') }
 function chartBorder() { return cssVar('--border', '#263143') }
+function safeRows<T>(rows: unknown): T[] { return Array.isArray(rows) ? rows : [] }
 
 type TrafficWindow = '1m' | '5m' | '15m' | '1h'
 const TRAFFIC_WINDOWS: Record<TrafficWindow, { label: string; ms: number }> = {
@@ -24,10 +25,11 @@ function safeTrafficNumber(input: unknown) {
   return Number.isFinite(value) && value >= 0 ? value : 0
 }
 
-export function RegionAvailabilityChart({ nodes }: { nodes: NodeSnapshot[] }) {
+export function RegionAvailabilityChart({ nodes }: { nodes: unknown }) {
   const option = useMemo<EChartsOption>(() => {
+    const chartNodes = safeRows<NodeSnapshot>(nodes)
     const stats = new Map<string, { total: number; healthy: number }>()
-    for (const node of nodes) {
+    for (const node of chartNodes) {
       const code = String(node.region || 'other').toLowerCase()
       const item = stats.get(code) || { total: 0, healthy: 0 }
       item.total += 1
@@ -75,9 +77,10 @@ export function RegionAvailabilityChart({ nodes }: { nodes: NodeSnapshot[] }) {
   return <EChart option={option} height={340} />
 }
 
-export function LatencyTopChart({ nodes }: { nodes: NodeSnapshot[] }) {
+export function LatencyTopChart({ nodes }: { nodes: unknown }) {
   const option = useMemo<EChartsOption>(() => {
-    const sorted = nodes
+    const chartNodes = safeRows<NodeSnapshot>(nodes)
+    const sorted = chartNodes
       .filter(n => Number(n.last_latency_ms) > 0 && !n.blacklisted)
       .sort((a, b) => Number(a.last_latency_ms) - Number(b.last_latency_ms))
       .slice(0, 10)
@@ -95,9 +98,10 @@ export function LatencyTopChart({ nodes }: { nodes: NodeSnapshot[] }) {
   return <EChart option={option} height={340} />
 }
 
-export function FailureRankChart({ nodes }: { nodes: NodeSnapshot[] }) {
+export function FailureRankChart({ nodes }: { nodes: unknown }) {
   const option = useMemo<EChartsOption>(() => {
-    const sorted = nodes.filter(n => Number(n.failure_count) > 0).sort((a, b) => Number(b.failure_count) - Number(a.failure_count)).slice(0, 10)
+    const chartNodes = safeRows<NodeSnapshot>(nodes)
+    const sorted = chartNodes.filter(n => Number(n.failure_count) > 0).sort((a, b) => Number(b.failure_count) - Number(a.failure_count)).slice(0, 10)
     return {
       backgroundColor: 'transparent',
       tooltip: { trigger: 'axis', backgroundColor: chartPanel(), borderColor: chartBorder(), textStyle: { color: chartText() } },

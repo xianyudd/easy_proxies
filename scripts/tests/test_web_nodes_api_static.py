@@ -1,6 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+LEGACY_INDEX = ROOT / "internal" / "monitor" / "assets" / "index.html"
 NODES_API = ROOT / "web" / "src" / "api" / "nodes.ts"
 
 
@@ -30,6 +31,20 @@ def test_nodes_api_sanitizes_response_shape_before_pages_render():
     assert "nodes: data.nodes || []" not in text
 
 
+def test_legacy_webui_defends_non_array_node_payloads():
+    text = LEGACY_INDEX.read_text()
+    assert "allNodesCache = Array.isArray(data.nodes) ? data.nodes : [];" in text
+    assert "configNodes = Array.isArray(data.nodes) ? data.nodes : [];" in text
+    assert "const debugNodes = Array.isArray(d.nodes) ? d.nodes : [];" in text
+    assert "tb.innerHTML = debugNodes.map(n =>" in text
+    assert "window._debugNodes = debugNodes;" in text
+    assert "allNodesCache = data.nodes || [];" not in text
+    assert "configNodes = data.nodes || [];" not in text
+    assert "(d.nodes||[]).map" not in text
+    assert "window._debugNodes = d.nodes || [];" not in text
+
+
 if __name__ == "__main__":
     test_nodes_page_query_preserves_availability_all()
     test_nodes_api_sanitizes_response_shape_before_pages_render()
+    test_legacy_webui_defends_non_array_node_payloads()
