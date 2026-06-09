@@ -2465,6 +2465,12 @@ html[data-theme="light"] .logbox {
   font-weight: 800;
 }
 
+.free-proxy-disabled-note {
+  color: var(--orange);
+  border-color: color-mix(in srgb, var(--orange) 34%, transparent);
+  background: color-mix(in srgb, var(--orange) 8%, transparent);
+}
+
 .free-proxy-warning {
   color: var(--orange);
   border-color: color-mix(in srgb, var(--orange) 34%, transparent);

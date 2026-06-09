@@ -107,6 +107,16 @@ def test_management_rebound_url_hint_is_guarded():
     assert "target.href" in text
 
 
+def test_settings_page_explains_disabled_free_proxy_sources_and_validates_only_enabled_rows():
+    text = read(SETTINGS_PAGE)
+    assert "freeSourcesEnabledCount" in text
+    assert "freeProxyHasNoEnabledSources" in text
+    assert "当前免费代理源都未启用，手动刷新不会下载任何源" in text
+    assert "启用至少一个源并保存后，系统才会后台下载、筛选、写缓存并按配置自动重载" in text
+    assert "disabled={manualFreeRefresh.isPending || freeProxyRefreshState === 'refreshing' || freeProxyHasNoEnabledSources}" in text
+    assert "src.enabled !== false && !String(src.url || src.file || '').trim()" in text
+
+
 def test_settings_page_defends_non_array_free_proxy_refresh_sources():
     text = read(SETTINGS_PAGE)
     assert "type FreeProxyRefreshSource" in text
@@ -127,4 +137,5 @@ if __name__ == "__main__":
     test_settings_page_polls_subscription_refresh_and_refreshes_node_caches()
     test_settings_page_defends_non_array_quality_cache_rows()
     test_management_rebound_url_hint_is_guarded()
+    test_settings_page_explains_disabled_free_proxy_sources_and_validates_only_enabled_rows()
     test_settings_page_defends_non_array_free_proxy_refresh_sources()

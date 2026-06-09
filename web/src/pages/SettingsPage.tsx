@@ -288,8 +288,10 @@ export function SettingsPage() {
   const repCacheUnavailable = repCache.isError && !repCache.data
   const freeRefresh = freeProxyRefreshStatus.data
   const freeRefreshSourceRows = safeRows<FreeProxyRefreshSource>(freeRefresh?.sources)
+  const freeSourcesEnabledCount = freeSources.filter(src => src.enabled !== false).length
+  const freeProxyHasNoEnabledSources = freeSources.length > 0 && freeSourcesEnabledCount === 0
   const freeRefreshCacheNodes = Number(freeRefresh?.cache_node_count || 0)
-  const freeRefreshSources = `${Number(freeRefresh?.enabled_sources ?? freeSources.filter(s => s.enabled !== false).length)}/${Number(freeRefresh?.total_sources ?? freeSources.length)}`
+  const freeRefreshSources = `${Number(freeRefresh?.enabled_sources ?? freeSourcesEnabledCount)}/${Number(freeRefresh?.total_sources ?? freeSources.length)}`
   const freeRefreshProbeBudget = Number(freeRefresh?.filter_probe_budget ?? freeFilter.max_probe_candidates ?? 0)
   const freeRefreshAutoReload = freeRefresh?.auto_reload ?? freeCache.auto_reload !== false
   const freeRefreshFilterEnabled = freeRefresh?.filter_enabled ?? freeFilter.enabled === true
@@ -301,7 +303,7 @@ export function SettingsPage() {
   const updateFreeSource = (idx: number, patch: Partial<FreeProxySource>) => updateDraft({...draft, free_proxy_sources: freeSources.map((item, i) => i === idx ? {...item, ...patch} : item)})
   const removeFreeSource = (idx: number) => updateDraft({...draft, free_proxy_sources: freeSources.filter((_, i) => i !== idx)})
   const addFreeSource = () => updateDraft({...draft, free_proxy_sources: [...freeSources, { name: 'new-free-source', enabled: true, url: '', format: 'text', default_scheme: 'http' }]})
-  const freeSourceIssues = freeSources.map((src, idx) => ({idx, issue: !String(src.url || src.file || '').trim() ? `#${idx + 1} 请填写 URL 或文件路径` : ''})).filter(item => item.issue)
+  const freeSourceIssues = freeSources.map((src, idx) => ({idx, issue: src.enabled !== false && !String(src.url || src.file || '').trim() ? `#${idx + 1} 请填写 URL 或文件路径，或先关闭启用` : ''})).filter(item => item.issue)
   const updateFreeFilter = (patch: Partial<FreeProxyFilter>) => updateDraft({...draft, free_proxy_filter: {...freeFilter, ...patch}})
   const updateFreeCache = (patch: Partial<FreeProxyCache>) => updateDraft({...draft, free_proxy_cache: {...freeCache, ...patch}})
   const saveAllSettings = () => {
@@ -426,18 +428,19 @@ export function SettingsPage() {
           <div className="panel-header settings-section-header">
             <div><div className="panel-title">免费代理源</div><div className="panel-subtitle">把公开代理列表作为候选源。保存并重载后，系统会先抓取、去重和预筛，只让通过最低等级的代理进入运行节点。</div></div>
             <div className="toolbar">
-              <Button onClick={()=>manualFreeRefresh.mutate()} disabled={manualFreeRefresh.isPending || freeProxyRefreshState === 'refreshing'}><Wifi size={16} />{manualFreeRefresh.isPending ? '启动中...' : '手动刷新'}</Button>
+              <Button onClick={()=>manualFreeRefresh.mutate()} disabled={manualFreeRefresh.isPending || freeProxyRefreshState === 'refreshing' || freeProxyHasNoEnabledSources}><Wifi size={16} />{manualFreeRefresh.isPending ? '启动中...' : '手动刷新'}</Button>
               <Button onClick={addFreeSource}><Plus size={16} />新增源</Button>
             </div>
           </div>
           <div className="settings-status-grid">
             <div className="status-card"><Database size={16} /><span>源数量</span><strong>{freeSources.length}</strong></div>
-            <div className="status-card"><Wifi size={16} /><span>启用源</span><strong>{freeSources.filter(s => s.enabled !== false).length}</strong></div>
+            <div className="status-card"><Wifi size={16} /><span>启用源</span><strong>{freeSourcesEnabledCount}</strong></div>
             <div className="status-card"><Database size={16} /><span>入池上限</span><strong>{Number(draft.free_proxy_max_nodes || 0) > 0 ? Number(draft.free_proxy_max_nodes) : '不限'}</strong></div>
             <div className="status-card"><Clock3 size={16} /><span>最低等级</span><strong>{String(freeFilter.min_tier || 'http_basic')}</strong></div>
             <div className="status-card"><Database size={16} /><span>本地缓存</span><strong>{freeRefresh ? `${freeRefreshCacheNodes} 条` : '未读取'}</strong></div>
             <div className="status-card"><Clock3 size={16} /><span>缓存状态</span><strong>{freeRefresh ? cacheFreshLabel(freeRefresh.cache_fresh) : '待刷新'}</strong></div>
           </div>
+          {freeProxyHasNoEnabledSources && <div className="settings-inline-note free-proxy-disabled-note" role="status"><AlertCircle size={15} /><span>当前免费代理源都未启用，手动刷新不会下载任何源；启用至少一个源并保存后，系统才会后台下载、筛选、写缓存并按配置自动重载。</span></div>}
           <div className="free-proxy-filter-panel">
             <div className="quality-toggle-row">
               {toggle('启用自动筛选', freeFilter.enabled === true, v=>updateFreeFilter({enabled:v}))}
