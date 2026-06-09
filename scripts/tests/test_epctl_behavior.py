@@ -139,6 +139,81 @@ def test_preflight_rejects_unknown_owner_without_pid():
     assert "unknown-no-pid" in result.stderr
 
 
+def test_start_service_failure_removes_stale_pid_file():
+    script = f"""
+set -euo pipefail
+tmp="$(mktemp -d)"
+bin="$tmp/fail-fast-bin"
+cat >"$bin" <<'SH'
+#!/usr/bin/env sh
+exit 0
+SH
+chmod +x "$bin"
+CONFIG_FILE="$tmp/config.yaml"
+touch "$CONFIG_FILE"
+BIN="$bin"
+LOG_FILE="$tmp/service.log"
+PID_FILE="$tmp/service.pid"
+WEBUI_URL="http://127.0.0.1:19093"
+EPCTL_LIB_ONLY=1
+source {shell_quote(str(EPCTL))}
+preflight_ports_available() {{ :; }}
+clean_proxy_env() {{ :; }}
+set +e
+( start_service )
+code="$?"
+set -e
+if [ "$code" -eq 0 ]; then
+  echo "start_service unexpectedly succeeded" >&2
+  exit 1
+fi
+if [ -e "$PID_FILE" ]; then
+  echo "stale pid file was not removed" >&2
+  exit 1
+fi
+"""
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr
+
+
+def test_restart_service_removes_temp_binary_when_stop_fails():
+    script = f"""
+set -euo pipefail
+tmp="$(mktemp -d)"
+BIN="$tmp/easy-proxies"
+CONFIG_FILE="$tmp/config.yaml"
+LOG_FILE="$tmp/service.log"
+PID_FILE="$tmp/service.pid"
+WEBUI_URL="http://127.0.0.1:19093"
+EPCTL_LIB_ONLY=1
+source {shell_quote(str(EPCTL))}
+build_service_to() {{
+  printf 'temporary binary' >"$1"
+}}
+stop_service() {{
+  return 1
+}}
+start_service() {{
+  echo "start_service should not run after stop failure" >&2
+  return 1
+}}
+set +e
+restart_service
+code="$?"
+set -e
+if [ "$code" -eq 0 ]; then
+  echo "restart_service unexpectedly succeeded" >&2
+  exit 1
+fi
+if ls "$tmp"/easy-proxies.next.* >/dev/null 2>&1; then
+  echo "temporary binary was not removed" >&2
+  exit 1
+fi
+"""
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr
+
+
 if __name__ == "__main__":
     test_pid_matches_profile_accepts_equals_config_argument()
     test_pid_matches_profile_accepts_separate_config_argument()
@@ -148,3 +223,5 @@ if __name__ == "__main__":
     test_preflight_allows_listener_owned_by_current_profile()
     test_preflight_rejects_other_visible_owner()
     test_preflight_rejects_unknown_owner_without_pid()
+    test_start_service_failure_removes_stale_pid_file()
+    test_restart_service_removes_temp_binary_when_stop_fails()
