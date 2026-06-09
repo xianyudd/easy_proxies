@@ -28,6 +28,21 @@ def test_status_uses_authenticated_optional_api_and_null_safe_jq():
     assert 'WebUI API summary unavailable' in text
 
 
+def test_status_settings_summary_reports_enabled_free_proxy_sources():
+    text = read_source()
+    assert 'free_proxy_enabled_sources:([(.free_proxy_sources // [])[]? | select(.enabled != false)] | length)' in text
+    assert 'free_proxy_cache_enabled:(.free_proxy_cache.enabled // false)' in text
+    assert 'free_proxy_cache_nodes:(.free_proxy_refresh_status.cache_node_count // null)' in text
+    assert 'refresh_status_json="$(webui_api_optional GET "/api/free-proxy/refresh/status" || true)"' in text
+    assert 'settings_file="$(mktemp -t epctl-settings.XXXXXX)"' in text
+    assert 'refresh_status_file="$(mktemp -t epctl-free-refresh.XXXXXX)"' in text
+    assert 'if [ -n "$refresh_status_json" ]; then' in text
+    assert "printf '{}' >\"$refresh_status_file\"" in text
+    assert '"${refresh_status_json:-{}}"' not in text
+    assert 'jq -s' in text
+    assert 'rm -f "$settings_file" "$refresh_status_file"' in text
+
+
 def test_isolated_foreground_run_command_exists_for_sandbox_runtime_verification():
     text = read_source()
     assert 'isolated:run                          Run isolated instance in foreground' in text
@@ -122,6 +137,7 @@ if __name__ == "__main__":
     test_isolated_startup_does_not_require_available_nodes_by_default()
     test_readiness_warning_reports_node_availability_separately()
     test_status_uses_authenticated_optional_api_and_null_safe_jq()
+    test_status_settings_summary_reports_enabled_free_proxy_sources()
     test_isolated_foreground_run_command_exists_for_sandbox_runtime_verification()
     test_status_fetches_summary_only_all_nodes_for_full_port_range_summary()
     test_status_prefers_total_filtered_for_all_availability_visible_count()

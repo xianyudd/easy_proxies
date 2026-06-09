@@ -930,7 +930,7 @@ restart_service() {
 
 status_service() {
   clean_proxy_env
-  local web node_json settings_json pids pid_file
+  local web node_json settings_json refresh_status_json pids pid_file
   web="$(webui_http_code)"
   echo "Profile: $EP_PROFILE"
   echo "Config:  $CONFIG_FILE"
@@ -969,10 +969,32 @@ status_service() {
       echo "WebUI API summary unavailable; set WEBUI_TOKEN or WEBUI_PASSWORD for authenticated status details."
     fi
     settings_json="$(webui_api_optional GET "/api/settings" || true)"
+    refresh_status_json="$(webui_api_optional GET "/api/free-proxy/refresh/status" || true)"
     if command -v jq >/dev/null 2>&1 && [ -n "$settings_json" ]; then
       echo
       echo "Settings summary:"
-      echo "$settings_json" | jq '{subscriptions:((.subscriptions // [])|length), free_proxy_sources:((.free_proxy_sources // [])|length), free_proxy_cache, free_proxy_max_nodes}' 2>/dev/null || true
+      local settings_file refresh_status_file
+      settings_file="$(mktemp -t epctl-settings.XXXXXX)"
+      refresh_status_file="$(mktemp -t epctl-free-refresh.XXXXXX)"
+      printf '%s' "$settings_json" >"$settings_file"
+      if [ -n "$refresh_status_json" ]; then
+        printf '%s' "$refresh_status_json" >"$refresh_status_file"
+      else
+        printf '{}' >"$refresh_status_file"
+      fi
+      jq -s '
+        .[0] + {free_proxy_refresh_status: (.[1] // {})} |
+        {
+          subscriptions:(.subscriptions // [] | length),
+          free_proxy_sources:(.free_proxy_sources // [] | length),
+          free_proxy_enabled_sources:([(.free_proxy_sources // [])[]? | select(.enabled != false)] | length),
+          free_proxy_cache_enabled:(.free_proxy_cache.enabled // false),
+          free_proxy_cache_nodes:(.free_proxy_refresh_status.cache_node_count // null),
+          free_proxy_cache_fresh:(.free_proxy_refresh_status.cache_fresh // null),
+          free_proxy_cache,
+          free_proxy_max_nodes
+        }' "$settings_file" "$refresh_status_file" 2>/dev/null || true
+      rm -f "$settings_file" "$refresh_status_file"
     elif [ -z "$node_json" ]; then
       true
     else
