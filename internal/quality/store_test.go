@@ -393,3 +393,41 @@ func TestStorePrunesOldTerminalJobsButKeepsRunningJobs(t *testing.T) {
 		t.Fatal("newest terminal job should be retained")
 	}
 }
+
+func TestStoreListResultsHugePageSizeIsClampedSafely(t *testing.T) {
+	store := NewStore()
+	snapshot, err := store.CreateJob(JobRequest{Kind: CheckCloudflare})
+	if err != nil {
+		t.Fatalf("CreateJob returned error: %v", err)
+	}
+	if err := store.StartJob(snapshot.ID); err != nil {
+		t.Fatalf("StartJob returned error: %v", err)
+	}
+	if err := store.AddResult(snapshot.ID, Result{JobID: snapshot.ID, Kind: CheckCloudflare, NodeTag: "node-01"}); err != nil {
+		t.Fatalf("AddResult returned error: %v", err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("ListResults panicked for huge page_size: %v", r)
+		}
+	}()
+
+	page := store.ListResults(snapshot.ID, ResultQuery{Page: 1, PageSize: int(^uint(0) >> 1)})
+	if page.Page != 1 || page.PageSize != maxResultPageSize || page.Count != 1 || page.TotalPages != 1 || page.HasNext || len(page.Data) != 1 {
+		t.Fatalf("huge page_size should be clamped to a safe page, got %#v", page)
+	}
+}
+
+func TestTotalPagesForCountAvoidsIntegerOverflow(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	if got := totalPagesForCount(maxInt, maxResultPageSize); got <= 0 {
+		t.Fatalf("totalPagesForCount(maxInt, maxPageSize) = %d, want positive safe value", got)
+	}
+	if got := totalPagesForCount(maxInt, maxInt); got != 1 {
+		t.Fatalf("totalPagesForCount(maxInt, maxInt) = %d, want 1", got)
+	}
+	if got := totalPagesForCount(0, maxResultPageSize); got != 0 {
+		t.Fatalf("totalPagesForCount(0, maxPageSize) = %d, want 0", got)
+	}
+}

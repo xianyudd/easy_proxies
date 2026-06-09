@@ -231,10 +231,7 @@ func (s *Store) ListResults(jobID string, q ResultQuery) PagedResults {
 	})
 
 	count := len(items)
-	totalPages := 0
-	if count > 0 {
-		totalPages = (count + pageSize - 1) / pageSize
-	}
+	totalPages := totalPagesForCount(count, pageSize)
 	if count == 0 || page > totalPages {
 		return PagedResults{Data: []Result{}, Count: count, Page: page, PageSize: pageSize, TotalPages: totalPages, HasNext: false}
 	}
@@ -340,6 +337,13 @@ func normalizePage(page, pageSize int) (int, int) {
 
 func emptyPage(page, pageSize int) PagedResults {
 	return PagedResults{Data: []Result{}, Page: page, PageSize: pageSize}
+}
+
+func totalPagesForCount(count, pageSize int) int {
+	if count <= 0 || pageSize <= 0 {
+		return 0
+	}
+	return 1 + (count-1)/pageSize
 }
 
 func resultLess(a, b Result) bool {

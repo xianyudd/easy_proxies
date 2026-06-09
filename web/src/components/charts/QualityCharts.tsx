@@ -12,7 +12,7 @@ function muted() { return cssVar('--muted', '#94a3b8') }
 function repLevel(row: ReputationResult) { const r = row.result || row; return r.risk_level || (row.error ? 'failed' : '-') }
 function safeRows<T>(rows: unknown): T[] { return Array.isArray(rows) ? rows : [] }
 
-export function CfDistributionChart({ rows }: { rows: CloudflareResult[] }) {
+export function CfDistributionChart({ rows }: { rows: unknown }) {
   const option = useMemo<EChartsOption>(() => {
     const chartRows = safeRows<CloudflareResult>(rows)
     const labels: Record<string, string> = { excellent: '优秀', good: '良好', fair: '一般', poor: '较差', failed: '失败' }
@@ -27,7 +27,7 @@ export function CfDistributionChart({ rows }: { rows: CloudflareResult[] }) {
   return <EChart option={option} height={280} />
 }
 
-export function ReputationRiskChart({ rows }: { rows: ReputationResult[] }) {
+export function ReputationRiskChart({ rows }: { rows: unknown }) {
   const option = useMemo<EChartsOption>(() => {
     const chartRows = safeRows<ReputationResult>(rows)
     const labels: Record<string, string> = { low: '低风险', medium: '中风险', high: '高风险', failed: '失败' }
@@ -44,7 +44,7 @@ export function ReputationRiskChart({ rows }: { rows: ReputationResult[] }) {
   return <EChart option={option} height={280} />
 }
 
-export function CfScoreRankChart({ rows }: { rows: CloudflareResult[] }) {
+export function CfScoreRankChart({ rows }: { rows: unknown }) {
   const option = useMemo<EChartsOption>(() => {
     const chartRows = safeRows<CloudflareResult>(rows)
     const sorted = [...chartRows].filter(r => typeof r.score === 'number').sort((a, b) => Number(b.score) - Number(a.score)).slice(0, 10).reverse()

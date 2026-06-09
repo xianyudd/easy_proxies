@@ -79,9 +79,19 @@ def test_quality_page_normalizes_non_array_api_rows():
     assert "safeRows<QualityJobResult>(jobResults.data?.data)" in text
 
 
+def test_quality_page_normalizes_active_rows_before_filter_map_spread():
+    text = read(QUALITY_PAGE)
+    assert "const activeCfRows = safeRows<CloudflareResult>(jobId ? jobCfRows : cfRows)" in text
+    assert "const activeRepRows = safeRows<ReputationResult>(jobId ? jobRepRows : repRows)" in text
+    assert "activeRepRows.flatMap" in text
+    assert "activeRepRows.filter" in text
+    assert "activeCfRows.filter" in text
+
+
 def test_quality_charts_defend_non_array_rows_props():
     text = read(ROOT / "web" / "src" / "components" / "charts" / "QualityCharts.tsx")
     assert "function safeRows<T>(rows: unknown): T[]" in text
+    assert "{ rows }: { rows: unknown }" in text
     assert text.count("const chartRows = safeRows") >= 3
     assert "chartRows.filter" in text
     assert "[...chartRows]" in text
@@ -104,5 +114,6 @@ if __name__ == "__main__":
     test_reputation_check_supports_source_filter()
     test_quality_page_refreshes_cache_when_background_job_finishes()
     test_quality_page_normalizes_non_array_api_rows()
+    test_quality_page_normalizes_active_rows_before_filter_map_spread()
     test_quality_charts_defend_non_array_rows_props()
     test_quality_page_sample_and_cache_refresh_exit_job_result_mode()

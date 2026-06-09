@@ -186,8 +186,8 @@ export function QualityPage() {
   const jobRows = useMemo(() => safeRows<QualityJobResult>(jobResults.data?.data), [jobResults.data?.data])
   const jobCfRows = useMemo(() => jobRows.map(cfFromJobRow), [jobRows])
   const jobRepRows = useMemo(() => jobRows.map(repFromJobRow), [jobRows])
-  const activeCfRows = jobId ? jobCfRows : cfRows
-  const activeRepRows = jobId ? jobRepRows : repRows
+  const activeCfRows = safeRows<CloudflareResult>(jobId ? jobCfRows : cfRows)
+  const activeRepRows = safeRows<ReputationResult>(jobId ? jobRepRows : repRows)
   const summary = jobQuery.data?.summary
   const failedCount = jobId ? (jobQuery.data?.failed || 0) : cfRows.filter(failedCf).length + repRows.filter(row => repLevel(row) === 'failed' || !!row.error).length
   const repByExitIp = useMemo(() => new Map<string, ReputationResult>(activeRepRows.flatMap(r => {
