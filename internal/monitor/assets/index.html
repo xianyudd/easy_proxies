@@ -2317,9 +2317,10 @@
       // Global Success Rate Gauge
       let rate = globalRate;
       if (typeof rate === 'undefined' || rate === null || isNaN(rate)) {
-         if (window._debugNodes && window._debugNodes.length > 0) {
+         const debugNodes = safeArray(window._debugNodes);
+         if (debugNodes.length > 0) {
            let suc = 0, fail = 0;
-           window._debugNodes.forEach(n => { suc += (n.success_count||0); fail += (n.failure_count||0); });
+           debugNodes.forEach(n => { suc += (n.success_count||0); fail += (n.failure_count||0); });
            rate = (suc+fail) > 0 ? (suc / (suc+fail)) * 100 : 0;
          } else {
            rate = 0;
@@ -2345,8 +2346,9 @@
       });
 
       // Top failures
-      if (!window._debugNodes) return;
-      const failSorted = window._debugNodes.filter(n => (n.failure_count||0) > 0).sort((a,b) => (b.failure_count||0) - (a.failure_count||0)).slice(0, 10);
+      const debugNodes = safeArray(window._debugNodes);
+      if (!debugNodes.length) return;
+      const failSorted = debugNodes.filter(n => (n.failure_count||0) > 0).sort((a,b) => (b.failure_count||0) - (a.failure_count||0)).slice(0, 10);
       const failX = failSorted.map(n => n.name || n.tag);
       const failY = failSorted.map(n => n.failure_count);
 
@@ -2720,7 +2722,9 @@
     }
 
     function copyCloudflareJSON() {
-      navigator.clipboard.writeText(JSON.stringify(cloudflareVisibleData.length ? cloudflareVisibleData : cloudflareLastData, null, 2)).then(() => showToast('已复制 CF JSON'));
+      const visibleRows = safeArray(cloudflareVisibleData);
+      const cfRows = visibleRows.length ? visibleRows : safeArray(cloudflareLastData);
+      navigator.clipboard.writeText(JSON.stringify(cfRows, null, 2)).then(() => showToast('已复制 CF JSON'));
     }
 
     function copyCloudflareProxy(idx) {
@@ -2773,7 +2777,9 @@
 
     function downloadCloudflareCSV() {
       const rows = [['node','region','port','exit_ip','cf_loc','cf_colo','http','tls','warp','http_204_ok','trace_ok','score','level','latency_ms','cached']];
-      (cloudflareVisibleData.length ? cloudflareVisibleData : cloudflareLastData).forEach(item => rows.push([item.node_name || '', item.region || '', item.port || '', item.exit_ip || '', item.cf_loc || '', item.cf_colo || '', item.http_protocol || '', item.tls_version || '', item.warp || '', item.http_204_ok ? 'true' : 'false', item.trace_ok ? 'true' : 'false', item.score ?? '', item.level || '', item.latency_ms || 0, item.cached ? 'true' : 'false']));
+      const visibleRows = safeArray(cloudflareVisibleData);
+      const cfRows = visibleRows.length ? visibleRows : safeArray(cloudflareLastData);
+      cfRows.forEach(item => rows.push([item.node_name || '', item.region || '', item.port || '', item.exit_ip || '', item.cf_loc || '', item.cf_colo || '', item.http_protocol || '', item.tls_version || '', item.warp || '', item.http_204_ok ? 'true' : 'false', item.trace_ok ? 'true' : 'false', item.score ?? '', item.level || '', item.latency_ms || 0, item.cached ? 'true' : 'false']));
       const csv = rows.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
       const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
       const a = document.createElement('a');
@@ -2858,13 +2864,15 @@
     }
 
     function copyReputationJSON() {
-      const text = JSON.stringify(reputationLastData, null, 2);
+      const repRows = safeArray(reputationLastData);
+      const text = JSON.stringify(repRows, null, 2);
       navigator.clipboard.writeText(text).then(() => showToast('已复制 JSON'));
     }
 
     function downloadReputationCSV() {
       const rows = [['node','region','port','ip','country_code','asn','isp','risk_level','risk_score','cached','latency_ms']];
-      reputationLastData.forEach(item => {
+      const repRows = safeArray(reputationLastData);
+      repRows.forEach(item => {
         const r = item.result || item;
         rows.push([item.node_name || '', item.region || '', item.port || '', r.ip || '', r.country_code || '', r.asn || '', r.isp || r.org || '', r.risk_level || '', r.risk_score ?? '', r.cached ? 'true' : 'false', r.latency_ms || 0]);
       });

@@ -2793,6 +2793,25 @@ free_proxy_sources:
 		t.Fatalf("same-signature refresh should not start or queue, started=%v status=%#v", started, status)
 	}
 	close(release)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		status := server.currentFreeProxyRefreshStatus()
+		if status.State == "succeeded" {
+			if status.Pending {
+				t.Fatalf("same-signature refresh should not leave pending work, status=%#v", status)
+			}
+			break
+		}
+		if status.State == "failed" {
+			t.Fatalf("refresh failed: %#v", status)
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("refresh did not finish before test cleanup, status=%#v", status)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 func TestFreeProxyRefreshFailureStillDrainsPendingSnapshot(t *testing.T) {

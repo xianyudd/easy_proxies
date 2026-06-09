@@ -81,6 +81,25 @@ def test_legacy_webui_defends_non_array_debug_timeline():
     assert "(n.timeline||[]).map" not in text
 
 
+def test_legacy_webui_defends_non_array_debug_and_export_state():
+    text = LEGACY_INDEX.read_text()
+    assert "const debugNodes = safeArray(window._debugNodes);" in text
+    assert "debugNodes.forEach(n =>" in text
+    assert "const failSorted = debugNodes.filter" in text
+    assert "const visibleRows = safeArray(cloudflareVisibleData);" in text
+    assert "const cfRows = visibleRows.length ? visibleRows : safeArray(cloudflareLastData);" in text
+    assert "JSON.stringify(cfRows, null, 2)" in text
+    assert "cfRows.forEach(item =>" in text
+    assert "const repRows = safeArray(reputationLastData);" in text
+    assert "JSON.stringify(repRows, null, 2)" in text
+    assert "repRows.forEach(item =>" in text
+    assert "window._debugNodes.forEach" not in text
+    assert "window._debugNodes.filter" not in text
+    assert "reputationLastData.forEach" not in text
+    assert "cloudflareVisibleData.length ? cloudflareVisibleData : cloudflareLastData" not in text
+    assert "(cloudflareVisibleData.length ? cloudflareVisibleData : cloudflareLastData).forEach" not in text
+
+
 if __name__ == "__main__":
     test_nodes_page_query_preserves_availability_all()
     test_nodes_api_sanitizes_response_shape_before_pages_render()
@@ -88,3 +107,4 @@ if __name__ == "__main__":
     test_legacy_webui_defends_non_array_result_payloads()
     test_legacy_webui_defends_non_array_subscription_and_cached_rows()
     test_legacy_webui_defends_non_array_debug_timeline()
+    test_legacy_webui_defends_non_array_debug_and_export_state()
