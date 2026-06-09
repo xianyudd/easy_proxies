@@ -68,6 +68,16 @@ def test_settings_page_polls_subscription_refresh_and_refreshes_node_caches():
     assert "refreshRuntimeNodeCaches()" in text
 
 
+def test_management_rebound_url_hint_is_guarded():
+    text = read(SETTINGS_PAGE)
+    assert "function buildManagementRedirectUrl" in text
+    assert "try {" in text
+    assert "new URL(hint, window.location.href)" in text
+    assert "catch" in text
+    assert "管理端口已热切换，但后端返回的跳转地址无效" in text
+    assert "target.href" in text
+
+
 if __name__ == "__main__":
     test_settings_page_does_not_overwrite_dirty_draft_on_refetch()
     test_settings_page_tracks_reload_and_free_proxy_refresh_status()
@@ -75,3 +85,4 @@ if __name__ == "__main__":
     test_disabled_only_free_proxy_source_changes_do_not_trigger_refresh()
     test_settings_page_refreshes_runtime_node_caches_after_background_changes()
     test_settings_page_polls_subscription_refresh_and_refreshes_node_caches()
+    test_management_rebound_url_hint_is_guarded()

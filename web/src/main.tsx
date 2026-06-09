@@ -41,7 +41,13 @@ function ThemedApp() {
   </ConfigProvider>
 }
 
-createRoot(document.getElementById('root')!).render(
+const rootElement = document.getElementById('root')
+
+if (!rootElement) {
+  throw new Error('Easy Proxies WebUI failed to start: missing #root container')
+}
+
+createRoot(rootElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemedApp />

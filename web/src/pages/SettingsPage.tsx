@@ -63,6 +63,18 @@ function freeProxyRefreshDescription(state: 'idle' | 'refreshing' | 'failed', st
   return '系统正在下载、去重、预筛并写入缓存；完成后会按配置自动重载。'
 }
 
+function buildManagementRedirectUrl(hint: string, needReload?: boolean) {
+  try {
+    const target = new URL(hint, window.location.href)
+    if (needReload) target.searchParams.set('autoReload', '1')
+    else target.searchParams.delete('autoReload')
+    target.hash = 'settings'
+    return target.href
+  } catch {
+    return ''
+  }
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const settings = useQuery({ queryKey:['settings'], queryFn:getSettings })
@@ -184,12 +196,13 @@ export function SettingsPage() {
     setSettingsDirty(false)
     setSubsDirty(false)
     if (res?.management_rebound && res.management_url_hint) {
+      const target = buildManagementRedirectUrl(res.management_url_hint, res?.need_reload)
+      if (!target) {
+        toast('管理端口已热切换，但后端返回的跳转地址无效；请手动刷新管理页面。', 'error')
+        return
+      }
       toast('管理端口已热切换，正在跳转到新地址...', 'ok')
-      const target = new URL(res.management_url_hint)
-      if (res?.need_reload) target.searchParams.set('autoReload', '1')
-      else target.searchParams.delete('autoReload')
-      target.hash = 'settings'
-      window.setTimeout(() => { window.location.href = target.toString() }, 300)
+      window.setTimeout(() => { window.location.href = target }, 300)
       return
     }
     void settings.refetch()
