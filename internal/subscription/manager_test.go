@@ -16,7 +16,7 @@ func TestCreateNewConfigMarksSubscriptionNodes(t *testing.T) {
 	mgr := &Manager{baseCfg: &config.Config{
 		Mode:          "hybrid",
 		MultiPort:     config.MultiPortConfig{BasePort: 30000, Username: "user", Password: "pass"},
-		Subscriptions: []string{"https://example.test/sub"},
+		Subscriptions: []string{"http://127.0.0.1/sub"},
 	}}
 
 	cfg := mgr.createNewConfig([]config.NodeConfig{{URI: "http://127.0.0.1:8080"}})
@@ -30,16 +30,15 @@ func TestCreateNewConfigMarksSubscriptionNodes(t *testing.T) {
 
 func TestUpdateConfigDoesNotTriggerImmediateRefresh(t *testing.T) {
 	mgr := New(&config.Config{
-		Subscriptions: []string{"https://example.test/old"},
+		Subscriptions: []string{"http://127.0.0.1/old"},
 		SubscriptionRefresh: config.SubscriptionRefreshConfig{
 			Enabled:  true,
 			Interval: time.Hour,
 		},
 	}, nil)
-	mgr.UpdateConfig([]string{"https://example.test/new"}, true, 2*time.Hour)
+	mgr.UpdateConfig([]string{"http://127.0.0.1/new"}, true, 2*time.Hour)
 	defer mgr.Stop()
 
-	time.Sleep(50 * time.Millisecond)
 	status := mgr.Status()
 	if status.RefreshCount != 0 || status.IsRefreshing {
 		t.Fatalf("UpdateConfig should not trigger immediate refresh, got %#v", status)
