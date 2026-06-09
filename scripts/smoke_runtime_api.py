@@ -38,6 +38,7 @@ SKIP_RELOAD = os.environ.get("EP_SMOKE_SKIP_RELOAD", "").lower() in {"1", "true"
 ALLOW_NO_PASSWORD = os.environ.get("EP_SMOKE_ALLOW_NO_PASSWORD", "").lower() in {"1", "true", "yes"}
 FREE_PROXY_FIXTURE = os.environ.get("EP_SMOKE_FREE_PROXY_FIXTURE", "").lower() in {"1", "true", "yes"}
 ALLOW_MAIN_PORT = os.environ.get("EP_SMOKE_ALLOW_MAIN_PORT", "").lower() in {"1", "true", "yes"}
+FREE_PROXY_FIXTURE_BASELINE: dict[str, Any] | None = None
 
 
 def request(opener: urllib.request.OpenerDirector, method: str, path: str, payload: Any | None = None, *, retry_connect: bool = False) -> tuple[int, Any]:
@@ -318,6 +319,25 @@ def check_manual_reload(opener: urllib.request.OpenerDirector) -> None:
     raise RuntimeSmokeError("manual reload did not finish within poll window")
 
 
+def wait_for_reload_settled(opener: urllib.request.OpenerDirector, context: str) -> dict[str, Any]:
+    deadline = time.time() + POLL_SECONDS
+    while time.time() < deadline:
+        code, current = request(opener, "GET", "/api/reload/status", retry_connect=True)
+        require(code == 200 and isinstance(current, dict), f"{context} reload status failed HTTP {code}: {current!r}")
+        state = str(current.get("state", ""))
+        if state in {"idle", "succeeded", "failed"} and not current.get("reload_pending"):
+            require(state != "failed", f"{context} reload failed: {current!r}")
+            return current
+        time.sleep(0.5)
+    raise RuntimeSmokeError(f"{context} reload did not settle within poll window")
+
+
+def fetch_nodes_summary(opener: urllib.request.OpenerDirector) -> dict[str, Any]:
+    code, payload = request(opener, "GET", "/api/nodes?summary_only=true&availability=all")
+    require(code == 200 and isinstance(payload, dict), f"GET nodes summary failed HTTP {code}: {payload!r}")
+    return payload
+
+
 def fetch_all_nodes(opener: urllib.request.OpenerDirector) -> tuple[list[dict[str, Any]], int]:
     page = 1
     page_size = 500
@@ -395,13 +415,19 @@ def check_free_proxy_refresh_with_fixture(opener: urllib.request.OpenerDirector,
     if not FREE_PROXY_FIXTURE:
         print("free-proxy-fixture: skipped by default")
         return
+    global FREE_PROXY_FIXTURE_BASELINE
     with tempfile.TemporaryDirectory(prefix="easy-proxies-smoke-") as tmp:
+        baseline = fetch_nodes_summary(opener)
+        FREE_PROXY_FIXTURE_BASELINE = baseline
+        baseline_total = int(baseline.get("total_nodes") or 0)
+        baseline_free = int((baseline.get("source_stats") or {}).get("free_proxy") or 0)
         tmp_path = Path(tmp)
         source_path = tmp_path / "local-free-proxies.txt"
         cache_path = tmp_path / "cache.txt"
         fixture_uris = [
             "http://127.0.0.1:18080",
             "http://127.0.0.1:18081",
+            "socks5://127.0.0.1:18082",
         ]
         source_path.write_text("\n".join(fixture_uris) + "\n", encoding="utf-8")
         fixture_settings = dict(original)
@@ -420,7 +446,7 @@ def check_free_proxy_refresh_with_fixture(opener: urllib.request.OpenerDirector,
             "enabled": True,
             "path": str(cache_path),
             "refresh_on_start": False,
-            "auto_reload": False,
+            "auto_reload": True,
             "workers": 1,
             "max_age": "1ns",
         }
@@ -439,7 +465,36 @@ def check_free_proxy_refresh_with_fixture(opener: urllib.request.OpenerDirector,
         cached = cache_path.read_text(encoding="utf-8")
         missing = [uri for uri in fixture_uris if uri not in cached]
         require(not missing, f"cache file should contain accepted fixture proxies, missing={missing}, content={cached!r}")
+        wait_for_reload_settled(opener, "fixture")
+        deadline = time.time() + POLL_SECONDS
+        loaded_summary: dict[str, Any] | None = None
+        last_summary: dict[str, Any] | None = None
+        while time.time() < deadline:
+            last_summary = fetch_nodes_summary(opener)
+            free_nodes = int((last_summary.get("source_stats") or {}).get("free_proxy") or 0)
+            total_nodes = int(last_summary.get("total_nodes") or 0)
+            if free_nodes == len(fixture_uris) and total_nodes >= baseline_total + len(fixture_uris) - baseline_free:
+                loaded_summary = last_summary
+                break
+            time.sleep(0.5)
+        require(loaded_summary is not None, f"fixture free proxy nodes did not enter runtime: baseline={baseline!r} last={last_summary!r}")
         print(f"free-proxy-fixture: succeeded accepted={status.get('accepted')} cache={cache_path}")
+        print(f"fixture runtime loaded: free_proxy={((loaded_summary or {}).get('source_stats') or {}).get('free_proxy')} total={loaded_summary.get('total_nodes') if loaded_summary else '-'}")
+
+
+def wait_for_restored_nodes_summary(opener: urllib.request.OpenerDirector, baseline: dict[str, Any]) -> None:
+    baseline_total = int(baseline.get("total_nodes") or 0)
+    baseline_free = int((baseline.get("source_stats") or {}).get("free_proxy") or 0)
+    deadline = time.time() + POLL_SECONDS
+    last_summary: dict[str, Any] | None = None
+    while time.time() < deadline:
+        last_summary = fetch_nodes_summary(opener)
+        free_nodes = int((last_summary.get("source_stats") or {}).get("free_proxy") or 0)
+        total_nodes = int(last_summary.get("total_nodes") or 0)
+        if free_nodes == baseline_free and total_nodes == baseline_total:
+            return
+        time.sleep(0.5)
+    raise RuntimeSmokeError(f"restored runtime did not return to baseline: baseline={baseline!r} last={last_summary!r}")
 
 
 def main() -> int:
@@ -469,6 +524,9 @@ def main() -> int:
         if original_settings is not None and FREE_PROXY_FIXTURE:
             try:
                 restore_settings(opener, original_settings)
+                wait_for_reload_settled(opener, "restore")
+                if FREE_PROXY_FIXTURE_BASELINE is not None:
+                    wait_for_restored_nodes_summary(opener, FREE_PROXY_FIXTURE_BASELINE)
             except RuntimeSmokeError as exc:
                 print(f"SMOKE RESTORE FAILED: {exc}", file=sys.stderr)
                 exit_code = 1
