@@ -105,3 +105,33 @@ func TestHandleExportRejectsInvalidSchemeWithStructuredCode(t *testing.T) {
 		t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
 	}
 }
+
+func TestHandleExportGeoIPDocumentsUsernameSuffixInsteadOfPath(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{
+		mgr: mgr,
+		cfg: Config{ProxyUsername: "user", ProxyPassword: "pass"},
+		cfgSrc: &config.Config{
+			Mode:     "hybrid",
+			Listener: config.ListenerConfig{Address: "127.0.0.1", Port: 12080, Username: "user", Password: "pass"},
+			GeoIP:    config.GeoIPConfig{Enabled: true, Listen: "127.0.0.1", Port: 1221},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/export?scheme=http", nil)
+	rec := httptest.NewRecorder()
+	srv.handleExport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "地区使用用户名后缀") || !strings.Contains(body, "user-us") {
+		t.Fatalf("geoip export should document username suffixes: %q", body)
+	}
+	if strings.Contains(body, "支持路径") || strings.Contains(body, "/us/") {
+		t.Fatalf("geoip export should not advertise path-based routing: %q", body)
+	}
+}

@@ -2,6 +2,7 @@ package quality
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -159,6 +160,50 @@ func TestStoreResultPaginationMetadata(t *testing.T) {
 	}
 	if page.Data[0].NodeTag != "node-03" || page.Data[1].NodeTag != "node-04" {
 		t.Fatalf("unexpected page items: %#v", page.Data)
+	}
+}
+
+func TestStoreListResultsSanitizesProxyCredentialsForAPI(t *testing.T) {
+	store := NewStore()
+	snapshot, err := store.CreateJob(JobRequest{
+		Kind: CheckReputation,
+		Targets: []Target{
+			{Index: 0, ID: "done", NodeTag: "done", ProxyURL: "http://user:pass@127.0.0.1:13001"},
+			{Index: 1, ID: "pending", NodeTag: "pending", ProxyURL: "socks5://user:pass@127.0.0.1:13002"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateJob returned error: %v", err)
+	}
+	if err := store.StartJob(snapshot.ID); err != nil {
+		t.Fatalf("StartJob returned error: %v", err)
+	}
+	if err := store.AddResult(snapshot.ID, Result{TargetIndex: 0, TargetID: "done", NodeTag: "done", ProxyURL: "http://user:pass@127.0.0.1:13001", Status: "completed"}); err != nil {
+		t.Fatalf("AddResult returned error: %v", err)
+	}
+
+	page := store.ListResults(snapshot.ID, ResultQuery{Page: 1, PageSize: 10})
+	if len(page.Data) != 2 {
+		t.Fatalf("results=%d, want 2: %#v", len(page.Data), page.Data)
+	}
+	for _, result := range page.Data {
+		if strings.Contains(result.ProxyURL, "user:pass@") {
+			t.Fatalf("proxy credentials leaked in API result: %#v", result)
+		}
+		if strings.Contains(result.Target.ProxyURL, "user:pass@") {
+			t.Fatalf("hidden target should also be sanitized in API clone: %#v", result.Target)
+		}
+	}
+	if got := page.Data[0].ProxyURL; got != "http://127.0.0.1:13001" {
+		t.Fatalf("completed proxy url = %q", got)
+	}
+	if got := page.Data[1].ProxyURL; got != "socks5://127.0.0.1:13002" {
+		t.Fatalf("pending proxy url = %q", got)
+	}
+
+	raw := buildResultRows(snapshot, []Target{{Index: 0, ID: "done", NodeTag: "done", ProxyURL: "http://user:pass@127.0.0.1:13001"}}, []Result{{TargetIndex: 0, TargetID: "done", ProxyURL: "http://user:pass@127.0.0.1:13001"}})
+	if len(raw) != 1 || !strings.Contains(raw[0].ProxyURL, "user:pass@") {
+		t.Fatalf("internal result should remain executable before API sanitization: %#v", raw)
 	}
 }
 

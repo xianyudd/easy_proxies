@@ -552,6 +552,49 @@ func TestRefreshFreeProxyCacheRefetchesFreshCacheWhenSignatureChanged(t *testing
 	}
 }
 
+func TestRefreshFreeProxyCacheDoesNotReuseMismatchedCacheWhenRefreshAcceptsNothing(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "cache.txt")
+	if err := os.WriteFile(cachePath, []byte("http://9.9.9.9:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{
+		filePath: filepath.Join(dir, "config.yaml"),
+		FreeProxySources: []nodesource.SourceConfig{
+			{Name: "missing", File: filepath.Join(dir, "missing.txt"), Format: "txt"},
+		},
+		FreeProxyCache:  FreeProxyCacheConfig{Path: cachePath, MaxAge: time.Hour},
+		FreeProxyFilter: nodesource.FilterConfig{Enabled: false},
+	}
+	oldCfg := *cfg
+	oldCfg.FreeProxySources = []nodesource.SourceConfig{
+		{Name: "removed-source", File: filepath.Join(dir, "removed.txt"), Format: "txt"},
+	}
+	cache := cfg.FreeProxyCache.Normalized(cfg.filePath, true)
+	if err := writeFreeProxyCacheSignature(cache.Path, oldCfg.freeProxyCacheSignature(cache)); err != nil {
+		t.Fatalf("write stale cache metadata: %v", err)
+	}
+
+	summary, err := cfg.RefreshFreeProxyCacheSummary(context.Background())
+	if err == nil {
+		t.Fatalf("refresh should not report success by reusing a cache signed for different sources: summary=%#v", summary)
+	}
+	if summary.Count != 0 || summary.CacheUpdated {
+		t.Fatalf("summary=%#v, want no accepted count and no cache update", summary)
+	}
+	if len(summary.Sources) != 1 || summary.Sources[0].Error == "" {
+		t.Fatalf("expected source failure telemetry, got %#v", summary.Sources)
+	}
+	content, readErr := os.ReadFile(cachePath)
+	if readErr != nil {
+		t.Fatalf("mismatched cache should be preserved on disk for manual recovery: %v", readErr)
+	}
+	if got, want := string(content), "http://9.9.9.9:8080\n"; got != want {
+		t.Fatalf("cache content=%q, want preserved %q", got, want)
+	}
+}
+
 func TestRefreshFreeProxyCacheDetailedReusesStaleCacheWhenNoCandidatesAccepted(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, "cache.txt")

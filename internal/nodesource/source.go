@@ -203,7 +203,7 @@ func ParseFreeProxyContentLimitedWithOptions(format string, data []byte, opts Pa
 	case "txt", "text", "plain":
 		return parseTextLimited(data, opts.MaxNodes, opts.DefaultScheme), nil
 	case "json":
-		return parseJSONLimited(data, opts.MaxNodes)
+		return parseJSONLimitedWithDefaultScheme(data, opts.MaxNodes, opts.DefaultScheme)
 	default:
 		return nil, fmt.Errorf("unsupported free proxy source format %q", format)
 	}
@@ -252,6 +252,10 @@ func parseJSON(data []byte) ([]Node, error) {
 }
 
 func parseJSONLimited(data []byte, maxNodes int) ([]Node, error) {
+	return parseJSONLimitedWithDefaultScheme(data, maxNodes, "")
+}
+
+func parseJSONLimitedWithDefaultScheme(data []byte, maxNodes int, defaultScheme string) ([]Node, error) {
 	var arr []jsonProxy
 	if err := json.Unmarshal(data, &arr); err != nil {
 		var wrapped struct {
@@ -285,7 +289,7 @@ func parseJSONLimited(data []byte, maxNodes int) ([]Node, error) {
 				uri = net.JoinHostPort(host, port)
 			}
 		}
-		uri = normalizeProxyURI(uri, firstNonEmpty(item.Protocol, item.Type))
+		uri = normalizeProxyURI(uri, firstNonEmpty(item.Protocol, item.Type, defaultScheme))
 		if uri == "" {
 			continue
 		}

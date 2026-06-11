@@ -126,6 +126,23 @@ dns:
 - `multi-port`：每个节点一个独立本地 HTTP/SOCKS5 端口。
 - `hybrid`：同时启用 pool + multi-port。
 
+## GeoIP 地区入口用法
+
+GeoIP 地区入口复用 `listener.username/password` 做认证。标准代理客户端（curl、requests、浏览器扩展、系统代理）不会把代理 URL 里的 `/us/`、`/jp/` path 传给代理服务端，因此地区选择使用“用户名后缀”：
+
+```bash
+# 全局池
+curl -x http://user:pass@127.0.0.1:1221 http://example.com
+
+# 美国地区池
+curl -x http://user-us:pass@127.0.0.1:1221 http://example.com
+
+# 日本地区池
+curl -x http://user-jp:pass@127.0.0.1:1221 http://example.com
+```
+
+不要把 `http://user:pass@127.0.0.1:1221/us/` 当成标准可复制代理；多数客户端会忽略这个 path，实际仍走全局池。
+
 ## 节点来源行为
 
 - 配置了 `subscriptions` 时：

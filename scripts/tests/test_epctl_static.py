@@ -63,7 +63,7 @@ def test_status_prefers_total_filtered_for_all_availability_visible_count():
 
 def test_isolated_profile_uses_default_webui_password_consistently():
     text = read_source()
-    assert 'WEBUI_PASSWORD="${WEBUI_PASSWORD:-runtime-partial-secret}"' in text
+    assert 'WEBUI_PASSWORD="${WEBUI_PASSWORD:-ep123}"' in text
     assert 'WEBUI_PASSWORD="${WEBUI_PASSWORD:-}"' in text
     assert "management_password_json=\"$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' \"$WEBUI_PASSWORD\")\"" in text
     assert '  password: $management_password_json' in text

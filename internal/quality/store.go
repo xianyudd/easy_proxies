@@ -3,7 +3,9 @@ package quality
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -241,14 +243,42 @@ func (s *Store) ListResults(jobID string, q ResultQuery) PagedResults {
 	if end > count {
 		end = count
 	}
+	data := append([]Result(nil), items[start:end]...)
+	for i := range data {
+		data[i] = sanitizeResultForAPI(data[i])
+	}
 	return PagedResults{
-		Data:       append([]Result(nil), items[start:end]...),
+		Data:       data,
 		Count:      count,
 		Page:       page,
 		PageSize:   pageSize,
 		TotalPages: totalPages,
 		HasNext:    page < totalPages,
 	}
+}
+
+func sanitizeResultForAPI(result Result) Result {
+	result = cloneResult(result)
+	result.ProxyURL = sanitizeProxyURL(result.ProxyURL)
+	result.Target.ProxyURL = sanitizeProxyURL(result.Target.ProxyURL)
+	result.Target.UpstreamURL = sanitizeProxyURL(result.Target.UpstreamURL)
+	return result
+}
+
+func sanitizeProxyURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		parsed.User = nil
+		return parsed.String()
+	}
+	if at := strings.LastIndex(raw, "@"); at >= 0 {
+		return raw[at+1:]
+	}
+	return raw
 }
 
 func (s *Store) setStatus(id string, status JobStatus, message string) error {

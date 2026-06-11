@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -93,7 +94,7 @@ func (r *Router) Start(ctx context.Context) error {
 
 	go func() {
 		r.logger.Printf("🌐 GeoIP Router started on %s", addr)
-		r.logger.Printf("   Routes: /%s (default: all nodes)", strings.Join(AllRegions(), ", /"))
+		r.logger.Printf("   Routes: %s", r.routeSummary())
 		if err := server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			r.logger.Printf("GeoIP router error: %v", err)
 		}
@@ -105,6 +106,29 @@ func (r *Router) Start(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+func (r *Router) routeSummary() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.pools) == 0 {
+		if r.global != nil {
+			return "default only"
+		}
+		return "none"
+	}
+	regions := make([]string, 0, len(r.pools))
+	for region := range r.pools {
+		regions = append(regions, region)
+	}
+	sort.Strings(regions)
+	for idx, region := range regions {
+		regions[idx] = "/" + region
+	}
+	if r.global != nil {
+		return strings.Join(regions, ", ") + " (default: all nodes)"
+	}
+	return strings.Join(regions, ", ")
 }
 
 // Stop stops the GeoIP router
@@ -139,41 +163,65 @@ func (r *Router) Stop() error {
 	return err
 }
 
-// checkProxyAuth validates the Proxy-Authorization header.
-// Proxy clients send credentials via "Proxy-Authorization", not "Authorization".
-func (r *Router) checkProxyAuth(req *http.Request) bool {
+// checkProxyAuth validates the Proxy-Authorization header and returns an
+// optional region selected via username suffix. Standard HTTP proxy clients do
+// not send the path from a proxy URL such as http://host:1221/us/, so region
+// URLs use username suffixes instead: user-us:pass selects the US pool while
+// user:pass keeps the global pool. The legacy path parser remains supported
+// for clients that can send region-prefixed request targets explicitly.
+func (r *Router) checkProxyAuth(req *http.Request) (region string, ok bool) {
 	auth := req.Header.Get("Proxy-Authorization")
 	if auth == "" {
-		return false
+		return "", false
 	}
 	const prefix = "Basic "
 	if !strings.HasPrefix(auth, prefix) {
-		return false
+		return "", false
 	}
 	decoded, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
 	if err != nil {
-		return false
+		return "", false
 	}
 	parts := strings.SplitN(string(decoded), ":", 2)
-	if len(parts) != 2 {
-		return false
+	if len(parts) != 2 || parts[1] != r.cfg.Password {
+		return "", false
 	}
-	return parts[0] == r.cfg.Username && parts[1] == r.cfg.Password
+	username := parts[0]
+	if username == r.cfg.Username {
+		return "", true
+	}
+	prefixUser := r.cfg.Username + "-"
+	if strings.HasPrefix(username, prefixUser) {
+		candidate := strings.ToLower(strings.TrimPrefix(username, prefixUser))
+		for _, reg := range AllRegions() {
+			if candidate == reg {
+				return candidate, true
+			}
+		}
+	}
+	return "", false
 }
 
 // ServeHTTP handles incoming HTTP proxy requests
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Check proxy authentication if configured
+	authRegion := ""
 	if r.cfg.Username != "" {
-		if !r.checkProxyAuth(req) {
+		var ok bool
+		authRegion, ok = r.checkProxyAuth(req)
+		if !ok {
 			w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy"`)
 			http.Error(w, "Proxy authentication required", http.StatusProxyAuthRequired)
 			return
 		}
 	}
 
-	// Extract region from path
+	// Extract region from path; fall back to auth username suffix for
+	// standard proxy clients that cannot send proxy URL paths.
 	region, targetHost := r.parseRequest(req)
+	if region == "" {
+		region = authRegion
+	}
 
 	// Get the appropriate pool
 	r.mu.RLock()
@@ -216,7 +264,15 @@ func (r *Router) parseRequest(req *http.Request) (region, targetHost string) {
 		return "", host
 	}
 
-	// For regular HTTP requests, check URL path
+	// Standard HTTP proxy requests use absolute-form targets, where URL.Path
+	// belongs to the destination URL, not the proxy URL. Do not interpret
+	// destination paths like http://example.com/us/foo as region selectors.
+	if req.URL.IsAbs() {
+		return "", req.Host
+	}
+
+	// For non-standard origin-form requests sent directly to the router, keep
+	// the legacy path-prefix selector.
 	path := req.URL.Path
 	for _, reg := range AllRegions() {
 		prefix := "/" + reg + "/"

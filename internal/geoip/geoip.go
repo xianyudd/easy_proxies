@@ -35,12 +35,23 @@ const (
 	RegionDE    = "de"
 	RegionGB    = "gb"
 	RegionCA    = "ca"
+	RegionFR    = "fr"
+	RegionVN    = "vn"
+	RegionRU    = "ru"
+	RegionUA    = "ua"
+	RegionTR    = "tr"
+	RegionNG    = "ng"
 	RegionOther = "other"
 )
 
 // Default GeoIP database download URL
 const (
 	DefaultGeoIPURL = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb"
+)
+
+var (
+	geoipDownloadURL     = DefaultGeoIPURL
+	geoipDownloadTimeout = 6 * time.Second
 )
 
 // RegionInfo contains region details
@@ -91,9 +102,11 @@ func EnsureDatabase(dbPath string) error {
 		}
 	}
 
-	// Download with timeout
-	client := &http.Client{Timeout: 60 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, DefaultGeoIPURL, nil)
+	// Download with bounded timeout. GeoIP is optional for runtime startup:
+	// if the database cannot be fetched quickly, callers should fail fast and
+	// continue with region routing disabled instead of blocking reload/startup.
+	client := &http.Client{Timeout: geoipDownloadTimeout}
+	req, err := http.NewRequest(http.MethodGet, geoipDownloadURL, nil)
 	if err != nil {
 		return fmt.Errorf("create download request: %w", err)
 	}
@@ -230,6 +243,35 @@ func New(dbPath string) (*Lookup, error) {
 	return NewWithAutoUpdate(dbPath, 0)
 }
 
+// OpenExisting opens an existing GeoIP database without trying to download it.
+// Use this for optional classification paths where startup/reload must not be
+// blocked by a network fetch.
+func OpenExisting(dbPath string) (*Lookup, error) {
+	if strings.TrimSpace(dbPath) == "" {
+		return &Lookup{}, nil
+	}
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("geoip database path is not a file: %s", dbPath)
+	}
+	if info.Size() <= 0 {
+		return nil, fmt.Errorf("geoip database is empty: %s", dbPath)
+	}
+	db, err := geoip2.Open(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	return &Lookup{
+		db:       db,
+		path:     dbPath,
+		stopChan: make(chan struct{}),
+		dnsCache: make(map[string]RegionInfo),
+	}, nil
+}
+
 // NewWithAutoUpdate creates a new GeoIP lookup instance with auto-update support
 func NewWithAutoUpdate(dbPath string, updateInterval time.Duration) (*Lookup, error) {
 	if dbPath == "" {
@@ -333,8 +375,8 @@ func downloadDatabase(dbPath string) error {
 	}
 
 	// Download with timeout
-	client := &http.Client{Timeout: 60 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, DefaultGeoIPURL, nil)
+	client := &http.Client{Timeout: geoipDownloadTimeout}
+	req, err := http.NewRequest(http.MethodGet, geoipDownloadURL, nil)
 	if err != nil {
 		return fmt.Errorf("create download request: %w", err)
 	}
@@ -439,8 +481,14 @@ func (l *Lookup) LookupIP(ipStr string) RegionInfo {
 		return RegionInfo{Code: RegionOther, Country: "Unknown", ISOCode: ""}
 	}
 
-	isoCode := record.Country.IsoCode
+	isoCode := countryISOCode(record.Country.IsoCode, record.RegisteredCountry.IsoCode, record.RepresentedCountry.IsoCode)
 	country := record.Country.Names["en"]
+	if country == "" {
+		country = record.RegisteredCountry.Names["en"]
+	}
+	if country == "" {
+		country = record.RepresentedCountry.Names["en"]
+	}
 	if country == "" {
 		country = isoCode
 	}
@@ -613,113 +661,110 @@ func extractSSRHost(uri string) string {
 	return ""
 }
 
-// isoCodeToRegion maps ISO country codes to our region codes
+func countryISOCode(country, registeredCountry, representedCountry string) string {
+	for _, code := range []string{country, registeredCountry, representedCountry} {
+		code = strings.ToUpper(strings.TrimSpace(code))
+		if code != "" {
+			return code
+		}
+	}
+	return ""
+}
+
+// isoCodeToRegion maps ISO alpha-2 country codes to region codes.
 func isoCodeToRegion(isoCode string) string {
-	switch strings.ToUpper(isoCode) {
-	case "JP":
-		return RegionJP
-	case "KR":
-		return RegionKR
-	case "US":
-		return RegionUS
-	case "HK":
-		return RegionHK
-	case "TW":
-		return RegionTW
-	case "SG":
-		return RegionSG
-	case "IN":
-		return RegionIN
-	case "AE":
-		return RegionAE
-	case "CH":
-		return RegionCH
-	case "AU":
-		return RegionAU
-	case "DE":
-		return RegionDE
-	case "GB", "UK":
-		return RegionGB
-	case "CA":
-		return RegionCA
-	default:
-		return RegionOther
+	code := strings.ToLower(strings.TrimSpace(isoCode))
+	if IsRegionCode(code) {
+		return code
 	}
+	return RegionOther
 }
 
-// AllRegions returns all supported region codes
+// IsRegionCode reports whether code is a supported ISO alpha-2 region code.
+func IsRegionCode(code string) bool {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if code == RegionOther || code == "" {
+		return false
+	}
+	_, ok := iso3166CountryByCode[code]
+	return ok
+}
+
+// CountryByRegion returns ISO country metadata for a region code.
+func CountryByRegion(code string) (CountryInfo, bool) {
+	item, ok := iso3166CountryByCode[strings.ToLower(strings.TrimSpace(code))]
+	return item, ok
+}
+
+// RegionAliases returns display names and aliases useful for loose text matching.
+func RegionAliases(code string) []string {
+	item, ok := CountryByRegion(code)
+	if !ok {
+		return nil
+	}
+	aliases := []string{item.NameZH, item.NameEN}
+	aliases = append(aliases, item.Aliases...)
+	return aliases
+}
+
+// AllRegions returns all supported region codes plus other.
 func AllRegions() []string {
-	return []string{RegionJP, RegionKR, RegionUS, RegionHK, RegionTW, RegionSG, RegionIN, RegionAE, RegionCH, RegionAU, RegionDE, RegionGB, RegionCA, RegionOther}
+	regions := make([]string, 0, len(iso3166Countries)+1)
+	for _, item := range iso3166Countries {
+		regions = append(regions, item.Code)
+	}
+	regions = append(regions, RegionOther)
+	return regions
 }
 
-// RegionName returns the display name for a region code
-func RegionName(code string) string {
-	switch code {
-	case RegionJP:
-		return "Japan"
-	case RegionKR:
-		return "Korea"
-	case RegionUS:
-		return "USA"
-	case RegionHK:
-		return "Hong Kong"
-	case RegionTW:
-		return "Taiwan"
-	case RegionSG:
-		return "Singapore"
-	case RegionIN:
-		return "India"
-	case RegionAE:
-		return "UAE"
-	case RegionCH:
-		return "Switzerland"
-	case RegionAU:
-		return "Australia"
-	case RegionDE:
-		return "Germany"
-	case RegionGB:
-		return "United Kingdom"
-	case RegionCA:
-		return "Canada"
-	case RegionOther:
-		return "Other"
-	default:
-		return "Unknown"
+// AndroidCompatibleRegionOrder preserves the historical unauthenticated Android
+// port order, then appends newly supported ISO regions.
+func AndroidCompatibleRegionOrder() []string {
+	ordered := []string{RegionUS, RegionJP, RegionHK, RegionSG, RegionTW, RegionKR, RegionIN, RegionAE, RegionCH, RegionAU, RegionOther, RegionDE, RegionGB, RegionCA}
+	seen := make(map[string]bool, len(ordered))
+	for _, region := range ordered {
+		seen[region] = true
 	}
+	for _, region := range AllRegions() {
+		if !seen[region] {
+			ordered = append(ordered, region)
+		}
+	}
+	return ordered
+}
+
+// RegionName returns the default Chinese display name for a region code.
+func RegionName(code string) string {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if code == RegionOther {
+		return "其他"
+	}
+	if item, ok := iso3166CountryByCode[code]; ok {
+		return item.NameZH
+	}
+	return "未知"
+}
+
+// RegionEnglishName returns the English ISO display name for a region code.
+func RegionEnglishName(code string) string {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if code == RegionOther {
+		return "Other"
+	}
+	if item, ok := iso3166CountryByCode[code]; ok {
+		return item.NameEN
+	}
+	return "Unknown"
 }
 
 // RegionEmoji returns the flag emoji for a region code
 func RegionEmoji(code string) string {
-	switch code {
-	case RegionJP:
-		return "🇯🇵"
-	case RegionKR:
-		return "🇰🇷"
-	case RegionUS:
-		return "🇺🇸"
-	case RegionHK:
-		return "🇭🇰"
-	case RegionTW:
-		return "🇹🇼"
-	case RegionSG:
-		return "🇸🇬"
-	case RegionIN:
-		return "🇮🇳"
-	case RegionAE:
-		return "🇦🇪"
-	case RegionCH:
-		return "🇨🇭"
-	case RegionAU:
-		return "🇦🇺"
-	case RegionDE:
-		return "🇩🇪"
-	case RegionGB:
-		return "🇬🇧"
-	case RegionCA:
-		return "🇨🇦"
-	case RegionOther:
+	code = strings.ToLower(strings.TrimSpace(code))
+	if code == RegionOther {
 		return "🌍"
-	default:
-		return "❓"
 	}
+	if item, ok := iso3166CountryByCode[code]; ok {
+		return item.Emoji
+	}
+	return "❓"
 }

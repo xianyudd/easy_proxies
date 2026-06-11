@@ -2,7 +2,6 @@ package reputation
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -14,12 +13,13 @@ import (
 )
 
 type Checker struct {
-	providers      []Provider
-	cache          *Cache
-	nodeMu         sync.RWMutex
-	nodeResults    map[string]NodeResult
-	timeout        time.Duration
-	maxConcurrency int
+	providers       []Provider
+	cache           *Cache
+	nodeMu          sync.RWMutex
+	nodeResults     map[string]NodeResult
+	timeout         time.Duration
+	maxConcurrency  int
+	exitIPEndpoints []string
 }
 type Option func(*Checker)
 
@@ -27,6 +27,9 @@ func WithProviders(providers ...Provider) Option { return func(c *Checker) { c.p
 func WithCache(cache *Cache) Option              { return func(c *Checker) { c.cache = cache } }
 func WithTimeout(timeout time.Duration) Option   { return func(c *Checker) { c.timeout = timeout } }
 func WithMaxConcurrency(n int) Option            { return func(c *Checker) { c.maxConcurrency = n } }
+func WithExitIPEndpoints(endpoints ...string) Option {
+	return func(c *Checker) { c.exitIPEndpoints = endpoints }
+}
 func NewChecker(opts ...Option) *Checker {
 	c := &Checker{timeout: 8 * time.Second, maxConcurrency: 5, cache: NewCache(6 * time.Hour), nodeResults: make(map[string]NodeResult)}
 	for _, opt := range opts {
@@ -41,6 +44,7 @@ func NewChecker(opts ...Option) *Checker {
 	if c.cache == nil {
 		c.cache = NewCache(6 * time.Hour)
 	}
+	c.exitIPEndpoints = normalizeExitIPEndpoints(c.exitIPEndpoints)
 	if len(c.providers) == 0 {
 		client := &http.Client{Timeout: c.timeout}
 		c.providers = []Provider{NewIPAPIProvider(client), NewIPWhoisProvider(client)}
@@ -93,38 +97,68 @@ func (c *Checker) NodeResults() []NodeResult {
 	return out
 }
 func (c *Checker) ExitIPViaProxy(ctx context.Context, proxyURL string) (string, int64, error) {
-	parsed, err := url.Parse(strings.TrimSpace(proxyURL))
-	if err != nil {
-		return "", 0, err
+	var parsed *url.URL
+	if strings.TrimSpace(proxyURL) != "" {
+		u, err := url.Parse(strings.TrimSpace(proxyURL))
+		if err != nil {
+			return "", 0, err
+		}
+		parsed = u
 	}
-	client := &http.Client{Timeout: c.timeout, Transport: &http.Transport{Proxy: http.ProxyURL(parsed)}}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if parsed != nil {
+		transport.Proxy = http.ProxyURL(parsed)
+	}
+	client := &http.Client{Timeout: c.exitIPEndpointTimeout(), Transport: transport}
 	defer client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.ipify.org?format=json", nil)
-	if err != nil {
-		return "", 0, err
-	}
+
 	start := time.Now()
-	resp, err := client.Do(req)
-	latency := time.Since(start).Milliseconds()
-	if err != nil {
-		return "", latency, err
+	var errs []string
+	for _, endpoint := range c.exitIPEndpoints {
+		endpointCtx, endpointCancel := context.WithTimeout(ctx, c.exitIPEndpointTimeout())
+		ip, err := lookupOutboundIPWithClient(endpointCtx, client, endpoint)
+		endpointCancel()
+		if err == nil {
+			return ip, time.Since(start).Milliseconds(), nil
+		}
+		errs = append(errs, endpoint+": "+err.Error())
+		if ctx.Err() != nil {
+			break
+		}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", latency, fmt.Errorf("exit ip status %d", resp.StatusCode)
+	return "", time.Since(start).Milliseconds(), errors.New(strings.Join(errs, "; "))
+}
+
+func normalizeExitIPEndpoints(endpoints []string) []string {
+	var out []string
+	for _, endpoint := range endpoints {
+		endpoint = strings.TrimSpace(endpoint)
+		if endpoint != "" {
+			out = append(out, endpoint)
+		}
 	}
-	var raw struct {
-		IP string `json:"ip"`
+	if len(out) > 0 {
+		return out
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return "", latency, err
+	return []string{
+		"https://api.ipify.org?format=json",
+		"http://api.ipify.org?format=json",
+		"https://ifconfig.me/ip",
+		"http://ifconfig.me/ip",
 	}
-	if net.ParseIP(raw.IP) == nil {
-		return "", latency, fmt.Errorf("invalid exit ip")
+}
+
+func (c *Checker) exitIPEndpointTimeout() time.Duration {
+	timeout := c.timeout
+	if timeout <= 0 {
+		timeout = 8 * time.Second
 	}
-	return raw.IP, latency, nil
+	if timeout > 3*time.Second {
+		return 3 * time.Second
+	}
+	return timeout
 }
 
 type ProxyTarget struct {

@@ -20,6 +20,17 @@ def test_node_overview_sidebar_keeps_stable_tab_id():
     assert "setActive(id)" in text
 
 
+def test_region_review_hash_routes_and_sidebar_entry():
+    app = APP.read_text()
+    sidebar = SIDEBAR.read_text()
+    assert "['#region-review', 'review']" in app
+    assert "['#unclassified', 'review']" in app
+    assert "{activeTab === 'review' && <RegionReviewPage />}" in app
+    assert "['review', MapPin, '待确认节点']" in sidebar
+    assert "review: 'region-review'" in sidebar
+
+
 if __name__ == "__main__":
     test_nodes_hash_routes_to_node_overview()
     test_node_overview_sidebar_keeps_stable_tab_id()
+    test_region_review_hash_routes_and_sidebar_entry()

@@ -164,6 +164,27 @@ func TestProviderAppliesDefaultSchemeForPlainTextSources(t *testing.T) {
 	}
 }
 
+func TestProviderAppliesDefaultSchemeForJSONHostPortSources(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "socks5.json")
+	if err := os.WriteFile(file, []byte(`[{"ip":"1.2.3.4","port":1080},{"uri":"http://5.6.7.8:8080"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := NewProvider(SourceConfig{Name: "json-socks", File: file, Format: "json", DefaultScheme: "socks5"}).Load()
+	if err != nil {
+		t.Fatalf("load json source failed: %v", err)
+	}
+	want := []string{"socks5://1.2.3.4:1080", "http://5.6.7.8:8080"}
+	if len(nodes) != len(want) {
+		t.Fatalf("expected %d nodes, got %d: %#v", len(want), len(nodes), nodes)
+	}
+	for i := range want {
+		if nodes[i].URI != want[i] {
+			t.Fatalf("node %d uri: want %q got %q", i, want[i], nodes[i].URI)
+		}
+	}
+}
+
 func TestDefaultFetchTimeoutIsBoundedForUnresponsiveSources(t *testing.T) {
 	if DefaultFetchTimeout > 8*time.Second {
 		t.Fatalf("default free proxy fetch timeout should stay bounded, got %s", DefaultFetchTimeout)

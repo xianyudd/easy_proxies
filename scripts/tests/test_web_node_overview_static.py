@@ -2,6 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 NODE_OVERVIEW = ROOT / "web" / "src" / "pages" / "NodeOverviewPage.tsx"
+ISO = ROOT / "web" / "src" / "data" / "iso3166.ts"
 
 
 def read_source() -> str:
@@ -10,8 +11,10 @@ def read_source() -> str:
 
 def test_node_overview_labels_all_backend_regions():
     text = read_source()
-    for code in ("us", "jp", "hk", "sg", "tw", "kr", "in", "ae", "ch", "au", "de", "gb", "ca", "other"):
-        assert f"{code}:" in text
+    iso = ISO.read_text()
+    assert "regionMeta(code).label" in text
+    for code in ("us", "jp", "hk", "sg", "tw", "kr", "in", "ae", "ch", "au", "de", "gb", "ca", "fr", "vn", "ru", "ua", "tr", "ng"):
+        assert f'"code": "{code}"' in iso
 
 
 def test_node_overview_reconciles_server_clamped_page_and_copies_stable_tag():

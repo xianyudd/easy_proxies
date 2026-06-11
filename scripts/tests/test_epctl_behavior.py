@@ -259,6 +259,59 @@ fi
     assert "service process started but control plane is not ready" in result.stdout + result.stderr
 
 
+def test_write_isolated_config_copies_sources_without_duplicate_top_level_keys():
+    script = f"""
+set -euo pipefail
+tmp="$(mktemp -d)"
+source_cfg="$tmp/source.yaml"
+isolated_cfg="$tmp/isolated.yaml"
+cat >"$source_cfg" <<'YAML'
+subscriptions:
+  - https://example.test/sub-a
+free_proxy_sources:
+  - name: http-a
+    url: https://example.test/http.txt
+    format: txt
+    enabled: true
+external_ip: "1.2.3.4"
+log_level: debug
+skip_cert_verify: true
+upstream_proxy: socks5://127.0.0.1:7890
+YAML
+EPCTL_LIB_ONLY=1
+EP_PROFILE=isolated
+SOURCE_CONFIG="$source_cfg"
+CONFIG_FILE="$isolated_cfg"
+WEBUI_PASSWORD="ep123"
+source {shell_quote(str(EPCTL))}
+write_isolated_config >/tmp/epctl-write-isolated.out
+python3 - "$isolated_cfg" <<'PY'
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+for key in ("subscriptions", "free_proxy_sources", "external_ip", "log_level", "skip_cert_verify", "upstream_proxy"):
+    count = sum(1 for line in text.splitlines() if line.startswith(key + ":"))
+    if count != 1:
+        raise SystemExit(f"{key} top-level count={count}\\n{text}")
+required = [
+    "listen: 127.0.0.1:19093",
+    "password: \\"ep123\\"",
+    "free_proxy_max_nodes: 0",
+    "max_probe_candidates: 12000",
+    "  - https://example.test/sub-a",
+    "  - name: http-a",
+    'external_ip: ""',
+    'upstream_proxy: ""',
+]
+for needle in required:
+    if needle not in text:
+        raise SystemExit(f"missing {needle!r}\\n{text}")
+PY
+"""
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
 def test_restart_service_removes_temp_binary_when_stop_fails():
     script = f"""
 set -euo pipefail

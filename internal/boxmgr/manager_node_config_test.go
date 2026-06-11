@@ -3,6 +3,8 @@ package boxmgr
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -36,6 +38,68 @@ func TestUpdateNodeRejectsInvalidURI(t *testing.T) {
 	}
 	if got := cfg.Nodes[0].URI; !strings.EqualFold(got, "http://127.0.0.1:18080") {
 		t.Fatalf("node URI changed after rejected update: %q", got)
+	}
+}
+
+func TestUpdateNodeRemovesManualRegionOverrideForOldURI(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("nodes: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Mode:      "multi-port",
+		MultiPort: config.MultiPortConfig{BasePort: 18080, Username: "u", Password: "p"},
+		Nodes:     []config.NodeConfig{{Name: "old", URI: "http://127.0.0.1:18080#old", Port: 18080, Source: config.NodeSourceInline}},
+	}
+	cfg.SetFilePath(configPath)
+	cfg.SetRegionOverride("http://127.0.0.1:18080#old", "jp")
+	mgr := New(cfg, monitor.Config{})
+
+	_, err := mgr.UpdateNode(context.Background(), "old", config.NodeConfig{Name: "old", URI: "http://127.0.0.1:18081#new"})
+	if err != nil {
+		t.Fatalf("UpdateNode error = %v", err)
+	}
+	if _, ok := cfg.RegionOverrideForURI("http://127.0.0.1:18080#old"); ok {
+		t.Fatal("manual region override for old URI should be removed")
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reloaded.RegionOverrideForURI("http://127.0.0.1:18080#old"); ok {
+		t.Fatal("manual region override for old URI should be removed from disk")
+	}
+}
+
+func TestDeleteNodeRemovesManualRegionOverride(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("nodes: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Mode:      "multi-port",
+		MultiPort: config.MultiPortConfig{BasePort: 18080, Username: "u", Password: "p"},
+		Nodes:     []config.NodeConfig{{Name: "old", URI: "http://127.0.0.1:18080#old", Port: 18080, Source: config.NodeSourceInline}},
+	}
+	cfg.SetFilePath(configPath)
+	cfg.SetRegionOverride("http://127.0.0.1:18080#old", "jp")
+	mgr := New(cfg, monitor.Config{})
+
+	if err := mgr.DeleteNode(context.Background(), "old"); err != nil {
+		t.Fatalf("DeleteNode error = %v", err)
+	}
+	if _, ok := cfg.RegionOverrideForURI("http://127.0.0.1:18080#old"); ok {
+		t.Fatal("manual region override for deleted node should be removed")
+	}
+	if len(cfg.ManualRegionOverrides) != 0 {
+		t.Fatalf("manual region overrides should be empty after deleting only override, got %#v", cfg.ManualRegionOverrides)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(data)), "http://127.0.0.1:18080#old") {
+		t.Fatal("manual region override for deleted node should be removed from disk")
 	}
 }
 

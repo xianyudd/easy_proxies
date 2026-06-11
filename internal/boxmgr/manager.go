@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"easy_proxies/internal/androidports"
 	"easy_proxies/internal/builder"
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
@@ -45,6 +47,11 @@ type Logger interface {
 // Option configures the Manager.
 type Option func(*Manager)
 
+type boxInstance interface {
+	Start() error
+	Close() error
+}
+
 // WithLogger sets a custom logger.
 func WithLogger(l Logger) Option {
 	return func(m *Manager) { m.logger = l }
@@ -54,7 +61,7 @@ func WithLogger(l Logger) Option {
 type Manager struct {
 	mu sync.RWMutex
 
-	currentBox     *box.Box
+	currentBox     boxInstance
 	monitorMgr     *monitor.Manager
 	monitorServer  *monitor.Server
 	geoRouter      *geoip.Router
@@ -65,6 +72,7 @@ type Manager struct {
 	drainTimeout      time.Duration
 	minAvailableNodes int
 	logger            Logger
+	boxFactory        func(context.Context, *config.Config) (boxInstance, error)
 
 	baseCtx            context.Context
 	healthCheckStarted bool
@@ -113,11 +121,11 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Unlock()
 
 	// Try to start, with automatic port conflict resolution
-	var instance *box.Box
+	var instance boxInstance
 	maxRetries := 10
 	for retry := 0; retry < maxRetries; retry++ {
 		var err error
-		instance, err = m.createBox(ctx, cfg)
+		instance, err = m.newBox(ctx, cfg)
 		if err != nil {
 			return err
 		}
@@ -232,18 +240,19 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 	// Reset shared state store to ensure clean state for new config
 	pool.ResetSharedStateStore()
 
-	// Clear stale monitor nodes so the dashboard reflects the new config
+	// During reload, keep old monitor snapshots visible until the new instance
+	// is created and started. Allow both generations to register while the new
+	// box is being built; prune to the new generation only after start succeeds.
 	if m.monitorMgr != nil {
-		m.monitorMgr.SetAllowedTags(configNodeTags(newCfg))
-		m.monitorMgr.ClearNodes()
+		m.monitorMgr.SetAllowedTags(mergeNodeTags(configNodeTags(oldCfg), configNodeTags(newCfg)))
 	}
 
 	// Create and start new box instance with automatic port conflict resolution
-	var instance *box.Box
+	var instance boxInstance
 	maxRetries := 10
 	for retry := 0; retry < maxRetries; retry++ {
 		var err error
-		instance, err = m.createBox(ctx, newCfg)
+		instance, err = m.newBox(ctx, newCfg)
 		if err != nil {
 			m.rollbackToOldConfig(ctx, oldCfg)
 			return fmt.Errorf("create new box: %w", err)
@@ -283,6 +292,10 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 	// Sync config to monitor server so future WebUI settings changes target the current config pointer
 	if m.monitorServer != nil {
 		m.monitorServer.SetConfig(m.cfg)
+	}
+
+	if m.monitorMgr != nil {
+		m.monitorMgr.SetAllowedTags(configNodeTags(newCfg))
 	}
 
 	if m.monitorMgr != nil && !configHasSource(newCfg, config.NodeSourceFreeProxy) {
@@ -329,7 +342,11 @@ func (m *Manager) rollbackToOldConfig(ctx context.Context, oldCfg *config.Config
 		return
 	}
 	m.logger.Warnf("attempting rollback to previous config...")
-	instance, err := m.createBox(ctx, oldCfg)
+	if m.monitorMgr != nil {
+		m.monitorMgr.SetAllowedTags(configNodeTags(oldCfg))
+		m.monitorMgr.ClearNodes()
+	}
+	instance, err := m.newBox(ctx, oldCfg)
 	if err != nil {
 		m.logger.Errorf("rollback failed to create box: %v", err)
 		return
@@ -563,8 +580,15 @@ func (m *Manager) createBox(ctx context.Context, cfg *config.Config) (*box.Box, 
 	return nil, fmt.Errorf("create sing-box instance: too many invalid outbounds (exceeded %d retries)", maxRetries)
 }
 
+func (m *Manager) newBox(ctx context.Context, cfg *config.Config) (boxInstance, error) {
+	if m.boxFactory != nil {
+		return m.boxFactory(ctx, cfg)
+	}
+	return m.createBox(ctx, cfg)
+}
+
 // gracefulSwitch swaps the current box with a new one.
-func (m *Manager) gracefulSwitch(newBox *box.Box) error {
+func (m *Manager) gracefulSwitch(newBox boxInstance) error {
 	if newBox == nil {
 		return errors.New("new box is nil")
 	}
@@ -584,7 +608,7 @@ func (m *Manager) gracefulSwitch(newBox *box.Box) error {
 }
 
 // drainOldBox waits for drain timeout then closes the old box.
-func (m *Manager) drainOldBox(oldBox *box.Box, timeout time.Duration) {
+func (m *Manager) drainOldBox(oldBox boxInstance, timeout time.Duration) {
 	if oldBox == nil {
 		return
 	}
@@ -820,9 +844,14 @@ func (m *Manager) UpdateNode(ctx context.Context, name string, node config.NodeC
 	normalized.Source = m.cfg.Nodes[idx].Source
 
 	prev := m.cfg.Nodes[idx]
+	prevOverrides := cloneRegionOverrides(m.cfg.ManualRegionOverrides)
 	m.cfg.Nodes[idx] = normalized
+	if !strings.EqualFold(strings.TrimSpace(prev.URI), strings.TrimSpace(normalized.URI)) {
+		m.cfg.RemoveRegionOverride(prev.URI)
+	}
 	if err := m.cfg.Save(); err != nil {
 		m.cfg.Nodes[idx] = prev
+		m.cfg.ManualRegionOverrides = prevOverrides
 		return config.NodeConfig{}, fmt.Errorf("save config: %w", err)
 	}
 	return normalized, nil
@@ -850,9 +879,13 @@ func (m *Manager) DeleteNode(ctx context.Context, name string) error {
 	}
 
 	backup := cloneNodes(m.cfg.Nodes)
+	overrideBackup := cloneRegionOverrides(m.cfg.ManualRegionOverrides)
+	removed := m.cfg.Nodes[idx]
 	m.cfg.Nodes = append(m.cfg.Nodes[:idx], m.cfg.Nodes[idx+1:]...)
+	m.cfg.RemoveRegionOverride(removed.URI)
 	if err := m.cfg.Save(); err != nil {
 		m.cfg.Nodes = backup
+		m.cfg.ManualRegionOverrides = overrideBackup
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil
@@ -977,6 +1010,17 @@ func cloneNodes(nodes []config.NodeConfig) []config.NodeConfig {
 	return out
 }
 
+func cloneRegionOverrides(overrides map[string]string) map[string]string {
+	if len(overrides) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(overrides))
+	for key, value := range overrides {
+		out[key] = value
+	}
+	return out
+}
+
 func configHasSource(cfg *config.Config, source config.NodeSource) bool {
 	if cfg == nil {
 		return false
@@ -1013,6 +1057,25 @@ func configNodeTags(cfg *config.Config) []string {
 		tags = append(tags, tag)
 	}
 	return tags
+}
+
+func mergeNodeTags(groups ...[]string) []string {
+	seen := make(map[string]struct{})
+	merged := make([]string, 0)
+	for _, group := range groups {
+		for _, tag := range group {
+			tag = strings.TrimSpace(tag)
+			if tag == "" {
+				continue
+			}
+			if _, ok := seen[tag]; ok {
+				continue
+			}
+			seen[tag] = struct{}{}
+			merged = append(merged, tag)
+		}
+	}
+	return merged
 }
 
 func runtimeNodeTagBase(name string) string {
@@ -1153,23 +1216,6 @@ func isValidNodeURI(raw string) bool {
 	}
 }
 
-func androidRegionOrder() []string {
-	return []string{geoip.RegionUS, geoip.RegionJP, geoip.RegionHK, geoip.RegionSG, geoip.RegionTW, geoip.RegionKR, geoip.RegionIN, geoip.RegionAE, geoip.RegionCH, geoip.RegionAU, geoip.RegionOther, geoip.RegionDE, geoip.RegionGB, geoip.RegionCA}
-}
-
-func androidRegionPort(cfg config.AndroidProxyConfig, region string, idx int) uint16 {
-	if cfg.RegionPorts != nil {
-		if port := cfg.RegionPorts[region]; port != 0 {
-			return port
-		}
-	}
-	basePort := cfg.BasePort
-	if basePort == 0 {
-		basePort = 13001
-	}
-	return basePort + uint16(idx)
-}
-
 // startAndroidProxyRouters starts unauthenticated per-region HTTP proxies for Android global proxy use.
 func (m *Manager) startAndroidProxyRouters(ctx context.Context, cfg *config.Config) {
 	m.mu.Lock()
@@ -1187,12 +1233,25 @@ func (m *Manager) startAndroidProxyRouters(ctx context.Context, cfg *config.Conf
 	}
 
 	routers := make([]*geoip.Router, 0)
-	for idx, region := range androidRegionOrder() {
+	skippedMissingPools := 0
+	regionPorts := androidports.RegionPortsAvoiding(cfg.AndroidProxy, m.runtimeNodePorts(cfg))
+	allocatedPorts := make(map[uint16]struct{}, len(regionPorts))
+	actualRegionPorts := make(map[string]uint16, len(regionPorts))
+	for _, region := range androidports.RegionOrder() {
 		poolTag := fmt.Sprintf("pool-%s", region)
-		port := androidRegionPort(cfg.AndroidProxy, region, idx)
+		port := regionPorts[region]
+		if port == 0 {
+			skippedMissingPools++
+			continue
+		}
 		dialer, ok := pool.GetDialer(poolTag)
 		if !ok {
-			m.logger.Warnf("android proxy pool %s for region %s is unavailable, skipping port %d", poolTag, region, port)
+			skippedMissingPools++
+			continue
+		}
+		port = nextAndroidListenPort(listen, port, allocatedPorts)
+		if port == 0 {
+			m.logger.Warnf("failed to find available android proxy port for region %s", region)
 			continue
 		}
 		routerCfg := geoip.RouterConfig{Listen: listen, Port: port}
@@ -1203,10 +1262,79 @@ func (m *Manager) startAndroidProxyRouters(ctx context.Context, cfg *config.Conf
 			continue
 		}
 		m.logger.Infof("android proxy region %s started on http://%s:%d", region, listen, port)
+		allocatedPorts[port] = struct{}{}
+		actualRegionPorts[region] = port
 		routers = append(routers, router)
+	}
+	if skippedMissingPools > 0 {
+		m.logger.Infof("android proxy skipped %d region(s) without available pools", skippedMissingPools)
 	}
 
 	m.mu.Lock()
+	if cfg.AndroidProxy.RegionPorts == nil {
+		cfg.AndroidProxy.RegionPorts = make(map[string]uint16, len(actualRegionPorts))
+	}
+	for region, port := range actualRegionPorts {
+		cfg.AndroidProxy.RegionPorts[region] = port
+	}
 	m.androidRouters = routers
 	m.mu.Unlock()
+}
+
+func nextAndroidListenPort(listen string, start uint16, allocated map[uint16]struct{}) uint16 {
+	if start == 0 {
+		return 0
+	}
+	host := strings.TrimSpace(listen)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	for offset := 0; offset < 65535; offset++ {
+		portInt := int(start) + offset
+		for portInt > 65535 {
+			portInt -= 65535
+		}
+		if portInt <= 0 {
+			continue
+		}
+		port := uint16(portInt)
+		if _, ok := allocated[port]; ok {
+			continue
+		}
+		ln, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(int(port))))
+		if err != nil {
+			continue
+		}
+		_ = ln.Close()
+		return port
+	}
+	return 0
+}
+
+func (m *Manager) runtimeNodePorts(cfg *config.Config) []uint16 {
+	ports := make([]uint16, 0)
+	if cfg != nil {
+		for _, node := range cfg.Nodes {
+			if node.Port != 0 {
+				ports = append(ports, node.Port)
+			}
+		}
+		if cfg.MultiPort.BasePort != 0 && (cfg.Mode == "multi-port" || cfg.Mode == "hybrid") && len(cfg.Nodes) > 0 {
+			reserveCount := len(cfg.Nodes) + len(androidports.RegionOrder()) + 64
+			for i := 0; i < reserveCount; i++ {
+				portInt := int(cfg.MultiPort.BasePort) + i
+				if portInt > 0 && portInt <= 65535 {
+					ports = append(ports, uint16(portInt))
+				}
+			}
+		}
+	}
+	if m != nil && m.monitorMgr != nil {
+		for _, snap := range m.monitorMgr.Snapshot() {
+			if snap.Port != 0 {
+				ports = append(ports, snap.Port)
+			}
+		}
+	}
+	return ports
 }

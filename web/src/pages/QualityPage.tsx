@@ -4,8 +4,8 @@ import type { ColumnsType } from 'antd/es/table'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { getNodes, getNodesSummary } from '../api/nodes'
 import { getCloudflareCache, checkCloudflare } from '../api/cloudflare'
-import { getSettings } from '../api/settings'
-import { getReputationCache } from '../api/reputation'
+import { getReloadStatus, getSettings, reloadCore } from '../api/settings'
+import { checkReputation, getReputationCache } from '../api/reputation'
 import { cancelQualityJob, createQualityJob, getQualityJob, getQualityJobResults } from '../api/qualityJobs'
 import { Button } from '../components/ui/Button'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
@@ -17,7 +17,7 @@ import { useAppStore } from '../store/appStore'
 import { useExtractorStore } from '../store/extractorStore'
 import { copyToClipboard } from '../lib/clipboard'
 import type { CloudflareResult } from '../types/cloudflare'
-import type { ReputationResult } from '../types/reputation'
+import type { ReputationRegionUpdateSummary, ReputationResult } from '../types/reputation'
 import type { QualityJobResult, QualityJobSnapshot } from '../types/qualityJob'
 
 function levelTone(level?: string) { return level === 'excellent' || level === 'low' ? 'good' : level === 'good' || level === 'medium' ? 'warn' : level ? 'bad' : 'neutral' }
@@ -83,6 +83,10 @@ function repFromJobRow(row: QualityJobResult): ReputationResult {
   }
 }
 function isTerminalJob(job?: QualityJobSnapshot) { return !!job && ['completed', 'failed', 'cancelled'].includes(job.status) }
+function regionUpdateText(summary?: ReputationRegionUpdateSummary | null) {
+  if (!summary) return ''
+  return `检查 ${summary.checked || 0} 个，更新 ${summary.updated || 0} 个，未变 ${summary.unchanged || 0} 个，跳过 ${summary.skipped || 0} 个，持久化 ${summary.persisted || 0} 个`
+}
 
 type QualityRow = { key: string; row: CloudflareResult; rep?: ReputationResult; repRisk: string; score: number; tier?: string; pool?: string }
 const QUALITY_REGION_OPTIONS = Object.entries(REGION_META).map(([value, meta]) => ({ value, label: meta.label }))
@@ -99,6 +103,9 @@ export function QualityPage() {
   const [region, setRegion] = useState('all')
   const [source, setSource] = useState('all')
   const [count, setCount] = useState(20)
+  const [regionUpdateSummary, setRegionUpdateSummary] = useState<ReputationRegionUpdateSummary | null>(null)
+  const [needRegionReload, setNeedRegionReload] = useState(false)
+  const [regionReloadState, setRegionReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const [cfRows, setCfRows] = useState<CloudflareResult[]>([])
   const [repRows, setRepRows] = useState<ReputationResult[]>([])
   const [jobId, setJobId] = useState('')
@@ -116,6 +123,7 @@ export function QualityPage() {
   const nodesSummary = useQuery({ queryKey: ['nodes-summary'], queryFn: getNodesSummary })
   const cfCache = useQuery({ queryKey: ['cf-cache'], queryFn: getCloudflareCache, enabled: false })
   const repCache = useQuery({ queryKey: ['rep-cache'], queryFn: getReputationCache, enabled: false })
+  const regionReloadStatus = useQuery({ queryKey: ['quality-region-reload-status'], queryFn: getReloadStatus, enabled: regionReloadState === 'reloading', refetchInterval: regionReloadState === 'reloading' ? 800 : false })
   const jobQuery = useQuery({ queryKey: ['quality-job', jobId], queryFn: () => getQualityJob(jobId), enabled: !!jobId })
   const jobResults = useQuery({ queryKey: ['quality-job-results', jobId, resultPage, resultPageSize], queryFn: () => getQualityJobResults(jobId, { page: resultPage, page_size: resultPageSize }), enabled: !!jobId })
   const sourceStats = (nodesSummary.data?.source_stats || {}) as Record<string, number>
@@ -141,6 +149,31 @@ export function QualityPage() {
     setResultPage(1)
   }
   const cfScan = useMutation({ mutationFn: () => checkCloudflare(region, scanCount, false, false, source), onSuccess: d => { showCacheMode(); setCfRows(safeRows<CloudflareResult>(d.data)); toast('CF 检测完成', 'ok') }, onError: e => toast(e instanceof Error ? e.message : 'CF 检测失败', 'error') })
+  const regionCalibrate = useMutation({
+    mutationFn: () => checkReputation(region, scanCount, false, false, source, true),
+    onSuccess: d => {
+      showCacheMode()
+      setRepRows(prev => mergeRepRows(prev, safeRows<ReputationResult>(d.data)))
+      setRegionUpdateSummary(d.region_updates || null)
+      setNeedRegionReload(Boolean(d.region_updates?.need_reload))
+      void nodesSummary.refetch()
+      toast(d.region_updates?.need_reload ? '出口地区校准完成，需要重载入池' : '出口地区校准完成', 'ok')
+    },
+    onError: e => toast(e instanceof Error ? e.message : '出口地区校准失败', 'error'),
+  })
+  const regionReload = useMutation({
+    mutationFn: reloadCore,
+    onSuccess: res => {
+      setRegionReloadState('reloading')
+      if (res.reload_status?.state === 'succeeded') {
+        setNeedRegionReload(false)
+        setRegionReloadState('idle')
+      }
+      void regionReloadStatus.refetch()
+      toast(res.started ? '地区校准重载已启动' : '已有重载任务在运行', 'ok')
+    },
+    onError: e => { setRegionReloadState('failed'); toast(e instanceof Error ? e.message : '重载启动失败', 'error') },
+  })
   const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: pipelineCount, include_unavailable: true }) })
   const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: pipelineCount, include_unavailable: true, retry_failed: true, replace: true }) })
   const cancelScan = useMutation({ mutationFn: () => cancelQualityJob(jobId), onSuccess: () => { void jobQuery.refetch(); void jobResults.refetch(); toast('后台任务已取消', 'ok') }, onError: e => toast(e instanceof Error ? e.message : '取消任务失败', 'error') })
@@ -194,6 +227,20 @@ export function QualityPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, terminalSyncedJobId, jobQuery.data?.status])
 
+  useEffect(() => {
+    const state = String(regionReloadStatus.data?.state || '')
+    if (regionReloadState !== 'reloading' || !state) return
+    if (state === 'succeeded') {
+      setNeedRegionReload(false)
+      setRegionReloadState('idle')
+      void nodesSummary.refetch()
+      toast(regionReloadStatus.data?.duration_ms ? `地区校准已重载入池（${regionReloadStatus.data.duration_ms}ms）` : '地区校准已重载入池', 'ok')
+    } else if (state === 'failed') {
+      setRegionReloadState('failed')
+      toast(regionReloadStatus.data?.error ? `地区校准重载失败：${regionReloadStatus.data.error}` : '地区校准重载失败', 'error')
+    }
+  }, [regionReloadState, regionReloadStatus.data?.state, regionReloadStatus.data?.duration_ms, regionReloadStatus.data?.error])
+
   const jobRows = useMemo(() => safeRows<QualityJobResult>(jobResults.data?.data), [jobResults.data?.data])
   const jobCfRows = useMemo(() => jobRows.map(cfFromJobRow), [jobRows])
   const jobRepRows = useMemo(() => jobRows.map(repFromJobRow), [jobRows])
@@ -230,7 +277,12 @@ export function QualityPage() {
     const auth = user || pass ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : ''
     return `http://${auth}${host}:${row.port || ''}`
   }
-  const extract = (row: CloudflareResult) => { setExtractorParams({ mode:'multi-port', region: (row.region || 'all') as never, format:'http_url', count:1, reveal:true }); setActiveTab('extractor'); toast('已带入代理提取页', 'ok') }
+  const extract = (row: CloudflareResult) => {
+    setExtractorParams({ mode:'multi-port', region: (row.region || 'all') as never, format:'http_url', count:1, reveal:true })
+    setActiveTab('extractor')
+    window.history.replaceState(null, '', '#extractor')
+    toast('已带入代理提取页', 'ok')
+  }
   const columns = useMemo<ColumnsType<QualityRow>>(() => [
     { title: '节点', dataIndex: 'node', width: 220, fixed: 'left', render: (_, item) => <div><strong>{item.row.node_name || item.row.node_tag || '-'}</strong><br/><span className="muted mono">{item.row.node_tag || ''}</span></div> },
     { title: '地区/端口', width: 110, render: (_, item) => `${regionLabel(item.row.region)}:${item.row.port || '-'}` },
@@ -252,7 +304,7 @@ export function QualityPage() {
     {jobId && jobQuery.isError && <QueryErrorBanner title="后台任务状态加载失败" error={jobQuery.error} onRetry={() => { void jobQuery.refetch() }} />}
     {jobId && jobResults.isError && <QueryErrorBanner title="后台任务结果加载失败" error={jobResults.error} onRetry={() => { void jobResults.refetch() }} />}
     <div className="card quality-control-card">
-      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测；同步 CF 抽样最多 50 个节点。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => { void startQualityJob(false) }}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canRetryPipeline || retryScan.isPending} onClick={() => { void startQualityJob(true) }}>{retryScan.isPending ? '重试中...' : jobRunning ? '替换当前任务并重试失败节点' : 'Pipeline 重试失败节点'}</Button><Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button><Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button></div></div>
+      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测；同步 CF 抽样最多 50 个节点。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => { void startQualityJob(false) }}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canRetryPipeline || retryScan.isPending} onClick={() => { void startQualityJob(true) }}>{retryScan.isPending ? '重试中...' : jobRunning ? '替换当前任务并重试失败节点' : 'Pipeline 重试失败节点'}</Button><Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button><Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button><Button disabled={!canRunSampleCheck || regionCalibrate.isPending} onClick={() => regionCalibrate.mutate()}>{regionCalibrate.isPending ? '校准中...' : '出口校准地区'}</Button><Button variant="primary" disabled={!needRegionReload || regionReload.isPending || regionReloadState === 'reloading'} onClick={() => regionReload.mutate()}>{regionReloadState === 'reloading' ? '重载中...' : '重载入池'}</Button></div></div>
       <div className="quality-filter-grid modern-filter-grid">
         <div className="field console-field">
           <label>地区范围</label>
@@ -279,6 +331,8 @@ export function QualityPage() {
           <Select className="console-select" aria-label="池筛选" value={poolFilter} onChange={setPoolFilter} options={[{ value: 'all', label: '全部池' }, { value: 'reject_pool', label: 'reject_pool' }, { value: 'rescue_pool', label: 'rescue_pool' }, { value: 'http_pool', label: 'http_pool' }, { value: 'web_pool', label: 'web_pool' }, { value: 'recommended_pool', label: 'recommended_pool' }, { value: 'strict_pool', label: 'strict_pool' }]} />
         </div>
       </div>
+      {regionUpdateSummary && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status" style={{ marginTop: 16 }}><div><strong>出口地区校准结果</strong><span>{regionUpdateText(regionUpdateSummary)}{needRegionReload ? '；需要重载入池后地区池才完全生效。' : '；当前无需重载。'}</span></div>{needRegionReload && <Button variant="primary" disabled={regionReload.isPending || regionReloadState === 'reloading'} onClick={() => regionReload.mutate()}>{regionReloadState === 'reloading' ? '重载中...' : '立即重载入池'}</Button>}</div>}
+      {regionReloadState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status" style={{ marginTop: 12 }}><div><strong>{regionReloadState === 'reloading' ? '代理核心正在后台重载' : '代理核心重载失败'}</strong><span>{regionReloadState === 'reloading' ? `已运行 ${Math.floor(Number(regionReloadStatus.data?.elapsed_ms || 0) / 1000)} 秒，完成后会自动清除待重载状态。` : regionReloadStatus.data?.error || '请检查日志后重试。'}</span></div></div>}
       {jobId && <div className="card" style={{ marginTop: 16 }}>
         <div className="panel-header"><div><div className="panel-title">后台质量检测任务</div><div className="panel-subtitle">{jobId} · {jobQuery.data?.status || 'queued'} · {jobQuery.data?.completed || 0}/{jobQuery.data?.total || 0}</div></div><div className="toolbar"><Button disabled={isTerminalJob(jobQuery.data) || cancelScan.isPending} onClick={() => cancelScan.mutate()}>{cancelScan.isPending ? '取消中...' : '取消任务'}</Button><Button disabled={jobProgressLoading} onClick={() => { void jobQuery.refetch(); void jobResults.refetch() }}>{jobProgressLoading ? '刷新中...' : '刷新进度'}</Button></div></div>
         <Progress percent={Math.round(jobQuery.data?.percent || 0)} status={jobQuery.data?.status === 'failed' ? 'exception' : jobQuery.data?.status === 'completed' ? 'success' : 'active'} />

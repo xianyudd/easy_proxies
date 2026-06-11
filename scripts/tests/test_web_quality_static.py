@@ -147,6 +147,13 @@ def test_quality_page_allows_retry_replace_while_job_is_running():
     assert "替换当前任务并重试失败节点" in text
 
 
+def test_quality_page_extract_action_keeps_hash_in_sync():
+    text = read(QUALITY_PAGE)
+    assert "setActiveTab('extractor')" in text
+    assert "window.history.replaceState(null, '', '#extractor')" in text
+    assert "已带入代理提取页" in text
+
+
 if __name__ == "__main__":
     test_api_client_parses_json_text_fallback_for_accepted_jobs()
     test_quality_page_validates_job_id_and_renders_job_panel_path()
@@ -164,3 +171,4 @@ if __name__ == "__main__":
     test_quality_page_sample_and_cache_refresh_exit_job_result_mode()
     test_quality_page_does_not_fallback_to_total_count_for_empty_source()
     test_quality_page_allows_retry_replace_while_job_is_running()
+    test_quality_page_extract_action_keeps_hash_in_sync()

@@ -1,5 +1,5 @@
 import { ApiError, api } from './client'
-import type { NodeSnapshot, NodesPage, NodesQuery, NodesSummary } from '../types/node'
+import type { ConfirmNodeRegionResponse, NodeSnapshot, NodesPage, NodesQuery, NodesSummary } from '../types/node'
 
 interface NodesResponse {
   nodes?: NodeSnapshot[]
@@ -74,3 +74,6 @@ export async function probeAllNodesStream() {
 export function probeNode(tag: string) { return api.post<{latency_ms?: number; error?: string}>(`/api/nodes/${encodeURIComponent(tag)}/probe`) }
 export function blacklistNode(tag: string) { return api.post(`/api/nodes/${encodeURIComponent(tag)}/blacklist`, { duration: '24h' }) }
 export function releaseNode(tag: string) { return api.post(`/api/nodes/${encodeURIComponent(tag)}/release`) }
+export function confirmNodeRegion(tag: string, region: string) {
+  return api.post<ConfirmNodeRegionResponse>(`/api/nodes/${encodeURIComponent(tag)}/region`, { region })
+}

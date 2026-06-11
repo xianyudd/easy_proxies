@@ -7,7 +7,7 @@ export function getExtractor(params: ExtractorParams) {
     mode: params.mode,
     format: params.format,
     count: String(params.count),
-    reveal: params.reveal ? '1' : '0',
+    reveal: params.reveal ? 'true' : 'false',
   })
   return api.get<ExtractorResponse>(`/api/extractor?${q.toString()}`)
 }

@@ -21,6 +21,12 @@ def test_cancellation_kills_and_reaps_subprocess():
     assert "await asyncio.shield(proc.communicate())" in cancel_block
 
 
+def test_curl_probe_does_not_bypass_explicit_proxy():
+    text = read_source()
+    assert '"--noproxy",\n        "",' in text
+    assert '"--noproxy",\n        "*",' not in text
+
+
 def test_concurrency_has_hard_cap():
     text = read_source()
     assert "MAX_CONCURRENCY = 80" in text
@@ -30,4 +36,5 @@ def test_concurrency_has_hard_cap():
 if __name__ == "__main__":
     test_timeout_kills_and_reaps_subprocess()
     test_cancellation_kills_and_reaps_subprocess()
+    test_curl_probe_does_not_bypass_explicit_proxy()
     test_concurrency_has_hard_cap()

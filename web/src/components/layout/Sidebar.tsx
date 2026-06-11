@@ -1,9 +1,10 @@
-import { Activity, FileSearch, Gauge, List, ServerCog, Settings, ShieldCheck, Wifi } from 'lucide-react'
+import { Activity, FileSearch, Gauge, List, MapPin, ServerCog, Settings, ShieldCheck, Wifi } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 
 const items = [
   ['extractor', FileSearch, '代理提取'],
   ['overview', List, '节点总览'],
+  ['review', MapPin, '待确认节点'],
   ['config', ServerCog, '节点配置'],
   ['quality', ShieldCheck, '节点质量'],
   ['status', Gauge, '运行状态'],
@@ -14,6 +15,7 @@ const items = [
 const tabHashes: Record<typeof items[number][0], string> = {
   extractor: 'extractor',
   overview: 'nodes',
+  review: 'region-review',
   config: 'config',
   quality: 'quality',
   status: 'status',

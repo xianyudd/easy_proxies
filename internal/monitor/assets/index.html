@@ -1230,7 +1230,7 @@
               <strong>日本 5 条</strong><span>JP 独立端口，适合固定节点使用</span>
             </button>
             <button class="extractor-quick-btn" onclick="runQuickExtract('geoip','us','http_url',1,true)">
-              <strong>美国地区池</strong><span>GeoIP /us/ 完整 URL</span>
+              <strong>美国地区池</strong><span>GeoIP 用户名选区 URL</span>
             </button>
             <button class="extractor-quick-btn" onclick="runQuickExtract('android','jp','adb_command',1,true)">
               <strong>Android JP</strong><span>无认证端口，复制 ADB 命令</span>
@@ -1269,7 +1269,7 @@
                   <select id="extractorMode" class="setting-input" onchange="handleExtractorModeChange()">
                     <option value="multi-port" selected>multi-port 独立节点 / 指纹浏览器推荐</option>
                     <option value="pool">默认池入口 / 长期通用</option>
-                    <option value="geoip">GeoIP 地区池 / 带路径 URL</option>
+                    <option value="geoip">GeoIP 地区池 / 用户名后缀 URL</option>
                     <option value="android">Android 无认证端口</option>
                   </select>
                 </div>
@@ -1930,7 +1930,7 @@
       geoip: {
         preferred: 'http_url',
         allowed: ['http_url', 'json'],
-        help: 'GeoIP 地区入口包含 /us/、/jp/ 这类路径，host:port:username:password 无法表达路径，所以只允许完整 URL 或 JSON。'
+        help: 'GeoIP 地区入口使用用户名后缀选区，例如 user-us:pass@host:port，所以只允许完整 URL 或 JSON。'
       },
       android: {
         preferred: 'host_port',
@@ -2001,7 +2001,7 @@
         hint.textContent = '当前是默认池入口：一个地址长期使用，适合 curl、Python requests、系统代理和常驻任务。';
         region.value = 'all';
       } else if (mode === 'geoip') {
-        hint.textContent = '当前是地区池入口：会输出带 /us/ /jp/ 的地区 URL，只用完整 URL 表达。';
+        hint.textContent = '当前是地区池入口：会输出带 user-us/user-jp 用户名后缀的地区 URL，请使用完整 URL。';
       } else if (mode === 'android') {
         hint.textContent = '当前是 Android 无认证端口：适合 adb reverse + Android 全局代理，不需要用户名密码。';
       } else {

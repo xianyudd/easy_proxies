@@ -28,6 +28,9 @@ def test_smoke_script_checks_auth_settings_reload_and_free_proxy_paths():
     assert '"/api/debug?summary_only=true"' in text
     assert '"/api/debug"' in text
     assert '"/api/logs"' in text
+    assert '"/api/logs?lines=20"' in text
+    assert '"/api/logs?lines=bad"' in text
+    assert 'invalid log lines should fail with structured error' in text
     assert '"nodes" not in summary' in text
     assert 'invalid debug summary_only should fail with structured error' in text
     assert "check_quality_paths" in text
@@ -49,8 +52,18 @@ def test_smoke_script_retries_reload_status_during_control_plane_rebind():
     text = read_source()
     assert "retry_connect" in text
     assert "urllib.error.URLError" in text
+    assert "connection failed" in text
     assert 'request(opener, "GET", "/api/reload/status", retry_connect=True)' in text
+    assert 'request(opener, "GET", "/api/free-proxy/refresh/status", retry_connect=True)' in text
     assert "time.sleep(0.5 * attempt)" in text
+
+
+def test_smoke_script_control_plane_requests_ignore_environment_proxies():
+    text = read_source()
+    assert "def make_control_opener" in text
+    assert "urllib.request.ProxyHandler({})" in text
+    assert "make_control_opener()" in text
+    assert "control-plane probes must always talk directly" in text
 
 
 def test_smoke_script_waits_for_webui_ready_before_checks():
@@ -97,9 +110,12 @@ def test_smoke_script_can_exercise_local_free_proxy_fixture_safely():
 def test_smoke_script_fixture_verifies_auto_reload_nodes_enter_runtime():
     text = read_source()
     assert "fetch_nodes_summary" in text
+    assert "\"/api/nodes?summary_only=true&availability=all\", retry_connect=True" in text
+    assert "wait_for_free_proxy_runtime_count" in text
+    assert "free proxy runtime count did not reach" in text
     assert "wait_for_reload_settled" in text
     assert '"auto_reload": True' in text
-    assert "fixture free proxy nodes did not enter runtime" in text
+    assert "fixture runtime total did not include fixture nodes" in text
     assert "fixture runtime loaded" in text
     assert "restored runtime did not return to baseline" in text
 
@@ -108,7 +124,32 @@ def test_smoke_script_uses_env_configurable_base_url_and_password():
     text = read_source()
     assert 'EP_SMOKE_BASE_URL' in text
     assert 'EP_SMOKE_PASSWORD' in text
-    assert 'runtime-partial-secret' in text
+    assert 'ep123' in text
+
+
+def test_smoke_script_has_help_without_waiting_for_webui():
+    text = read_source()
+    assert "def print_help()" in text
+    assert 'arg in {"-h", "--help"}' in text
+    assert "EP_SMOKE_FREE_PROXY_FIXTURE" in text
+    assert "return 0" in text
+
+
+def test_smoke_script_checks_proxy_auth_without_bypassing_proxy():
+    text = read_source()
+    assert "check_proxy_auth_runtime" in text
+    assert "curl_proxy_status" in text
+    assert "wait_for_listening_multi_port" in text
+    assert "wait_for_tcp_port" in text
+    assert "did not start listening" in text
+    assert "socket.create_connection" in text
+    assert "no listening multi-port endpoint found" in text
+    assert '"--noproxy",\n            "",' in text
+    assert '"--noproxy",\n            "*",' not in text
+    assert "should be rejected with 407" in text
+    assert "should pass auth gate" in text
+    assert "geoip_region_good" in text
+    assert "{listener_user}-us" in text
 
 
 def test_smoke_script_refuses_main_port_without_explicit_override():
@@ -128,8 +169,15 @@ def test_smoke_script_checks_config_node_crud_without_auto_reload():
     assert '"GET", "/api/nodes/config"' in text
     assert '"PUT", f"/api/nodes/config/{urllib.parse.quote(name)}"' in text
     assert '"DELETE", f"/api/nodes/config/{urllib.parse.quote(updated)}"' in text
+    assert 'f"/api/nodes/config/{urllib.parse.quote(updated)}", retry_connect=True' in text
+    assert '"POST", "/api/nodes/config", create_payload, retry_connect=True' in text
     assert 'create config node should require reload' in text
     assert 'config-nodes: create/update/list/delete require manual reload and cleaned up' in text
+    assert 'urllib.parse.quote(node_name)}", retry_connect=True' in text
+    assert '"POST", "/api/nodes/config", create_payload, retry_connect=True' in text
+    assert 'urllib.parse.quote(name)}", update_payload, retry_connect=True' in text
+    assert '"GET", "/api/nodes/config", retry_connect=True' in text
+    assert 'urllib.parse.quote(updated)}", retry_connect=True' in text
 
 
 if __name__ == "__main__":
@@ -143,4 +191,6 @@ if __name__ == "__main__":
     test_smoke_script_can_exercise_local_free_proxy_fixture_safely()
     test_smoke_script_fixture_verifies_auto_reload_nodes_enter_runtime()
     test_smoke_script_uses_env_configurable_base_url_and_password()
+    test_smoke_script_has_help_without_waiting_for_webui()
+    test_smoke_script_checks_proxy_auth_without_bypassing_proxy()
     test_smoke_script_refuses_main_port_without_explicit_override()

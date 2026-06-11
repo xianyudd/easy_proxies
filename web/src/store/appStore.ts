@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type Tab = 'extractor'|'overview'|'config'|'quality'|'status'|'settings'|'diagnostics'
+type Tab = 'extractor'|'overview'|'review'|'config'|'quality'|'status'|'settings'|'diagnostics'
 type Theme = 'dark'|'light'
 type AuthState = 'unknown'|'authenticated'|'unauthenticated'
 

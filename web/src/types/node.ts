@@ -1,6 +1,7 @@
 export interface NodeSnapshot {
   tag?: string
   name?: string
+  uri?: string
   region?: string
   country?: string
   source?: string
@@ -37,4 +38,10 @@ export interface NodesQuery {
   source?: string
   q?: string
   sort?: string
+}
+
+export interface ConfirmNodeRegionResponse {
+  message?: string
+  need_reload?: boolean
+  node?: NodeSnapshot
 }

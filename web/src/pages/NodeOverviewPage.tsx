@@ -8,25 +8,8 @@ import { DataTable } from '../components/ui/DataTable'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { useToast } from '../components/ui/Toast'
 import { copyToClipboard } from '../lib/clipboard'
+import { regionMeta } from '../components/charts/region'
 import type { NodeSnapshot } from '../types/node'
-
-const REGION_LABELS: Record<string, string> = {
-  all: '全部',
-  us: '美国',
-  jp: '日本',
-  hk: '香港',
-  sg: '新加坡',
-  tw: '台湾',
-  kr: '韩国',
-  in: '印度',
-  ae: '阿联酋',
-  ch: '瑞士',
-  au: '澳大利亚',
-  de: '德国',
-  gb: '英国',
-  ca: '加拿大',
-  other: '其他',
-}
 
 const SOURCE_LABELS: Record<string, string> = {
   all: '全部',
@@ -54,7 +37,7 @@ function statusLabel(node: NodeSnapshot) {
 
 function regionLabel(region?: string) {
   const code = String(region || 'other').toLowerCase()
-  return REGION_LABELS[code] || code.toUpperCase() || '-'
+  return regionMeta(code).label || code.toUpperCase() || '-'
 }
 
 function latencyLabel(value: unknown) {

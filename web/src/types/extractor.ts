@@ -1,4 +1,7 @@
-export type ExtractorRegion = 'all'|'us'|'jp'|'hk'|'sg'|'tw'|'kr'|'in'|'ae'|'ch'|'au'|'de'|'gb'|'ca'|'other'
+// Region codes are server-driven ISO-3166 alpha-2 values plus "all"/"other".
+// Keep this open instead of hardcoding a small union, otherwise newly supported
+// countries can appear in the selector but fail TypeScript-level plumbing.
+export type ExtractorRegion = string
 export type ExtractorMode = 'pool'|'geoip'|'multi-port'|'android'
 export type ExtractorFormat =
   | 'host_port'

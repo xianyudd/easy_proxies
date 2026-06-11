@@ -74,15 +74,15 @@ http://localhost:9091
 - 长期统一代理出口
 
 #### geoip region endpoint
-输出 GeoIP 路由入口，例如 `/us/`、`/jp/`。
+输出 GeoIP 路由入口，例如 `http://user-us:pass@host:port`、`http://user-jp:pass@host:port`。
 
 适合：
 - 按国家路由的请求
 - 需要“美国池 / 日本池 / 香港池”这种入口时
 
 注意：
-- 这种模式带 URL 路径
-- 只能导出为完整 URL 形式
+- 这种模式通过用户名后缀表达地区
+- 推荐导出为完整 URL 或 JSON，避免丢失认证和地区信息
 
 #### multi-port node list
 输出每个节点对应的本地独立端口。
@@ -197,18 +197,15 @@ http://<USERNAME>:<PASSWORD>@127.0.0.1:24000
 
 ## 重要格式说明
 
-### GeoIP 地域入口为什么只能用完整 URL？
+### GeoIP 地域入口为什么推荐完整 URL？
 
-因为这类入口带路径，例如：
+GeoIP 地区入口通过用户名后缀表达地区，例如：
 
 ```text
-http://<USERNAME>:<PASSWORD>@127.0.0.1:1221/us/
+http://<USERNAME>-us:<PASSWORD>@127.0.0.1:1221
 ```
 
-而以下格式无法表达 `/us/` 这种路径：
-
-- `host:port:username:password`
-- `username:password@host:port`
+虽然 `host:port:username:password` 也能表达认证信息，但完整 URL 更不容易丢失 scheme、认证和地区后缀；JSON 则适合程序化读取。
 
 因此在 geoip 模式下，如果你选了不兼容的格式，系统会自动切换为完整 URL 格式。
 
@@ -312,8 +309,8 @@ adb shell settings put global http_proxy 127.0.0.1:13001
 - 是否选择了适合客户端的格式
 - 是否需要完整 URL
 - 客户端是否支持用户名/密码认证
-- 是否误把带路径的 geoip 代理用成了不支持路径的格式
-- geoip 模式下只能使用完整 URL 或 JSON；页面会自动禁用不兼容格式
+- GeoIP 地区入口用户名是否带地区后缀，例如 `<USERNAME>-us`
+- geoip 模式推荐使用完整 URL 或 JSON；页面会自动禁用不兼容格式
 
 ### 5. 指纹浏览器该选什么
 建议：

@@ -8,6 +8,7 @@ import { Button } from './components/ui/Button'
 import { useToast } from './components/ui/Toast'
 import { ExtractorPage } from './pages/ExtractorPage'
 import { NodeOverviewPage } from './pages/NodeOverviewPage'
+import { RegionReviewPage } from './pages/RegionReviewPage'
 import { NodeConfigPage } from './pages/NodeConfigPage'
 import { QualityPage } from './pages/QualityPage'
 import { StatusPage } from './pages/StatusPage'
@@ -18,6 +19,8 @@ const hashTabMap = new Map<string, ReturnType<typeof useAppStore.getState>['acti
   ['#extractor', 'extractor'],
   ['#nodes', 'overview'],
   ['#overview', 'overview'],
+  ['#region-review', 'review'],
+  ['#unclassified', 'review'],
   ['#config', 'config'],
   ['#quality', 'quality'],
   ['#status', 'status'],
@@ -84,6 +87,7 @@ export default function App() {
   return <AppLayout>
     {activeTab === 'extractor' && <ExtractorPage />}
     {activeTab === 'overview' && <NodeOverviewPage />}
+    {activeTab === 'review' && <RegionReviewPage />}
     {activeTab === 'config' && <NodeConfigPage />}
     {activeTab === 'quality' && <QualityPage />}
     {activeTab === 'status' && <StatusPage />}

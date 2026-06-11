@@ -33,7 +33,11 @@ func Build(cfg *config.Config) (option.Options, error) {
 	var failedNodes []string
 	usedTags := make(map[string]int) // Track tag usage for uniqueness
 
-	// Initialize GeoIP lookup if enabled
+	// Initialize GeoIP lookup if enabled. Free-proxy nodes usually arrive as
+	// bare IP:port entries without country hints, so when a local database is
+	// already present we also use it for classification even if the GeoIP HTTP
+	// router itself is disabled. The optional classification path never
+	// downloads a database; it must not block startup/reload on network I/O.
 	var geoLookup *geoip.Lookup
 	if cfg.GeoIP.Enabled && cfg.GeoIP.DatabasePath != "" {
 		var err error
@@ -51,6 +55,14 @@ func Build(cfg *config.Config) (option.Options, error) {
 			log.Printf("⚠️  GeoIP database load failed: %v (region routing disabled)", err)
 		} else {
 			log.Printf("✅ GeoIP database loaded: %s", cfg.GeoIP.DatabasePath)
+		}
+	} else if cfg.GeoIP.DatabasePath != "" && hasNodeSource(cfg.Nodes, config.NodeSourceFreeProxy) {
+		var err error
+		geoLookup, err = geoip.OpenExisting(cfg.GeoIP.DatabasePath)
+		if err != nil {
+			log.Printf("⚠️  GeoIP database unavailable for free-proxy classification: %v (free-proxy region fallback uses labels/manual overrides)", err)
+		} else {
+			log.Printf("✅ GeoIP database loaded for free-proxy classification: %s", cfg.GeoIP.DatabasePath)
 		}
 	}
 
@@ -168,15 +180,8 @@ func Build(cfg *config.Config) (option.Options, error) {
 		// Collect results
 		for res := range results {
 			meta := metadata[res.tag]
-			resolvedRegion := res.region.Code
-			resolvedCountry := res.region.Country
-			if fallbackRegion := classifyRegionFromText(meta.Name + "\n" + meta.URI); fallbackRegion != "" && (resolvedRegion == "" || resolvedRegion == geoip.RegionOther) {
-				resolvedRegion = fallbackRegion
-				resolvedCountry = geoip.RegionName(fallbackRegion) + " (name matched)"
-			}
-			if resolvedRegion == "" {
-				resolvedRegion = geoip.RegionOther
-			}
+			overrideRegion, hasOverride := cfg.RegionOverrideForURI(meta.URI)
+			resolvedRegion, resolvedCountry := resolveRegionForNode(res.region, meta.Name+"\n"+res.tag+"\n"+meta.URI, overrideRegion, hasOverride)
 			meta.Region = resolvedRegion
 			meta.Country = resolvedCountry
 			metadata[res.tag] = meta
@@ -188,12 +193,17 @@ func Build(cfg *config.Config) (option.Options, error) {
 		// No GeoIP - use name/URI matching first, then fallback to "other"
 		for _, tag := range memberTags {
 			meta := metadata[tag]
-			resolvedRegion := classifyRegionFromText(meta.Name + "\n" + meta.URI)
+			resolvedRegion := classifyRegionFromText(meta.Name + "\n" + tag + "\n" + meta.URI)
 			if resolvedRegion == "" {
 				resolvedRegion = geoip.RegionOther
 			}
+			if overrideRegion, ok := cfg.RegionOverrideForURI(meta.URI); ok {
+				resolvedRegion = overrideRegion
+			}
 			meta.Region = resolvedRegion
-			if resolvedRegion == geoip.RegionOther {
+			if overrideRegion, ok := cfg.RegionOverrideForURI(meta.URI); ok {
+				meta.Country = geoip.RegionName(overrideRegion) + " (manual)"
+			} else if resolvedRegion == geoip.RegionOther {
 				meta.Country = "Unknown"
 			} else {
 				meta.Country = geoip.RegionName(resolvedRegion) + " (name matched)"
@@ -335,8 +345,10 @@ func Build(cfg *config.Config) (option.Options, error) {
 		}
 	}
 
-	// Build GeoIP region-based pool outbounds and routing
-	if cfg.GeoIP.Enabled && enablePoolInbound {
+	// Build region-based pool outbounds for GeoIP routing and Android
+	// per-region proxy ports. Android uses the same pool-{region} dialers even
+	// when the GeoIP HTTP router itself is disabled.
+	if cfg.GeoIP.Enabled || cfg.AndroidProxy.Enabled {
 		// Create pool outbound for each region that has nodes
 		for _, region := range geoip.AllRegions() {
 			members := regionMembers[region]
@@ -365,19 +377,22 @@ func Build(cfg *config.Config) (option.Options, error) {
 			})
 		}
 
-		// Log GeoIP routing info
-		geoipPort := cfg.GeoIP.Port
-		if geoipPort == 0 {
-			geoipPort = 1221 // Default GeoIP router port
+		if cfg.GeoIP.Enabled {
+			// Log GeoIP routing info
+			geoipPort := cfg.GeoIP.Port
+			if geoipPort == 0 {
+				geoipPort = 1221 // Default GeoIP router port
+			}
+			geoipListen := cfg.GeoIP.Listen
+			if geoipListen == "" {
+				geoipListen = cfg.Listener.Address
+			}
+			log.Println("🌐 GeoIP Region Routing Enabled:")
+			log.Printf("   Global access: http://%s:%d", geoipListen, geoipPort)
+			log.Println("   Region access: use username suffix, e.g. user-us:pass for US region")
+			log.Println("   Available region suffixes: jp, kr, us, hk, tw, sg, other")
+			log.Println("   Default (no suffix): all nodes pool")
 		}
-		geoipListen := cfg.GeoIP.Listen
-		if geoipListen == "" {
-			geoipListen = cfg.Listener.Address
-		}
-		log.Println("🌐 GeoIP Region Routing Enabled:")
-		log.Printf("   Access via: http://%s:%d/{region}", geoipListen, geoipPort)
-		log.Println("   Available regions: /jp, /kr, /us, /hk, /tw, /sg, /other")
-		log.Println("   Default (no path): all nodes pool")
 	}
 
 	opts := option.Options{
@@ -1438,7 +1453,42 @@ func printProxyLinks(cfg *config.Config, metadata map[string]poolout.MemberMeta)
 	log.Println("")
 }
 
+func resolveRegionForNode(geoRegion geoip.RegionInfo, labelText, overrideRegion string, hasOverride bool) (string, string) {
+	resolvedRegion := geoRegion.Code
+	resolvedCountry := geoRegion.Country
+
+	if labelRegion := classifyRegionFromText(labelText); labelRegion != "" {
+		resolvedRegion = labelRegion
+		resolvedCountry = geoip.RegionName(labelRegion) + " (name matched)"
+	}
+	if hasOverride {
+		resolvedRegion = overrideRegion
+		resolvedCountry = geoip.RegionName(overrideRegion) + " (manual)"
+	}
+	if resolvedRegion == "" {
+		resolvedRegion = geoip.RegionOther
+	}
+	if resolvedCountry == "" {
+		if resolvedRegion == geoip.RegionOther {
+			resolvedCountry = "Unknown"
+		} else {
+			resolvedCountry = geoip.RegionName(resolvedRegion)
+		}
+	}
+	return resolvedRegion, resolvedCountry
+}
+
+func hasNodeSource(nodes []config.NodeConfig, source config.NodeSource) bool {
+	for _, node := range nodes {
+		if node.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
 func classifyRegionFromText(text string) string {
+	text = stripRegionClassificationURIs(text)
 	candidate := strings.ToLower(strings.TrimSpace(text))
 	if candidate == "" {
 		return ""
@@ -1452,37 +1502,66 @@ func classifyRegionFromText(text string) string {
 		}
 	}
 
-	matchers := []struct {
-		region     string
-		keywords   []string
-		tokenCodes []string
-	}{
-		{region: geoip.RegionJP, keywords: []string{"日本", "japan", "tokyo", "东京", "osaka", "大阪"}, tokenCodes: []string{"jp"}},
-		{region: geoip.RegionKR, keywords: []string{"韩国", "korea", "seoul", "首尔"}, tokenCodes: []string{"kr"}},
-		{region: geoip.RegionUS, keywords: []string{"美国", "usa", "united states", "san jose", "ashburn", "los angeles", "圣何塞", "阿什本", "洛杉矶"}, tokenCodes: []string{"us"}},
-		{region: geoip.RegionHK, keywords: []string{"香港", "hong kong"}, tokenCodes: []string{"hk"}},
-		{region: geoip.RegionTW, keywords: []string{"台湾", "taiwan"}, tokenCodes: []string{"tw"}},
-		{region: geoip.RegionSG, keywords: []string{"新加坡", "singapore"}, tokenCodes: []string{"sg"}},
-		{region: geoip.RegionIN, keywords: []string{"印度", "india", "mumbai", "孟买", "delhi", "德里"}, tokenCodes: []string{"in"}},
-		{region: geoip.RegionAE, keywords: []string{"阿联酋", "uae", "united arab emirates", "dubai", "迪拜"}, tokenCodes: []string{"ae"}},
-		{region: geoip.RegionCH, keywords: []string{"瑞士", "switzerland", "zurich", "苏黎世"}, tokenCodes: []string{"ch"}},
-		{region: geoip.RegionAU, keywords: []string{"澳大利亚", "australia", "sydney", "悉尼", "melbourne", "墨尔本"}, tokenCodes: []string{"au"}},
-		{region: geoip.RegionDE, keywords: []string{"德国", "germany", "deutschland", "frankfurt", "法兰克福"}, tokenCodes: []string{"de"}},
-		{region: geoip.RegionGB, keywords: []string{"英国", "united kingdom", "great britain", "london", "伦敦"}, tokenCodes: []string{"gb", "uk"}},
-		{region: geoip.RegionCA, keywords: []string{"加拿大", "canada", "toronto", "多伦多", "vancouver", "温哥华", "montreal", "蒙特利尔"}, tokenCodes: []string{"ca"}},
+	cityAliases := map[string][]string{
+		geoip.RegionJP: {"tokyo", "东京", "osaka", "大阪"},
+		geoip.RegionKR: {"seoul", "首尔"},
+		geoip.RegionUS: {"san jose", "ashburn", "los angeles", "圣何塞", "阿什本", "洛杉矶"},
+		geoip.RegionIN: {"mumbai", "孟买", "delhi", "德里"},
+		geoip.RegionAE: {"dubai", "迪拜"},
+		geoip.RegionCH: {"zurich", "苏黎世"},
+		geoip.RegionAU: {"sydney", "悉尼", "melbourne", "墨尔本"},
+		geoip.RegionDE: {"frankfurt", "法兰克福"},
+		geoip.RegionGB: {"london", "伦敦"},
+		geoip.RegionCA: {"toronto", "多伦多", "vancouver", "温哥华", "montreal", "蒙特利尔"},
+		geoip.RegionFR: {"paris", "巴黎"},
+		geoip.RegionVN: {"hanoi", "河内", "ho chi minh", "胡志明"},
+		geoip.RegionRU: {"moscow", "莫斯科"},
+		geoip.RegionUA: {"kyiv", "kiev", "基辅"},
+		geoip.RegionTR: {"istanbul", "伊斯坦布尔"},
+		geoip.RegionNG: {"lagos", "拉各斯"},
 	}
 
-	for _, matcher := range matchers {
-		for _, keyword := range matcher.keywords {
-			if strings.Contains(candidate, keyword) {
-				return matcher.region
+	for _, region := range geoip.AllRegions() {
+		if region == geoip.RegionOther {
+			continue
+		}
+		if _, ok := tokens[region]; ok {
+			return region
+		}
+		for _, alias := range geoip.RegionAliases(region) {
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias != "" && strings.Contains(candidate, alias) {
+				return region
 			}
 		}
-		for _, tokenCode := range matcher.tokenCodes {
-			if _, ok := tokens[tokenCode]; ok {
-				return matcher.region
+		for _, alias := range cityAliases[region] {
+			if strings.Contains(candidate, alias) {
+				return region
 			}
 		}
 	}
 	return ""
+}
+
+func stripRegionClassificationURIs(text string) string {
+	parts := strings.Fields(text)
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.Contains(part, "://") {
+			if u, err := url.Parse(part); err == nil {
+				fragment := strings.TrimSpace(u.Fragment)
+				if fragment == "" {
+					if decoded, decodeErr := url.QueryUnescape(u.EscapedFragment()); decodeErr == nil {
+						fragment = strings.TrimSpace(decoded)
+					}
+				}
+				if fragment != "" {
+					kept = append(kept, fragment)
+				}
+			}
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return strings.Join(kept, " ")
 }

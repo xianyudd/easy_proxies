@@ -3,6 +3,8 @@ package reputation
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -62,5 +64,36 @@ func TestCheckerRejectsInvalidIP(t *testing.T) {
 	checker := NewChecker(WithProviders(&stubProvider{name: "stub", res: &Result{}}))
 	if _, err := checker.LookupIP(context.Background(), "not-an-ip"); err == nil {
 		t.Fatal("expected invalid ip error")
+	}
+}
+
+func TestCheckerExitIPViaProxyFallsBackAcrossEndpoints(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		switch r.URL.Path {
+		case "/bad":
+			http.Error(w, "bad endpoint", http.StatusBadGateway)
+		case "/good":
+			_, _ = w.Write([]byte(`{"ip":"203.0.113.10"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	checker := NewChecker(
+		WithExitIPEndpoints(server.URL+"/bad", server.URL+"/good"),
+		WithTimeout(time.Second),
+	)
+	ip, _, err := checker.ExitIPViaProxy(context.Background(), "")
+	if err != nil {
+		t.Fatalf("exit IP lookup should fall back to second endpoint: %v", err)
+	}
+	if ip != "203.0.113.10" {
+		t.Fatalf("unexpected exit IP %q", ip)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected both endpoints to be attempted, got %d calls", calls.Load())
 	}
 }

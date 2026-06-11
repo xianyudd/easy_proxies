@@ -52,9 +52,9 @@ socks5://<USERNAME>:<PASSWORD>@127.0.0.1:2323
 适合按国家/地区走池。
 
 ```text
-http://<USERNAME>:<PASSWORD>@127.0.0.1:1221/jp/
-http://<USERNAME>:<PASSWORD>@127.0.0.1:1221/us/
-http://<USERNAME>:<PASSWORD>@127.0.0.1:1221/hk/
+http://<USERNAME>-jp:<PASSWORD>@127.0.0.1:1221
+http://<USERNAME>-us:<PASSWORD>@127.0.0.1:1221
+http://<USERNAME>-hk:<PASSWORD>@127.0.0.1:1221
 ```
 
 支持区域：
@@ -132,10 +132,10 @@ curl -s 'http://127.0.0.1:9091/api/extractor?region=jp&mode=geoip&format=http_ur
 curl -x 'http://<USERNAME>:<PASSWORD>@127.0.0.1:2323' https://api.ipify.org
 ```
 
-日本地区池：
+日本地区池（通过用户名后缀选区，例如 `<USERNAME>-jp`）：
 
 ```bash
-curl -x 'http://<USERNAME>:<PASSWORD>@127.0.0.1:1221/jp/' https://api.ipify.org
+curl -x 'http://<USERNAME>-jp:<PASSWORD>@127.0.0.1:1221' https://api.ipify.org
 ```
 
 Android 无认证日本端口：
@@ -153,12 +153,12 @@ proxies = {
 }
 ```
 
-地区池：
+地区池（通过用户名后缀选区，例如 `<USERNAME>-jp`）：
 
 ```python
 proxies = {
-    "http": "http://<USERNAME>:<PASSWORD>@127.0.0.1:1221/jp/",
-    "https": "http://<USERNAME>:<PASSWORD>@127.0.0.1:1221/jp/",
+    "http": "http://<USERNAME>-jp:<PASSWORD>@127.0.0.1:1221",
+    "https": "http://<USERNAME>-jp:<PASSWORD>@127.0.0.1:1221",
 }
 ```
 

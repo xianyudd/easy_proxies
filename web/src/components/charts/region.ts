@@ -1,21 +1,23 @@
+import { ISO3166_COUNTRIES, ISO3166_COUNTRY_BY_CODE } from '../../data/iso3166'
+
+const COLORS = ['#3b82f6', '#ef4444', '#f97316', '#10b981', '#14b8a6', '#8b5cf6', '#f59e0b', '#22c55e', '#dc2626', '#06b6d4', '#eab308', '#6366f1', '#f43f5e', '#0ea5e9', '#84cc16', '#a855f7', '#ec4899', '#64748b']
+
 export const REGION_META: Record<string, { label: string; emoji: string; color: string }> = {
   all: { label: '全部', emoji: '🌐', color: '#64748b' },
-  us: { label: '美国', emoji: '🇺🇸', color: '#3b82f6' },
-  jp: { label: '日本', emoji: '🇯🇵', color: '#ef4444' },
-  hk: { label: '香港', emoji: '🇭🇰', color: '#f97316' },
-  sg: { label: '新加坡', emoji: '🇸🇬', color: '#10b981' },
-  tw: { label: '台湾', emoji: '🇹🇼', color: '#14b8a6' },
-  kr: { label: '韩国', emoji: '🇰🇷', color: '#8b5cf6' },
-  in: { label: '印度', emoji: '🇮🇳', color: '#f59e0b' },
-  ae: { label: '阿联酋', emoji: '🇦🇪', color: '#22c55e' },
-  ch: { label: '瑞士', emoji: '🇨🇭', color: '#dc2626' },
-  au: { label: '澳大利亚', emoji: '🇦🇺', color: '#06b6d4' },
-  de: { label: '德国', emoji: '🇩🇪', color: '#eab308' },
-  gb: { label: '英国', emoji: '🇬🇧', color: '#6366f1' },
-  ca: { label: '加拿大', emoji: '🇨🇦', color: '#f43f5e' },
+  ...Object.fromEntries(ISO3166_COUNTRIES.map((item, index) => [item.code, { label: item.label, emoji: item.emoji, color: COLORS[index % COLORS.length] }])),
   other: { label: '其他', emoji: '🧩', color: '#94a3b8' },
 }
 
+export const REGION_OPTIONS = [
+  { value: 'all', label: '全部(all)' },
+  ...ISO3166_COUNTRIES.map(item => ({ value: item.code, label: `${item.label}(${item.code})` })),
+  { value: 'other', label: '其他(other)' },
+]
+
+export const MANUAL_REGION_OPTIONS = ISO3166_COUNTRIES.map(item => ({ value: item.code, label: `${item.label}(${item.code})` }))
+
 export function regionMeta(code?: string) {
-  return REGION_META[String(code || 'other').toLowerCase()] || REGION_META.other
+  const key = String(code || 'other').toLowerCase()
+  const fromIso = ISO3166_COUNTRY_BY_CODE[key]
+  return REGION_META[key] || (fromIso ? { label: fromIso.label, emoji: fromIso.emoji, color: '#64748b' } : REGION_META.other)
 }

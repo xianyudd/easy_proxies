@@ -68,29 +68,29 @@ curl -x http://<USERNAME>:<PASSWORD>@127.0.0.1:2323 https://api.ipify.org
 
 只有在 `geoip.enabled: true` 且已配置 GeoIP 监听端口时，这些入口才可用。
 
-格式：
+格式（标准 curl、requests、浏览器扩展、系统代理均适用）：
 
 ```text
-http://<USERNAME>:<PASSWORD>@127.0.0.1:<GEOIP_PORT>/<REGION>/
+http://<USERNAME>-<REGION>:<PASSWORD>@127.0.0.1:<GEOIP_PORT>
 ```
 
 示例：
 
-- US：`/us/`
-- JP：`/jp/`
-- HK：`/hk/`
-- SG：`/sg/`
-- DE：`/de/`
-- GB：`/gb/`
-- CA：`/ca/`
+- US：`http://<USERNAME>-us:<PASSWORD>@127.0.0.1:<GEOIP_PORT>`
+- JP：`http://<USERNAME>-jp:<PASSWORD>@127.0.0.1:<GEOIP_PORT>`
+- HK：`http://<USERNAME>-hk:<PASSWORD>@127.0.0.1:<GEOIP_PORT>`
+- SG：`http://<USERNAME>-sg:<PASSWORD>@127.0.0.1:<GEOIP_PORT>`
+- DE：`http://<USERNAME>-de:<PASSWORD>@127.0.0.1:<GEOIP_PORT>`
+- GB：`http://<USERNAME>-gb:<PASSWORD>@127.0.0.1:<GEOIP_PORT>`
+- CA：`http://<USERNAME>-ca:<PASSWORD>@127.0.0.1:<GEOIP_PORT>`
 
 验证示例：
 
 ```bash
-curl -x http://<USERNAME>:<PASSWORD>@127.0.0.1:<GEOIP_PORT>/us/ https://api.ipify.org
+curl -x http://<USERNAME>-us:<PASSWORD>@127.0.0.1:<GEOIP_PORT> https://api.ipify.org
 ```
 
-如果当前没启用 GeoIP，则这些入口不存在。
+不要使用 `http://<USERNAME>:<PASSWORD>@127.0.0.1:<GEOIP_PORT>/us/` 作为标准代理 URL；多数客户端不会把这个 path 传给代理服务端。如果当前没启用 GeoIP，则这些入口不存在。
 
 ## 7. 使用多端口代理
 

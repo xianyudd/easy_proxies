@@ -27,27 +27,28 @@ import (
 
 // Config describes the high level settings for the proxy pool server.
 type Config struct {
-	Mode                string                    `yaml:"mode"`
-	Listener            ListenerConfig            `yaml:"listener"`
-	MultiPort           MultiPortConfig           `yaml:"multi_port"`
-	AndroidProxy        AndroidProxyConfig        `yaml:"android_proxy"`
-	Pool                PoolConfig                `yaml:"pool"`
-	Management          ManagementConfig          `yaml:"management"`
-	SubscriptionRefresh SubscriptionRefreshConfig `yaml:"subscription_refresh"`
-	QualityCheck        QualityCheckConfig        `yaml:"quality_check"`
-	GeoIP               GeoIPConfig               `yaml:"geoip"`
-	Log                 LogConfig                 `yaml:"log"`
-	Nodes               []NodeConfig              `yaml:"nodes"`
-	FreeProxySources    []nodesource.SourceConfig `yaml:"free_proxy_sources"`
-	FreeProxyMaxNodes   int                       `yaml:"free_proxy_max_nodes"`
-	FreeProxyFilter     nodesource.FilterConfig   `yaml:"free_proxy_filter"`
-	FreeProxyCache      FreeProxyCacheConfig      `yaml:"free_proxy_cache"`
-	NodesFile           string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
-	Subscriptions       []string                  `yaml:"subscriptions"` // 订阅链接列表
-	ExternalIP          string                    `yaml:"external_ip"`   // 外部 IP 地址，用于导出时替换 0.0.0.0
-	LogLevel            string                    `yaml:"log_level"`
-	SkipCertVerify      bool                      `yaml:"skip_cert_verify"` // 全局跳过 SSL 证书验证
-	UpstreamProxy       string                    `yaml:"upstream_proxy"`   // Optional SOCKS/HTTP proxy used as sing-box outbound detour
+	Mode                  string                    `yaml:"mode"`
+	Listener              ListenerConfig            `yaml:"listener"`
+	MultiPort             MultiPortConfig           `yaml:"multi_port"`
+	AndroidProxy          AndroidProxyConfig        `yaml:"android_proxy"`
+	Pool                  PoolConfig                `yaml:"pool"`
+	Management            ManagementConfig          `yaml:"management"`
+	SubscriptionRefresh   SubscriptionRefreshConfig `yaml:"subscription_refresh"`
+	QualityCheck          QualityCheckConfig        `yaml:"quality_check"`
+	GeoIP                 GeoIPConfig               `yaml:"geoip"`
+	Log                   LogConfig                 `yaml:"log"`
+	Nodes                 []NodeConfig              `yaml:"nodes"`
+	FreeProxySources      []nodesource.SourceConfig `yaml:"free_proxy_sources"`
+	FreeProxyMaxNodes     int                       `yaml:"free_proxy_max_nodes"`
+	FreeProxyFilter       nodesource.FilterConfig   `yaml:"free_proxy_filter"`
+	FreeProxyCache        FreeProxyCacheConfig      `yaml:"free_proxy_cache"`
+	ManualRegionOverrides map[string]string         `yaml:"manual_region_overrides"`
+	NodesFile             string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
+	Subscriptions         []string                  `yaml:"subscriptions"` // 订阅链接列表
+	ExternalIP            string                    `yaml:"external_ip"`   // 外部 IP 地址，用于导出时替换 0.0.0.0
+	LogLevel              string                    `yaml:"log_level"`
+	SkipCertVerify        bool                      `yaml:"skip_cert_verify"` // 全局跳过 SSL 证书验证
+	UpstreamProxy         string                    `yaml:"upstream_proxy"`   // Optional SOCKS/HTTP proxy used as sing-box outbound detour
 
 	filePath string `yaml:"-"` // 配置文件路径，用于保存
 }
@@ -462,6 +463,58 @@ func canonicalNodeURI(uri string) string {
 	return strings.ToLower(strings.TrimSpace(uri))
 }
 
+// RegionOverrideForURI returns a manual region override for the given URI.
+func (c *Config) RegionOverrideForURI(uri string) (string, bool) {
+	if c == nil || len(c.ManualRegionOverrides) == 0 {
+		return "", false
+	}
+	key := canonicalNodeURI(uri)
+	if key == "" {
+		return "", false
+	}
+	region, ok := c.ManualRegionOverrides[key]
+	region = strings.ToLower(strings.TrimSpace(region))
+	if !ok || region == "" {
+		return "", false
+	}
+	return region, true
+}
+
+// SetRegionOverride stores a manual region override keyed by canonical URI.
+func (c *Config) SetRegionOverride(uri, region string) {
+	if c == nil {
+		return
+	}
+	key := canonicalNodeURI(uri)
+	region = strings.ToLower(strings.TrimSpace(region))
+	if key == "" || region == "" {
+		return
+	}
+	if c.ManualRegionOverrides == nil {
+		c.ManualRegionOverrides = make(map[string]string)
+	}
+	c.ManualRegionOverrides[key] = region
+}
+
+// RemoveRegionOverride removes a manual region override keyed by canonical URI.
+func (c *Config) RemoveRegionOverride(uri string) bool {
+	if c == nil || len(c.ManualRegionOverrides) == 0 {
+		return false
+	}
+	key := canonicalNodeURI(uri)
+	if key == "" {
+		return false
+	}
+	if _, ok := c.ManualRegionOverrides[key]; !ok {
+		return false
+	}
+	delete(c.ManualRegionOverrides, key)
+	if len(c.ManualRegionOverrides) == 0 {
+		c.ManualRegionOverrides = nil
+	}
+	return true
+}
+
 // ExtractNodeName extracts a human-readable name from a proxy URI.
 // For standard URIs (vless://, ss://, trojan://), it extracts from the URL fragment (#name).
 // For vmess:// URIs, it base64-decodes the payload and extracts the "ps" field.
@@ -494,7 +547,10 @@ func ExtractNodeName(uri string) string {
 				return strings.TrimSpace(vmess.PS)
 			}
 		}
-		return ""
+		// Some Clash exports and lightweight subscriptions use a URL-like
+		// vmess://uuid@host:port#name form instead of base64 JSON. Fall through
+		// to the generic fragment extractor so metadata placeholders can still be
+		// detected and user-facing names remain visible.
 	}
 
 	// For standard URIs, extract from URL fragment (#name)
@@ -1034,6 +1090,9 @@ func plainTextSubscriptionProxyURI(line string) bool {
 	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
 		return false
 	}
+	if isSubscriptionMetadataNode(line) {
+		return false
+	}
 	return IsProxyURI(line)
 }
 
@@ -1063,6 +1122,47 @@ func parseNodesFromContentWith(content string, validURI func(string) bool) ([]No
 	}
 
 	return nodes, nil
+}
+
+func isSubscriptionMetadataName(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return false
+	}
+	if strings.Contains(name, "套餐") || strings.Contains(name, "到期") {
+		return true
+	}
+	if strings.Contains(name, "流量") && strings.Contains(name, "剩余") {
+		return true
+	}
+	if strings.Contains(name, "重置") && (strings.Contains(name, "剩余") || strings.Contains(name, "下次") || strings.Contains(name, "距离")) {
+		return true
+	}
+	if strings.Contains(name, "expire") || strings.Contains(name, "expired") || strings.Contains(name, "traffic") || strings.Contains(name, "reset") {
+		return true
+	}
+	return false
+}
+
+func isSubscriptionMetadataNode(uri string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(uri))
+	if err != nil {
+		return false
+	}
+	name := ExtractNodeName(uri)
+	if isSubscriptionMetadataName(name) {
+		return true
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return false
+	}
+	for _, keyword := range []string{"套餐", "到期", "重置", "剩余", "流量", "expire", "reset", "traffic"} {
+		if strings.Contains(strings.ToLower(name), keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 // isBase64 checks if a string looks like base64 encoded content (optimized version)
@@ -1198,6 +1298,9 @@ func parseClashYAML(content string) ([]NodeConfig, error) {
 	for _, proxy := range clash.Proxies {
 		uri := convertClashProxyToURI(proxy)
 		if uri != "" {
+			if isSubscriptionMetadataName(proxy.Name) || isSubscriptionMetadataNode(uri) {
+				continue
+			}
 			nodes = append(nodes, NodeConfig{
 				Name: proxy.Name,
 				URI:  uri,
@@ -1554,6 +1657,7 @@ func (c *Config) SaveNodes() error {
 		}
 		// Update only the inline nodes
 		saveCfg.Nodes = inlineNodes
+		saveCfg.ManualRegionOverrides = c.ManualRegionOverrides
 
 		newData, err := yaml.Marshal(&saveCfg)
 		if err != nil {
@@ -1604,6 +1708,7 @@ func (c *Config) SaveSettings() error {
 	saveCfg.FreeProxyMaxNodes = c.FreeProxyMaxNodes
 	saveCfg.FreeProxyFilter = c.FreeProxyFilter
 	saveCfg.FreeProxyCache = c.FreeProxyCache
+	saveCfg.ManualRegionOverrides = c.ManualRegionOverrides
 	saveCfg.GeoIP = c.GeoIP
 	saveCfg.Mode = c.Mode
 	saveCfg.Listener = c.Listener
@@ -1712,7 +1817,8 @@ func (c *Config) RefreshFreeProxyCacheSummary(ctx context.Context) (FreeProxyCac
 	}
 
 	signature := c.freeProxyCacheSignature(cache)
-	if count, fresh := freshCachedFreeProxyNodeCount(cache.Path, cache.MaxAge, time.Now()); fresh && count > 0 && freeProxyCacheSignatureMatches(cache.Path, signature) {
+	cacheSignatureMatches := freeProxyCacheSignatureMatches(cache.Path, signature)
+	if count, fresh := freshCachedFreeProxyNodeCount(cache.Path, cache.MaxAge, time.Now()); fresh && count > 0 && cacheSignatureMatches {
 		log.Printf("ℹ️ Free proxy cache %q is fresh; reusing %d cached nodes without remote refresh", cache.Path, count)
 		return FreeProxyCacheRefreshSummary{Count: count, CacheUpdated: false, Sources: sourceRefreshResults(c.FreeProxySources, nil)}, nil
 	}
@@ -1821,9 +1927,12 @@ func (c *Config) RefreshFreeProxyCacheSummary(ctx context.Context) (FreeProxyCac
 		return FreeProxyCacheRefreshSummary{Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, fmt.Errorf("create free proxy cache dir: %w", err)
 	}
 	if len(accepted) == 0 {
-		if count, err := countCachedFreeProxyNodes(cache.Path); err == nil && count > 0 {
+		if count, err := countCachedFreeProxyNodes(cache.Path); err == nil && count > 0 && cacheSignatureMatches {
 			log.Printf("ℹ️ Free proxy refresh accepted no new candidates; reusing existing cache %q with %d nodes", cache.Path, count)
 			return FreeProxyCacheRefreshSummary{Count: count, CacheUpdated: false, Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, nil
+		}
+		if count, err := countCachedFreeProxyNodes(cache.Path); err == nil && count > 0 {
+			return FreeProxyCacheRefreshSummary{Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, errors.New("no free proxy candidates accepted; existing cache signature does not match current config")
 		}
 		return FreeProxyCacheRefreshSummary{Sources: sourceRefreshResults(c.FreeProxySources, byIndex)}, errors.New("no free proxy candidates accepted; existing cache preserved")
 	}

@@ -57,6 +57,12 @@ def test_node_config_page_handles_crud_need_reload_and_reload_polling():
     assert "uri" in page and "name" in page
 
 
+def test_node_config_row_actions_have_stable_accessible_labels():
+    page = read(PAGE)
+    assert 'aria-label={`编辑节点 ${name}`}' in page
+    assert 'aria-label={confirmDeleteName === name ? `确认删除节点 ${name}` : `删除节点 ${name}`}' in page
+
+
 def test_node_config_page_filters_paginates_and_wraps_long_uri():
     page = read(PAGE)
     assert "searchTerm" in page
@@ -96,6 +102,7 @@ def test_node_config_page_defends_non_array_nodes_payload():
 
 
 if __name__ == "__main__":
+    test_node_config_row_actions_have_stable_accessible_labels()
     test_node_config_page_is_routable_from_react_shell()
     test_node_config_api_client_covers_crud_and_reload()
     test_node_config_page_handles_crud_need_reload_and_reload_polling()

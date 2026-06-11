@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -25,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"easy_proxies/internal/androidports"
 	"easy_proxies/internal/cloudflarecheck"
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
@@ -291,6 +293,33 @@ func isAllowedPoolMode(mode string) bool {
 	}
 }
 
+func isAllowedFreeProxySourceFormat(format string) bool {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "auto", "txt", "text", "plain", "json":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedFreeProxyDefaultScheme(scheme string) bool {
+	switch strings.ToLower(strings.TrimSpace(scheme)) {
+	case "", "http", "https", "socks4", "socks5":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedFreeProxyMinTier(tier string) bool {
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "", "http_basic", "http_basic_only", "simple_web", "simple_web_scraping", "web", "recommended", "general_web":
+		return true
+	default:
+		return false
+	}
+}
+
 func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) ([]nodesource.SourceConfig, error) {
 	out := make([]nodesource.SourceConfig, 0, len(in))
 	for _, item := range in {
@@ -313,6 +342,15 @@ func sourceConfigsFromRequest(in []nodesourceSourceConfigRequest) ([]nodesource.
 		}
 		if label == "" {
 			label = cfg.File
+		}
+		if cfg.EnabledValue() && cfg.URL == "" && cfg.File == "" {
+			return nil, fmt.Errorf("免费代理源 %q 启用时必须填写 URL 或文件路径", label)
+		}
+		if !isAllowedFreeProxySourceFormat(cfg.Format) {
+			return nil, fmt.Errorf("免费代理源 %q 的 format 不支持: %s", label, cfg.Format)
+		}
+		if !isAllowedFreeProxyDefaultScheme(cfg.DefaultScheme) {
+			return nil, fmt.Errorf("免费代理源 %q 的 default_scheme 不支持: %s", label, cfg.DefaultScheme)
 		}
 		if item.Timeout.Set {
 			if item.Timeout.Duration <= 0 {
@@ -572,6 +610,7 @@ func (s *Server) SetConfig(cfg *config.Config) {
 	if cfg != nil {
 		s.cfg.ExternalIP = cfg.ExternalIP
 		s.cfg.ProbeTarget = cfg.Management.ProbeTarget
+		s.cfg.Password = cfg.Management.Password
 		s.cfg.SkipCertVerify = cfg.SkipCertVerify
 		// Sync proxy credentials based on mode
 		if cfg.Mode == "multi-port" || cfg.Mode == "hybrid" {
@@ -911,6 +950,26 @@ func (s *Server) currentFreeProxyRefreshStatus() freeProxyRefreshStatus {
 	return s.enrichFreeProxyRefreshStatus(status)
 }
 
+func (s *Server) setFreeProxyRefreshStatus(status freeProxyRefreshStatus) freeProxyRefreshStatus {
+	s.freeProxyRefreshMu.Lock()
+	if s.freeProxyRefreshStatus.State != "running" {
+		s.freeProxyRefreshStatus = status
+		s.freeProxyRefreshPending = false
+		s.freeProxyRefreshPendingBy = ""
+		status.Pending = false
+		status.PendingRequestedBy = ""
+	} else {
+		status = s.freeProxyRefreshStatus
+		status.Pending = s.freeProxyRefreshPending
+		status.PendingRequestedBy = s.freeProxyRefreshPendingBy
+	}
+	s.freeProxyRefreshMu.Unlock()
+	if status.State == "" {
+		status.State = "idle"
+	}
+	return s.enrichFreeProxyRefreshStatus(status)
+}
+
 func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStatus, bool, error) {
 	s.cfgMu.RLock()
 	cfg := freeProxyRefreshConfigSnapshot(s.cfgSrc)
@@ -920,16 +979,16 @@ func (s *Server) startFreeProxyRefresh(requestedBy string) (freeProxyRefreshStat
 	}
 	if len(cfg.FreeProxySources) == 0 {
 		status := freeProxyRefreshStatus{State: "idle", RequestedBy: requestedBy}
-		return s.enrichFreeProxyRefreshStatus(status), false, nil
+		return s.setFreeProxyRefreshStatus(status), false, nil
 	}
 	cache := cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)
 	if !cache.EnabledValue() {
 		status := freeProxyRefreshStatus{State: "disabled", RequestedBy: requestedBy}
-		return s.enrichFreeProxyRefreshStatus(status), false, nil
+		return s.setFreeProxyRefreshStatus(status), false, nil
 	}
 	if !hasEnabledFreeProxySourceConfigs(cfg.FreeProxySources) {
 		status := freeProxyRefreshStatus{State: "idle", RequestedBy: requestedBy}
-		return s.enrichFreeProxyRefreshStatus(status), false, nil
+		return s.setFreeProxyRefreshStatus(status), false, nil
 	}
 	signature := freeProxyRefreshSignature(cfg)
 
@@ -1510,7 +1569,8 @@ func nodesPagedMode(q url.Values) bool {
 	}
 	recognized := map[string]struct{}{
 		"page": {}, "page_size": {}, "region": {}, "availability": {},
-		"latency": {}, "source": {}, "q": {}, "sort": {}, "summary_only": {},
+		"latency": {}, "source": {}, "q": {}, "search": {}, "keyword": {},
+		"available": {}, "sort": {}, "summary_only": {},
 	}
 	for key := range q {
 		if _, ok := recognized[key]; ok {
@@ -1599,10 +1659,15 @@ func validateNodeListQuery(q url.Values) (string, bool) {
 	if !isAllowedQueryValue(q.Get("availability"), "", "all", "available", "healthy", "unavailable", "failed", "blacklisted", "unchecked") {
 		return "invalid_availability", false
 	}
+	if q.Get("availability") == "" && strings.TrimSpace(q.Get("available")) != "" {
+		if _, ok := parseOptionalBoolParam(q, "available"); !ok {
+			return "invalid_availability", false
+		}
+	}
 	if !isAllowedQueryValue(q.Get("latency"), "", "all", "tested", "untested", "fast", "slow") {
 		return "invalid_latency", false
 	}
-	if !isAllowedQueryValue(q.Get("sort"), "", "latency", "name", "region", "source", "latency_desc") {
+	if !isAllowedQueryValue(q.Get("sort"), "", "port", "latency", "name", "region", "source", "latency_desc") {
 		return "invalid_sort", false
 	}
 	return "", true
@@ -1621,9 +1686,9 @@ func isAllowedQueryValue(raw string, allowed ...string) bool {
 func filterNodeSnapshots(nodes []Snapshot, q url.Values) []Snapshot {
 	region := strings.ToLower(strings.TrimSpace(q.Get("region")))
 	source := strings.ToLower(strings.TrimSpace(q.Get("source")))
-	availability := strings.ToLower(strings.TrimSpace(q.Get("availability")))
+	availability := nodeListAvailability(q)
 	latency := strings.ToLower(strings.TrimSpace(q.Get("latency")))
-	search := strings.ToLower(strings.TrimSpace(q.Get("q")))
+	search := nodeListSearch(q)
 
 	filtered := make([]Snapshot, 0, len(nodes))
 	for _, snap := range nodes {
@@ -1690,6 +1755,32 @@ func filterNodeSnapshots(nodes []Snapshot, q url.Values) []Snapshot {
 	return filtered
 }
 
+func nodeListAvailability(q url.Values) string {
+	availability := strings.ToLower(strings.TrimSpace(q.Get("availability")))
+	if availability != "" {
+		return availability
+	}
+	if available, ok := parseOptionalBoolParam(q, "available"); ok {
+		if strings.TrimSpace(q.Get("available")) == "" {
+			return ""
+		}
+		if available {
+			return "available"
+		}
+		return "unavailable"
+	}
+	return ""
+}
+
+func nodeListSearch(q url.Values) string {
+	for _, key := range []string{"q", "search", "keyword"} {
+		if value := strings.ToLower(strings.TrimSpace(q.Get(key))); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func sortNodeSnapshots(nodes []Snapshot, sortBy string) {
 	sortBy = strings.ToLower(strings.TrimSpace(sortBy))
 	sort.SliceStable(nodes, func(i, j int) bool {
@@ -1708,10 +1799,13 @@ func sortNodeSnapshots(nodes []Snapshot, sortBy string) {
 			}
 			return a.Source < b.Source
 		case "latency_desc":
-			return a.LastLatencyMs > b.LastLatencyMs
-		default:
 			if a.LastLatencyMs == b.LastLatencyMs {
-				return a.Name < b.Name
+				return stableNodeSnapshotLess(a, b)
+			}
+			return a.LastLatencyMs > b.LastLatencyMs
+		case "latency":
+			if a.LastLatencyMs == b.LastLatencyMs {
+				return stableNodeSnapshotLess(a, b)
 			}
 			if a.LastLatencyMs < 0 {
 				return false
@@ -1720,8 +1814,20 @@ func sortNodeSnapshots(nodes []Snapshot, sortBy string) {
 				return true
 			}
 			return a.LastLatencyMs < b.LastLatencyMs
+		default:
+			return stableNodeSnapshotLess(a, b)
 		}
 	})
+}
+
+func stableNodeSnapshotLess(a, b Snapshot) bool {
+	if a.Port != b.Port {
+		return a.Port < b.Port
+	}
+	if a.Tag != b.Tag {
+		return a.Tag < b.Tag
+	}
+	return a.Name < b.Name
 }
 
 func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
@@ -1857,6 +1963,55 @@ func (s *Server) handleNodeAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]any{"message": fmt.Sprintf("已拉黑 %s", duration)})
+	case "region":
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
+			return
+		}
+		var req struct {
+			Region string `json:"region"`
+		}
+		if err := decodeSingleJSONBody(r, &req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
+			return
+		}
+		region := strings.ToLower(strings.TrimSpace(req.Region))
+		if !isAllowedManualRegion(region) {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "无效的地区", "code": "invalid_region"})
+			return
+		}
+		if err := s.mgr.UpdateRegion(tag, region, ""); err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			writeJSON(w, map[string]any{"error": err.Error(), "code": "node_not_found"})
+			return
+		}
+		snap, err := s.mgr.SnapshotFor(tag)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			writeJSON(w, map[string]any{"error": err.Error(), "code": "node_not_found"})
+			return
+		}
+		needReload := false
+		s.cfgMu.Lock()
+		if s.cfgSrc != nil && strings.TrimSpace(snap.URI) != "" {
+			s.cfgSrc.SetRegionOverride(snap.URI, region)
+			if err := s.cfgSrc.SaveSettings(); err != nil {
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusInternalServerError)
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("保存配置失败: %v", err), "code": "save_region_override_failed"})
+				return
+			}
+			needReload = true
+		}
+		s.cfgMu.Unlock()
+		writeJSON(w, map[string]any{
+			"message":     "地区已确认，重载后将进入对应地区池",
+			"need_reload": needReload,
+			"node":        snap,
+		})
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		writeJSON(w, map[string]any{"error": "unknown node action", "code": "unknown_node_action"})
@@ -2222,8 +2377,9 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// GeoIP 分区路由入口。GeoIP router exposes HTTP paths only, so omit
-	// it from socks5-only exports to keep the file scheme-homogeneous.
+	// GeoIP 分区路由入口。GeoIP router exposes HTTP only. Standard clients
+	// select regions through username suffixes, so omit it from socks5-only
+	// exports to keep the file scheme-homogeneous.
 	if geoipCfg.Enabled && geoipCfg.Port > 0 && scheme != "socks5" {
 		geoAddr := geoipCfg.Listen
 		if geoAddr == "" || geoAddr == "0.0.0.0" || geoAddr == "::" {
@@ -2236,13 +2392,17 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 			geoAuth = fmt.Sprintf("%s:%s@", listenerCfg.Username, listenerCfg.Password)
 		}
 		regions := geoip.AllRegions()
-		var pathParts []string
+		var suffixParts []string
 		for _, r := range regions {
 			if r != "other" {
-				pathParts = append(pathParts, fmt.Sprintf("/%s/", r))
+				suffixParts = append(suffixParts, fmt.Sprintf("%s-%s", listenerCfg.Username, r))
 			}
 		}
-		lines = append(lines, fmt.Sprintf("# GeoIP 分区路由入口 (支持路径: %s)", strings.Join(pathParts, " ")))
+		if listenerCfg.Username != "" {
+			lines = append(lines, fmt.Sprintf("# GeoIP 分区路由入口 (地区使用用户名后缀: %s)", strings.Join(suffixParts, " ")))
+		} else {
+			lines = append(lines, "# GeoIP 分区路由入口")
+		}
 		// GeoIP 路由仅支持 HTTP
 		geoURI := fmt.Sprintf("http://%s%s:%d", geoAuth, geoAddr, geoipCfg.Port)
 		if !seen[geoURI] {
@@ -2316,7 +2476,10 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCloudflareCache(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		items := s.cfChecker.CacheList()
+		items := s.currentCloudflareCacheList()
+		if items == nil {
+			items = []cloudflarecheck.Result{}
+		}
 		writeJSON(w, map[string]any{"data": items, "count": len(items)})
 	case http.MethodPost, http.MethodDelete:
 		s.cfChecker.ClearCache()
@@ -2325,6 +2488,61 @@ func (s *Server) handleCloudflareCache(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 	}
+}
+
+func (s *Server) currentCloudflareCacheList() []cloudflarecheck.Result {
+	if s == nil || s.cfChecker == nil {
+		return nil
+	}
+	items := s.cfChecker.CacheList()
+	if s.mgr == nil {
+		return items
+	}
+	snapshots := s.mgr.Snapshot()
+	currentByTag := make(map[string]Snapshot, len(snapshots))
+	currentByPort := make(map[uint16]Snapshot, len(snapshots))
+	for _, snap := range snapshots {
+		if strings.TrimSpace(snap.Tag) != "" {
+			currentByTag[snap.Tag] = snap
+		}
+		if snap.Port != 0 {
+			currentByPort[snap.Port] = snap
+		}
+	}
+	if len(currentByTag) == 0 && len(currentByPort) == 0 {
+		return nil
+	}
+	out := make([]cloudflarecheck.Result, 0, len(items))
+	for _, item := range items {
+		var snap Snapshot
+		ok := false
+		if strings.TrimSpace(item.NodeTag) != "" {
+			snap, ok = currentByTag[item.NodeTag]
+		}
+		if !ok && item.Port != 0 {
+			snap, ok = currentByPort[item.Port]
+		}
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(snap.Name) != "" {
+			item.NodeName = snap.Name
+		}
+		if strings.TrimSpace(snap.Tag) != "" {
+			item.NodeTag = snap.Tag
+		}
+		if strings.TrimSpace(snap.Region) != "" {
+			item.Region = strings.ToLower(strings.TrimSpace(snap.Region))
+		}
+		if strings.TrimSpace(snap.ListenAddress) != "" {
+			item.Host = snap.ListenAddress
+		}
+		if snap.Port != 0 {
+			item.Port = snap.Port
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (s *Server) handleCloudflareCheck(w http.ResponseWriter, r *http.Request) {
@@ -2553,7 +2771,27 @@ func summarizeCloudflare(results []cloudflarecheck.Result) map[string]int {
 }
 
 func isAllowedMonitorRegion(region string) bool {
-	return map[string]bool{"all": true, "us": true, "jp": true, "hk": true, "sg": true, "tw": true, "kr": true, "in": true, "ae": true, "ch": true, "au": true, "de": true, "gb": true, "ca": true, "other": true}[region]
+	if region == "all" {
+		return true
+	}
+	for _, known := range geoip.AllRegions() {
+		if region == known {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedManualRegion(region string) bool {
+	if region == geoip.RegionOther || region == "all" {
+		return false
+	}
+	for _, known := range geoip.AllRegions() {
+		if region == known {
+			return true
+		}
+	}
+	return false
 }
 
 func isAllowedMonitorMode(mode string) bool {
@@ -2590,6 +2828,9 @@ func (s *Server) handleReputationCache(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		items := s.repChecker.CacheList()
+		if items == nil {
+			items = []reputation.Result{}
+		}
 		writeJSON(w, map[string]any{"data": items, "count": len(items)})
 	case http.MethodDelete, http.MethodPost:
 		s.repChecker.ClearCache()
@@ -2654,6 +2895,12 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeUnavailable = includeUnavailable || scopeAll
+	updateRegions, ok := parseOptionalBoolParam(r.URL.Query(), "update_regions")
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid update_regions", "code": "invalid_bool"})
+		return
+	}
 	if !isAllowedMonitorMode(mode) {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "only multi-port mode is supported in reputation check", "code": "invalid_mode"})
@@ -2705,7 +2952,7 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	results := s.repChecker.CheckProxies(r.Context(), targets, reputationExpectedCountry(region))
 	summary := summarizeReputation(results)
-	writeJSON(w, map[string]any{
+	resp := map[string]any{
 		"region":              region,
 		"mode":                "multi-port",
 		"requested_count":     count,
@@ -2714,7 +2961,86 @@ func (s *Server) handleReputationCheck(w http.ResponseWriter, r *http.Request) {
 		"include_unavailable": includeUnavailable,
 		"summary":             summary,
 		"data":                results,
-	})
+	}
+	if updateRegions {
+		resp["region_updates"] = s.applyReputationRegionResults(results)
+	}
+	writeJSON(w, resp)
+}
+
+type reputationRegionUpdateSummary struct {
+	Checked    int      `json:"checked"`
+	Updated    int      `json:"updated"`
+	Unchanged  int      `json:"unchanged"`
+	Skipped    int      `json:"skipped"`
+	Persisted  int      `json:"persisted"`
+	NeedReload bool     `json:"need_reload"`
+	Errors     []string `json:"errors,omitempty"`
+}
+
+func (s *Server) applyReputationRegionResults(results []reputation.NodeResult) reputationRegionUpdateSummary {
+	summary := reputationRegionUpdateSummary{Checked: len(results)}
+	if s == nil || s.mgr == nil {
+		summary.Skipped = len(results)
+		return summary
+	}
+	for _, item := range results {
+		if item.Error != "" || item.Result == nil || strings.TrimSpace(item.Result.Error) != "" {
+			summary.Skipped++
+			continue
+		}
+		region := strings.ToLower(strings.TrimSpace(item.Result.CountryCode))
+		if !geoip.IsRegionCode(region) {
+			summary.Skipped++
+			continue
+		}
+		tag := strings.TrimSpace(item.NodeTag)
+		if tag == "" {
+			summary.Skipped++
+			continue
+		}
+		snap, err := s.mgr.SnapshotFor(tag)
+		if err != nil {
+			summary.Skipped++
+			summary.Errors = append(summary.Errors, err.Error())
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(snap.Region), region) {
+			summary.Unchanged++
+			continue
+		}
+		country := geoip.RegionName(region)
+		if err := s.mgr.UpdateRegion(tag, region, country); err != nil {
+			summary.Skipped++
+			summary.Errors = append(summary.Errors, err.Error())
+			continue
+		}
+		summary.Updated++
+		if s.persistRegionOverrideFromReputation(snap.URI, region) {
+			summary.Persisted++
+			summary.NeedReload = true
+		}
+	}
+	return summary
+}
+
+func (s *Server) persistRegionOverrideFromReputation(uri, region string) bool {
+	if s == nil || strings.TrimSpace(uri) == "" || strings.TrimSpace(region) == "" {
+		return false
+	}
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	if s.cfgSrc == nil {
+		return false
+	}
+	s.cfgSrc.SetRegionOverride(uri, region)
+	if err := s.cfgSrc.SaveSettings(); err != nil {
+		if s.logger != nil {
+			s.logger.Printf("save reputation region override failed: %v", err)
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) buildReputationTargets(region, source string, count int, includeUnavailable bool, targetTags map[string]bool) ([]reputation.ProxyTarget, error) {
@@ -2772,8 +3098,7 @@ func (s *Server) buildReputationTargets(region, source string, count int, includ
 }
 
 func reputationExpectedCountry(region string) string {
-	switch region {
-	case "us", "jp", "hk", "sg", "tw", "kr", "in", "ae", "ch", "au", "de", "gb", "ca":
+	if geoip.IsRegionCode(region) {
 		return strings.ToUpper(region)
 	}
 	return ""
@@ -2806,25 +3131,11 @@ type extractorProxyEntry struct {
 }
 
 func androidExtractorRegions() []string {
-	return []string{geoip.RegionUS, geoip.RegionJP, geoip.RegionHK, geoip.RegionSG, geoip.RegionTW, geoip.RegionKR, geoip.RegionIN, geoip.RegionAE, geoip.RegionCH, geoip.RegionAU, geoip.RegionOther, geoip.RegionDE, geoip.RegionGB, geoip.RegionCA}
+	return androidports.RegionOrder()
 }
 
-func androidExtractorPort(cfg config.AndroidProxyConfig, region string) uint16 {
-	if cfg.RegionPorts != nil {
-		if port := cfg.RegionPorts[region]; port != 0 {
-			return port
-		}
-	}
-	basePort := cfg.BasePort
-	if basePort == 0 {
-		basePort = 13001
-	}
-	for idx, reg := range androidExtractorRegions() {
-		if reg == region {
-			return basePort + uint16(idx)
-		}
-	}
-	return 0
+func androidExtractorPort(cfg config.AndroidProxyConfig, usedPorts []uint16, region string) uint16 {
+	return androidports.PortForAvoiding(cfg, usedPorts, region)
 }
 
 func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
@@ -2874,10 +3185,7 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 		count = 500
 	}
 
-	allowedRegions := map[string]bool{
-		"all": true, "us": true, "jp": true, "hk": true, "sg": true, "tw": true, "kr": true, "in": true, "ae": true, "ch": true, "au": true, "de": true, "gb": true, "ca": true, "other": true,
-	}
-	if !allowedRegions[region] {
+	if !isAllowedMonitorRegion(region) {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, map[string]any{"error": "invalid region", "code": "invalid_region"})
 		return
@@ -3024,18 +3332,20 @@ func (s *Server) buildExtractorEntries(region, mode, format string, count int, r
 				Port:     cfgCopy.GeoIP.Port,
 				Username: cfgCopy.Listener.Username,
 				Password: cfgCopy.Listener.Password,
-				Path:     "/",
 				Mode:     "geoip",
 				Region:   "all",
 				Remark:   "geoip-all",
 			})
 		} else {
+			username := cfgCopy.Listener.Username
+			if username != "" {
+				username = fmt.Sprintf("%s-%s", username, region)
+			}
 			candidates = append(candidates, extractorProxyEntry{
 				Host:     host,
 				Port:     cfgCopy.GeoIP.Port,
-				Username: cfgCopy.Listener.Username,
+				Username: username,
 				Password: cfgCopy.Listener.Password,
-				Path:     fmt.Sprintf("/%s/", region),
 				Mode:     "geoip",
 				Region:   region,
 				Remark:   fmt.Sprintf("geoip-%s", region),
@@ -3078,8 +3388,10 @@ func (s *Server) buildExtractorEntries(region, mode, format string, count int, r
 		if host == "127.0.0.1" {
 			warnings = append(warnings, "当前输出默认按 adb reverse 场景使用 127.0.0.1；若手机直连电脑，请改成电脑局域网 IP")
 		}
+		androidUsedPorts := s.androidExtractorUsedPorts(cfgCopy)
+		androidRegionPorts := androidports.RegionPortsAvoiding(cfgCopy.AndroidProxy, androidUsedPorts)
 		appendEntry := func(reg string) {
-			port := androidExtractorPort(cfgCopy.AndroidProxy, reg)
+			port := androidRegionPorts[reg]
 			if port == 0 {
 				return
 			}
@@ -3091,11 +3403,15 @@ func (s *Server) buildExtractorEntries(region, mode, format string, count int, r
 				Remark: fmt.Sprintf("android-%s", reg),
 			})
 		}
+		configuredRegions := s.androidConfiguredRegions()
 		if region == "all" {
 			for _, reg := range androidExtractorRegions() {
+				if !configuredRegions[reg] {
+					continue
+				}
 				appendEntry(reg)
 			}
-		} else {
+		} else if configuredRegions[region] {
 			appendEntry(region)
 		}
 	}
@@ -3111,7 +3427,7 @@ func (s *Server) buildExtractorEntries(region, mode, format string, count int, r
 	effectiveFormat := format
 	if mode == "geoip" && format != "http_url" && format != "json" {
 		effectiveFormat = "http_url"
-		warnings = append(warnings, "GeoIP 地域入口带路径，只能导出完整 URL 格式，已自动切换")
+		warnings = append(warnings, "GeoIP 地区入口使用用户名后缀选区，只能导出完整 URL 或 JSON，已自动切换")
 	}
 	if mode == "android" && format != "host_port" && format != "adb_command" && format != "json" {
 		effectiveFormat = "host_port"
@@ -3123,6 +3439,20 @@ func (s *Server) buildExtractorEntries(region, mode, format string, count int, r
 		result = append(result, formatExtractorEntry(candidate, effectiveFormat, reveal))
 	}
 	return result, warnings, effectiveFormat, nil
+}
+
+func (s *Server) androidConfiguredRegions() map[string]bool {
+	configured := make(map[string]bool)
+	if s == nil || s.mgr == nil {
+		return configured
+	}
+	for _, snap := range s.mgr.SnapshotFiltered(false) {
+		region := extractorBestRegion(snap)
+		if region != "" {
+			configured[region] = true
+		}
+	}
+	return configured
 }
 
 func (s *Server) resolveLocalHost(addr string) string {
@@ -3143,12 +3473,33 @@ func extractorBestRegion(snap Snapshot) string {
 	return "other"
 }
 
+func (s *Server) androidExtractorUsedPorts(cfg *config.Config) []uint16 {
+	ports := make([]uint16, 0)
+	if cfg != nil {
+		for _, node := range cfg.Nodes {
+			if node.Port != 0 {
+				ports = append(ports, node.Port)
+			}
+		}
+	}
+	if s != nil && s.mgr != nil {
+		for _, snap := range s.mgr.Snapshot() {
+			if snap.Port != 0 {
+				ports = append(ports, snap.Port)
+			}
+		}
+	}
+	return ports
+}
+
 func extractorSnapshotMatchesRegion(snap Snapshot, region string) bool {
-	if region == "all" {
+	region = strings.ToLower(strings.TrimSpace(region))
+	if region == "" || region == "all" {
 		return true
 	}
-	if strings.EqualFold(strings.TrimSpace(snap.Region), region) {
-		return true
+	snapshotRegion := strings.ToLower(strings.TrimSpace(snap.Region))
+	if snapshotRegion != "" && snapshotRegion != geoip.RegionOther {
+		return snapshotRegion == region
 	}
 	haystack := strings.ToLower(strings.Join([]string{
 		snap.Region,
@@ -3156,36 +3507,61 @@ func extractorSnapshotMatchesRegion(snap Snapshot, region string) bool {
 		snap.Name,
 		snap.Tag,
 	}, " "))
-	aliases := map[string][]string{
-		"us":    {" us ", "usa", "united states", "美国"},
-		"jp":    {" jp ", "japan", "日本"},
-		"hk":    {" hk ", "hong kong", "香港"},
-		"sg":    {" sg ", "singapore", "新加坡"},
-		"tw":    {" tw ", "taiwan", "台湾"},
-		"kr":    {" kr ", "korea", "韩国"},
-		"in":    {" in ", "india", "印度"},
-		"ae":    {" ae ", "uae", "united arab emirates", "dubai", "迪拜", "阿联酋"},
-		"ch":    {" ch ", "switzerland", "zurich", "瑞士", "苏黎世"},
-		"au":    {" au ", "australia", "sydney", "melbourne", "澳大利亚", "悉尼", "墨尔本"},
-		"de":    {" de ", "germany", "deutschland", "frankfurt", "德国", "法兰克福"},
-		"gb":    {" gb ", " uk ", "united kingdom", "great britain", "london", "英国", "伦敦"},
-		"ca":    {" ca ", "canada", "toronto", "vancouver", "montreal", "加拿大", "多伦多", "温哥华", "蒙特利尔"},
-		"other": {},
+	tokens := make(map[string]struct{})
+	for _, part := range strings.FieldsFunc(haystack, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	}) {
+		if part != "" {
+			tokens[part] = struct{}{}
+		}
 	}
-	if region == "other" {
-		for _, known := range []string{"us", "jp", "hk", "sg", "tw", "kr", "in", "ae", "ch", "au", "de", "gb", "ca"} {
-			if extractorSnapshotMatchesRegion(snap, known) {
+	cityAliases := map[string][]string{
+		geoip.RegionJP: {"tokyo", "东京", "osaka", "大阪"},
+		geoip.RegionKR: {"seoul", "首尔"},
+		geoip.RegionUS: {"san jose", "ashburn", "los angeles", "圣何塞", "阿什本", "洛杉矶"},
+		geoip.RegionIN: {"mumbai", "孟买", "delhi", "德里"},
+		geoip.RegionAE: {"dubai", "迪拜"},
+		geoip.RegionCH: {"zurich", "苏黎世"},
+		geoip.RegionAU: {"sydney", "悉尼", "melbourne", "墨尔本"},
+		geoip.RegionDE: {"frankfurt", "法兰克福"},
+		geoip.RegionGB: {"london", "伦敦"},
+		geoip.RegionCA: {"toronto", "多伦多", "vancouver", "温哥华", "montreal", "蒙特利尔"},
+		geoip.RegionFR: {"paris", "巴黎"},
+		geoip.RegionVN: {"hanoi", "河内", "ho chi minh", "胡志明"},
+		geoip.RegionRU: {"moscow", "莫斯科"},
+		geoip.RegionUA: {"kyiv", "kiev", "基辅"},
+		geoip.RegionTR: {"istanbul", "伊斯坦布尔"},
+		geoip.RegionNG: {"lagos", "拉各斯"},
+	}
+	matchesKnown := func(code string) bool {
+		if _, ok := tokens[code]; ok {
+			return true
+		}
+		for _, alias := range geoip.RegionAliases(code) {
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias != "" && strings.Contains(haystack, alias) {
+				return true
+			}
+		}
+		for _, alias := range cityAliases[code] {
+			if strings.Contains(haystack, alias) {
+				return true
+			}
+		}
+		return false
+	}
+	if region == geoip.RegionOther {
+		for _, known := range geoip.AllRegions() {
+			if known == geoip.RegionOther {
+				continue
+			}
+			if matchesKnown(known) {
 				return false
 			}
 		}
 		return true
 	}
-	for _, alias := range aliases[region] {
-		if strings.Contains(haystack, alias) {
-			return true
-		}
-	}
-	return false
+	return matchesKnown(region)
 }
 
 func formatExtractorEntry(entry extractorProxyEntry, format string, reveal bool) any {
@@ -3385,8 +3761,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"blacklist_duration": positiveDurationString(cfg.Pool.BlacklistDuration),
 			}
 			resp["management"] = map[string]any{
-				"listen":   cfg.Management.Listen,
-				"password": cfg.Management.Password,
+				"listen":       cfg.Management.Listen,
+				"password":     "",
+				"password_set": strings.TrimSpace(cfg.Management.Password) != "",
 			}
 			resp["geoip"] = map[string]any{
 				"enabled":              cfg.GeoIP.Enabled,
@@ -3470,8 +3847,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				BlacklistDuration string `json:"blacklist_duration"`
 			} `json:"pool,omitempty"`
 			Management *struct {
-				Listen   string `json:"listen"`
-				Password string `json:"password"`
+				Listen        string `json:"listen"`
+				Password      string `json:"password"`
+				ClearPassword bool   `json:"clear_password"`
 			} `json:"management,omitempty"`
 			Log *struct {
 				Output     string `json:"output"`
@@ -3539,6 +3917,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasPoolBlacklistDuration := hasNestedJSONKey(body, "pool", "blacklist_duration")
 		hasManagementListen := hasNestedJSONKey(body, "management", "listen")
 		hasManagementPassword := hasNestedJSONKey(body, "management", "password")
+		hasManagementClearPassword := hasNestedJSONKey(body, "management", "clear_password")
 		hasGeoIPEnabled := hasNestedJSONKey(body, "geoip", "enabled")
 		hasGeoIPDatabasePath := hasNestedJSONKey(body, "geoip", "database_path")
 		hasGeoIPListen := hasNestedJSONKey(body, "geoip", "listen")
@@ -3559,6 +3938,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasQualityCloudflareConcurrency := hasNestedJSONKey(body, "quality_check", "cloudflare_concurrency")
 		hasSubscriptionRefreshEnabled := hasNestedJSONKey(body, "subscription_refresh", "enabled")
 		hasSubscriptionRefreshInterval := hasNestedJSONKey(body, "subscription_refresh", "interval")
+		hasFreeProxyFilterMinTier := hasNestedJSONKey(body, "free_proxy_filter", "min_tier")
 		hasFreeProxyFilterWorkers := hasNestedJSONKey(body, "free_proxy_filter", "workers")
 		hasFreeProxyFilterTimeout := hasNestedJSONKey(body, "free_proxy_filter", "timeout")
 		hasFreeProxyFilterMaxCandidates := hasNestedJSONKey(body, "free_proxy_filter", "max_candidates")
@@ -3650,6 +4030,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.FreeProxyFilter != nil {
+			if hasFreeProxyFilterMinTier && !isAllowedFreeProxyMinTier(req.FreeProxyFilter.MinTier) {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的免费源筛选最低等级", "code": "invalid_free_proxy_filter_min_tier"})
+				return
+			}
 			if hasFreeProxyFilterWorkers && req.FreeProxyFilter.Workers <= 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				writeJSON(w, map[string]any{"error": "无效的免费源筛选并发数", "code": "invalid_free_proxy_filter_workers"})
@@ -3823,6 +4208,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = ln.Close()
 		}
+		oldManagementPassword := s.cfgSrc.Management.Password
 		oldCoreSignature := coreReloadSignature(s.cfgSrc)
 		oldFreeProxySignature := freeProxyRefreshSignature(s.cfgSrc)
 		oldFreeProxyRefreshable := freeProxyRefreshable(s.cfgSrc)
@@ -3929,7 +4315,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			if hasManagementListen && strings.TrimSpace(req.Management.Listen) != "" {
 				s.cfgSrc.Management.Listen = strings.TrimSpace(req.Management.Listen)
 			}
-			if hasManagementPassword {
+			if hasManagementClearPassword && req.Management.ClearPassword {
+				s.cfgSrc.Management.Password = ""
+			} else if hasManagementPassword && strings.TrimSpace(req.Management.Password) != "" {
 				s.cfgSrc.Management.Password = req.Management.Password
 			}
 		}
@@ -4010,6 +4398,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				s.cfgSrc.SubscriptionRefresh.Interval = subscriptionRefreshInterval
 			}
 			subscriptionConfigChanged = subscriptionConfigChanged || oldSubscriptionRefresh.Enabled != s.cfgSrc.SubscriptionRefresh.Enabled || oldSubscriptionRefresh.Interval != s.cfgSrc.SubscriptionRefresh.Interval
+		}
+		managementPasswordTouched := req.Management != nil && ((hasManagementClearPassword && req.Management.ClearPassword) || (hasManagementPassword && strings.TrimSpace(req.Management.Password) != ""))
+		if managementPasswordTouched && s.cfgSrc.Management.Password != oldManagementPassword {
+			s.cfg.Password = s.cfgSrc.Management.Password
+			s.sessionMu.Lock()
+			s.sessions = make(map[string]*Session)
+			s.sessionMu.Unlock()
 		}
 		if s.cfgSrc.Mode == "multi-port" || s.cfgSrc.Mode == "hybrid" {
 			s.cfg.ProxyUsername = s.cfgSrc.MultiPort.Username
@@ -4101,15 +4496,24 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				freeProxyRefreshError = err.Error()
 			}
-		} else if needReload && s.nodeMgr != nil {
-			status, started, err := s.startAsyncReload("settings")
-			reloadStarted = started
-			reloadStatus = status
-			if err != nil {
-				reloadError = err.Error()
+		} else {
+			if freeProxySignatureChanged {
+				status, _, err := s.startFreeProxyRefresh("settings")
+				freeProxyRefreshStatus = status
+				if err != nil {
+					freeProxyRefreshError = err.Error()
+				}
 			}
-		} else if needReload {
-			reloadError = "节点管理未启用"
+			if needReload && s.nodeMgr != nil {
+				status, started, err := s.startAsyncReload("settings")
+				reloadStarted = started
+				reloadStatus = status
+				if err != nil {
+					reloadError = err.Error()
+				}
+			} else if needReload {
+				reloadError = "节点管理未启用"
+			}
 		}
 
 		writeJSON(w, map[string]any{
@@ -4759,7 +5163,59 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	content := SharedLogBuffer.Content()
+	if rawLines := strings.TrimSpace(r.URL.Query().Get("lines")); rawLines != "" {
+		lines, err := strconv.Atoi(rawLines)
+		if err != nil || lines <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "invalid lines", "code": "invalid_lines"})
+			return
+		}
+		const maxLogLines = 2000
+		if lines > maxLogLines {
+			lines = maxLogLines
+		}
+		content = tailLogLines(content, lines)
+	}
+	content = redactSensitiveLogContent(content)
 	writeJSON(w, map[string]any{"logs": content})
+}
+
+func tailLogLines(content string, maxLines int) string {
+	if maxLines <= 0 || content == "" {
+		return ""
+	}
+	hasTrailingNewline := strings.HasSuffix(content, "\n")
+	trimmed := strings.TrimRight(content, "\n")
+	if trimmed == "" {
+		return ""
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) <= maxLines {
+		return content
+	}
+	out := strings.Join(lines[len(lines)-maxLines:], "\n")
+	if hasTrailingNewline {
+		out += "\n"
+	}
+	return out
+}
+
+var (
+	logURLUserInfoPattern     = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)([^\s/@:]+):([^\s/@]+)@`)
+	logBareUserInfoPattern    = regexp.MustCompile(`\b([^\s/@:]+):([^\s/@]+)@((?:127\.0\.0\.1|localhost|\[[^\]]+\]|[A-Za-z0-9.-]+)(?::\d+)?)`)
+	logJSONSecretFieldPattern = regexp.MustCompile(`(?i)("(?:password|token|session_token|authorization)"\s*:\s*")[^"]*(")`)
+	logYAMLSecretFieldPattern = regexp.MustCompile(`(?im)^(\s*(?:password|token|session_token|authorization)\s*:\s*).+$`)
+)
+
+func redactSensitiveLogContent(content string) string {
+	if content == "" {
+		return ""
+	}
+	content = logURLUserInfoPattern.ReplaceAllString(content, `$1***:***@`)
+	content = logBareUserInfoPattern.ReplaceAllString(content, `***:***@$3`)
+	content = logJSONSecretFieldPattern.ReplaceAllString(content, `${1}***$2`)
+	content = logYAMLSecretFieldPattern.ReplaceAllString(content, `${1}***`)
+	return content
 }
 
 // Session management functions

@@ -138,7 +138,7 @@ geoip:
   auto_update_interval: 24h   # check interval
 ```
 
-The GeoIP router reuses the `listener.username` and `listener.password` for proxy authentication.
+The GeoIP router reuses the `listener.username` and `listener.password` for proxy authentication. Region-specific standard proxy URLs select a region by adding the region code to the username, for example `user-us:pass` for US and `user-jp:pass` for Japan.
 
 Key behaviors:
 - The GeoIP database (MaxMind GeoLite2-Country) is **auto-downloaded** on first startup
@@ -148,42 +148,44 @@ Key behaviors:
 
 ### How to Use
 
-The GeoIP router is an HTTP proxy that listens on its own port. You select a region by adding a path prefix to your request.
+The GeoIP router is an HTTP proxy that listens on its own port. For standard proxy clients such as curl, requests, browsers, and system proxy settings, select a region by adding the region code to the proxy username: `<username>-<region>:<password>`.
 
 #### HTTP Requests
 
-Format: `http://<geoip_host>:<geoip_port>/<region>/`
+Format: `http://<username>-<region>:<password>@<geoip_host>:<geoip_port>`
 
 ```bash
 # Route through Japanese nodes
-curl -x http://user:pass@localhost:1221/jp/ http://example.com
+curl -x http://user-jp:pass@localhost:1221 http://example.com
 
 # Route through US nodes
-curl -x http://user:pass@localhost:1221/us/ http://example.com
+curl -x http://user-us:pass@localhost:1221 http://example.com
 
 # Route through Hong Kong nodes
-curl -x http://user:pass@localhost:1221/hk/ http://example.com
+curl -x http://user-hk:pass@localhost:1221 http://example.com
 
 # Route through Singapore nodes
-curl -x http://user:pass@localhost:1221/sg/ http://example.com
+curl -x http://user-sg:pass@localhost:1221 http://example.com
 
-# No region prefix = use global pool (all nodes)
-curl -x http://user:pass@localhost:1221/ http://example.com
+# No region suffix = use global pool (all nodes)
+curl -x http://user:pass@localhost:1221 http://example.com
 ```
+
+Proxy URL paths such as `http://user:pass@localhost:1221/us/` are not reliable with standard HTTP proxy clients: curl, requests, browsers, and system proxy settings do not forward that proxy URL path to the proxy server.
 
 #### HTTPS Requests (CONNECT Tunnel)
 
-For HTTPS, the region prefix goes before the target host in the CONNECT request:
+For HTTPS CONNECT requests, use the same username suffix in the proxy URL:
 
 ```bash
 # Route HTTPS through Japanese nodes
-https_proxy=http://user:pass@localhost:1221/jp/ curl https://www.google.com
+https_proxy=http://user-jp:pass@localhost:1221 curl https://www.google.com
 
 # Route HTTPS through US nodes
-https_proxy=http://user:pass@localhost:1221/us/ curl https://www.google.com
+https_proxy=http://user-us:pass@localhost:1221 curl https://www.google.com
 
-# No region prefix = use global pool
-https_proxy=http://user:pass@localhost:1221/ curl https://www.google.com
+# No region suffix = use global pool
+https_proxy=http://user:pass@localhost:1221 curl https://www.google.com
 ```
 
 #### Using with Applications
@@ -192,12 +194,12 @@ https_proxy=http://user:pass@localhost:1221/ curl https://www.google.com
 
 ```bash
 # Use Japanese nodes for all traffic
-export http_proxy=http://user:pass@your-server:1221/jp/
-export https_proxy=http://user:pass@your-server:1221/jp/
+export http_proxy=http://user-jp:pass@your-server:1221
+export https_proxy=http://user-jp:pass@your-server:1221
 
 # Use global pool (all nodes)
-export http_proxy=http://user:pass@your-server:1221/
-export https_proxy=http://user:pass@your-server:1221/
+export http_proxy=http://user:pass@your-server:1221
+export https_proxy=http://user:pass@your-server:1221
 ```
 
 **Browser proxy extensions (SwitchyOmega, FoxyProxy, etc.):**
@@ -206,7 +208,7 @@ export https_proxy=http://user:pass@your-server:1221/
 - Server: your-server-ip
 - Port: 1221
 - Username/Password: as configured in `listener`
-- For region-specific routing: set the proxy URL path to include the region prefix (e.g., `/jp/`)
+- For region-specific routing: use a region username suffix, e.g. `user-jp` with the same password
 
 **Python requests:**
 
@@ -214,8 +216,8 @@ export https_proxy=http://user:pass@your-server:1221/
 import requests
 
 proxies = {
-    "http": "http://user:pass@your-server:1221/jp/",
-    "https": "http://user:pass@your-server:1221/jp/",
+    "http": "http://user-jp:pass@your-server:1221",
+    "https": "http://user-jp:pass@your-server:1221",
 }
 r = requests.get("http://example.com", proxies=proxies)
 ```
@@ -223,7 +225,7 @@ r = requests.get("http://example.com", proxies=proxies)
 **Go net/http:**
 
 ```go
-proxyURL, _ := url.Parse("http://user:pass@your-server:1221/jp/")
+proxyURL, _ := url.Parse("http://user-jp:pass@your-server:1221")
 client := &http.Client{
     Transport: &http.Transport{
         Proxy: http.ProxyURL(proxyURL),
@@ -236,7 +238,7 @@ resp, err := client.Get("http://example.com")
 
 1. On startup, each node's server IP is resolved and looked up in the MaxMind GeoLite2-Country database
 2. Nodes are grouped into per-region pools (`pool-jp`, `pool-kr`, `pool-us`, etc.) with independent health checking
-3. The GeoIP router listens on its own port and inspects the request path for a region prefix
+3. The GeoIP router listens on its own port and selects regions from the proxy-auth username suffix for standard clients
 4. Matching requests are routed through the corresponding region pool; unmatched requests use the global pool
 5. Each region pool uses the same scheduling algorithm configured in the `pool` section
 6. DNS lookup results are cached to avoid repeated resolution on reload

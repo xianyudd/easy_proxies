@@ -17,9 +17,19 @@ export interface ReputationResult {
   result?: ReputationResult
   [key: string]: unknown
 }
+export interface ReputationRegionUpdateSummary {
+  checked?: number
+  updated?: number
+  unchanged?: number
+  skipped?: number
+  persisted?: number
+  need_reload?: boolean
+  errors?: string[]
+}
 export interface ReputationResponse {
   data?: ReputationResult[]
   summary?: Record<string, number>
+  region_updates?: ReputationRegionUpdateSummary
   count?: number
   checked_count?: number
   error?: string

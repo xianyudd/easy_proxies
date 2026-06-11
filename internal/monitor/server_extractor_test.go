@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"easy_proxies/internal/config"
@@ -36,6 +37,12 @@ func TestExtractorSnapshotMatchesRegionExtendedAliases(t *testing.T) {
 			snap:   Snapshot{NodeInfo: NodeInfo{Name: "德国DE-HY2"}},
 			region: "de",
 			want:   true,
+		},
+		{
+			name:   "explicit geoip region wins over conflicting display name",
+			snap:   Snapshot{NodeInfo: NodeInfo{Region: "jp", Name: "新加坡-优化3-Gemini", Country: "Japan"}},
+			region: "sg",
+			want:   false,
 		},
 		{
 			name:   "uk by name alias",
@@ -98,6 +105,108 @@ func TestHandleExtractorDefaultsToConfiguredMultiPortMode(t *testing.T) {
 	}
 	if body.Mode != "multi-port" || len(body.Entries) != 1 {
 		t.Fatalf("unexpected extractor response: %#v body=%s", body, rec.Body.String())
+	}
+}
+
+func TestHandleExtractorMultiPortDoesNotLeakConflictingNameRegions(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sg := mgr.Register(NodeInfo{
+		Tag:           "node-sg",
+		Name:          "node-sg",
+		URI:           "socks5://18.142.59.161:3128",
+		ListenAddress: "127.0.0.1",
+		Port:          31280,
+		Region:        "sg",
+		Country:       "Singapore",
+	})
+	sg.MarkInitialCheckDone(true)
+	jpNamedSingapore := mgr.Register(NodeInfo{
+		Tag:           "node-jp-name-sg",
+		Name:          "新加坡-优化3-Gemini",
+		URI:           "vmess://example.invalid",
+		ListenAddress: "127.0.0.1",
+		Port:          31281,
+		Region:        "jp",
+		Country:       "Japan",
+	})
+	jpNamedSingapore.MarkInitialCheckDone(true)
+
+	srv := &Server{
+		mgr:    mgr,
+		cfg:    Config{ProxyUsername: "user", ProxyPassword: "pass"},
+		cfgSrc: &config.Config{Mode: "multi-port"},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/extractor?region=sg&mode=multi-port&format=json&count=10&reveal=true", nil)
+	rec := httptest.NewRecorder()
+
+	srv.handleExtractor(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		OutputCount int                      `json:"output_count"`
+		Entries     []map[string]interface{} `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.OutputCount != 1 || len(body.Entries) != 1 {
+		t.Fatalf("expected only the explicit SG node, got %#v body=%s", body, rec.Body.String())
+	}
+	if body.Entries[0]["node_tag"] != "node-sg" || body.Entries[0]["region"] != "sg" {
+		t.Fatalf("unexpected leaked entry: %#v body=%s", body.Entries[0], rec.Body.String())
+	}
+}
+
+func TestHandleExtractorAcceptsAllSupportedISORegions(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for idx, region := range []string{"fr", "vn", "ng"} {
+		node := mgr.Register(NodeInfo{
+			Tag:           "node-" + region,
+			Name:          "Node " + strings.ToUpper(region),
+			URI:           fmt.Sprintf("http://10.10.%d.1:80", idx),
+			ListenAddress: "127.0.0.1",
+			Port:          uint16(31100 + idx),
+			Region:        region,
+		})
+		node.MarkInitialCheckDone(true)
+	}
+	srv := &Server{
+		mgr: mgr,
+		cfg: Config{ProxyUsername: "user", ProxyPassword: "pass"},
+		cfgSrc: &config.Config{
+			Mode: "multi-port",
+		},
+	}
+
+	for _, region := range []string{"fr", "vn", "ng"} {
+		t.Run(region, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/extractor?region="+region+"&mode=multi-port&format=json&count=1&reveal=false", nil)
+			rec := httptest.NewRecorder()
+
+			srv.handleExtractor(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var body struct {
+				Region  string                   `json:"region"`
+				Entries []map[string]interface{} `json:"entries"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Region != region || len(body.Entries) != 1 || body.Entries[0]["region"] != region {
+				t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -211,5 +320,41 @@ func assertExtractorErrorCode(t *testing.T, rec *httptest.ResponseRecorder, stat
 	}
 	if body.Error == "" || body.Code != code {
 		t.Fatalf("unexpected body: %#v raw=%s", body, rec.Body.String())
+	}
+}
+
+func TestHandleExtractorGeoIPRegionUsesUsernameSuffixNotProxyPath(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{
+		mgr: mgr,
+		cfg: Config{ProxyUsername: "user", ProxyPassword: "pass"},
+		cfgSrc: &config.Config{
+			Mode:     "hybrid",
+			Listener: config.ListenerConfig{Address: "127.0.0.1", Port: 23250, Username: "user", Password: "pass"},
+			GeoIP:    config.GeoIPConfig{Enabled: true, Listen: "127.0.0.1", Port: 23251},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/extractor?region=us&mode=geoip&format=json&count=1&reveal=true", nil)
+	rec := httptest.NewRecorder()
+	srv.handleExtractor(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Entries []map[string]interface{} `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Entries) != 1 {
+		t.Fatalf("entries=%#v body=%s", body.Entries, rec.Body.String())
+	}
+	entry := body.Entries[0]
+	if entry["username"] != "user-us" || entry["path"] != "" || entry["url"] != "http://user-us:pass@127.0.0.1:23251" {
+		t.Fatalf("geoip entry should use username suffix without path: %#v", entry)
 	}
 }

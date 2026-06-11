@@ -3,10 +3,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 EXTRACTOR_PAGE = ROOT / "web" / "src" / "pages" / "ExtractorPage.tsx"
 EXTRACTOR_STORE = ROOT / "web" / "src" / "store" / "extractorStore.ts"
+EXTRACTOR_TYPES = ROOT / "web" / "src" / "types" / "extractor.ts"
+FORMAT_RULES = ROOT / "web" / "src" / "components" / "extractor" / "formatRules.ts"
+EXTRACTOR_API = ROOT / "web" / "src" / "api" / "extractor.ts"
 
 
 def read(path: Path) -> str:
     return path.read_text()
+
+
+def test_extractor_api_sends_boolean_reveal_values():
+    text = read(EXTRACTOR_API)
+    assert "reveal: params.reveal ? 'true' : 'false'" in text
+    assert "reveal: params.reveal ? '1' : '0'" not in text
 
 
 def test_extractor_run_and_copy_handles_mutate_async_errors():
@@ -52,8 +61,19 @@ def test_legacy_extractor_cards_normalizes_entries_by_contract():
     assert "entries.length > 20" not in text
 
 
+def test_extractor_regions_are_iso_driven_not_legacy_union():
+    types = read(EXTRACTOR_TYPES)
+    rules = read(FORMAT_RULES)
+    assert "export type ExtractorRegion = string" in types
+    assert "REGION_OPTIONS" in rules
+    assert "REGION_OPTIONS.map" in rules
+    assert "'all'|'us'|'jp'" not in types
+
+
 if __name__ == "__main__":
+    test_extractor_api_sends_boolean_reveal_values()
     test_extractor_run_and_copy_handles_mutate_async_errors()
     test_extractor_copy_and_download_guard_empty_results()
     test_extractor_response_arrays_are_normalized_before_render_and_copy()
     test_legacy_extractor_cards_normalizes_entries_by_contract()
+    test_extractor_regions_are_iso_driven_not_legacy_union()

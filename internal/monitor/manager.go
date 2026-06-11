@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"easy_proxies/internal/geoip"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -550,6 +551,39 @@ func (m *Manager) ManualBlacklist(tag string, duration time.Duration) error {
 	// Also mark in monitor state (affects UI display)
 	e.blacklistUntil(time.Now().Add(duration))
 	return nil
+}
+
+// UpdateRegion updates the stored region/country metadata for a node.
+func (m *Manager) UpdateRegion(tag, region, country string) error {
+	e, err := m.entry(tag)
+	if err != nil {
+		return err
+	}
+	region = strings.ToLower(strings.TrimSpace(region))
+	country = strings.TrimSpace(country)
+	if region == "" {
+		return fmt.Errorf("invalid region")
+	}
+	if country == "" {
+		country = geoip.RegionName(region)
+		if country == "Unknown" {
+			country = strings.ToUpper(region)
+		}
+	}
+	e.mu.Lock()
+	e.info.Region = region
+	e.info.Country = country
+	e.mu.Unlock()
+	return nil
+}
+
+// SnapshotFor returns the current snapshot for a specific node.
+func (m *Manager) SnapshotFor(tag string) (Snapshot, error) {
+	e, err := m.entry(tag)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return e.snapshot(), nil
 }
 
 func (m *Manager) entry(tag string) (*entry, error) {

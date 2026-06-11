@@ -35,7 +35,7 @@ fi
 
 WEBUI_TOKEN="${WEBUI_TOKEN:-}"
 if [ "$EP_PROFILE" = "isolated" ]; then
-  WEBUI_PASSWORD="${WEBUI_PASSWORD:-runtime-partial-secret}"
+  WEBUI_PASSWORD="${WEBUI_PASSWORD:-ep123}"
 else
   WEBUI_PASSWORD="${WEBUI_PASSWORD:-}"
 fi
@@ -46,7 +46,7 @@ TIMEOUT="${TIMEOUT:-10}"
 RETRIES="${RETRIES:-3}"
 if [ -z "${START_TIMEOUT+x}" ]; then
   if [ "$EP_PROFILE" = "isolated" ]; then
-    START_TIMEOUT=45
+    START_TIMEOUT=90
   else
     START_TIMEOUT=20
   fi

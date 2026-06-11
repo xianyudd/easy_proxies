@@ -237,8 +237,9 @@ export function NodeConfigPage() {
             <td>{Number(node.port || 0) || '自动'}</td>
             <td>{node.username || node.password ? '已配置' : '无'}</td>
             <td><div className="toolbar">
-              <Button disabled={!canEdit} onClick={() => editNode(node)}>编辑</Button>
+              <Button aria-label={`编辑节点 ${name}`} disabled={!canEdit} onClick={() => editNode(node)}>编辑</Button>
               <Button
+                aria-label={confirmDeleteName === name ? `确认删除节点 ${name}` : `删除节点 ${name}`}
                 variant="danger"
                 disabled={!canEdit || removeNode.isPending}
                 onClick={() => {

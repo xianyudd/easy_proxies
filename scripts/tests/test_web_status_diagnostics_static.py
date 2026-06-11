@@ -61,8 +61,23 @@ def test_diagnostics_page_sanitizes_log_and_debug_payload_shapes():
     assert "String(result.data?.logs || '')" not in text
 
 
+def test_diagnostics_page_exposes_filter_level_download_and_clear_controls():
+    text = read(DIAGNOSTICS_PAGE)
+    assert 'aria-label="筛选日志关键词"' in text
+    assert 'aria-label="筛选日志级别"' in text
+    assert "LOG_LEVELS.map" in text
+    assert "setLevelFilter(event.target.value as LogFilter)" in text
+    assert "const download = () =>" in text
+    assert "a.download = 'easy_proxies.log'" in text
+    assert "URL.revokeObjectURL(url)" in text
+    assert "const clearFilters = () =>" in text
+    assert "当前筛选没有匹配日志" in text
+
+
 if __name__ == "__main__":
     test_status_page_uses_region_labels_in_text_lists()
     test_status_page_fetches_all_node_pages_for_large_free_source_pools()
     test_diagnostics_page_surfaces_debug_and_log_query_errors()
+    test_diagnostics_clear_logs_pauses_auto_refresh()
+    test_diagnostics_page_exposes_filter_level_download_and_clear_controls()
     test_diagnostics_page_sanitizes_log_and_debug_payload_shapes()

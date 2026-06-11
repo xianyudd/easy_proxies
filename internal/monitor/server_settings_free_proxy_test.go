@@ -832,6 +832,58 @@ free_proxy_filter:
 	}
 }
 
+func TestHandleSettingsRejectsInvalidFreeProxyFilterTierWithoutMutatingMemory(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+free_proxy_filter:
+  enabled: true
+  min_tier: simple_web
+  workers: 12
+  timeout: 1500ms
+  max_candidates: 100
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	body := []byte(`{
+		"external_ip": "2.2.2.2",
+		"free_proxy_filter": {
+			"enabled": true,
+			"min_tier": "bad-tier",
+			"workers": 22,
+			"timeout": "1500ms",
+			"max_candidates": 200,
+			"probes": {"http":"http://cp.cloudflare.com/generate_204","https":"https://example.com/"}
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_free_proxy_filter_min_tier")
+	if server.cfgSrc.ExternalIP != "1.1.1.1" || server.cfgSrc.FreeProxyFilter.MinTier != "simple_web" || server.cfgSrc.FreeProxyFilter.Workers != 12 {
+		t.Fatalf("invalid free proxy filter tier should not mutate memory: external_ip=%q filter=%#v", server.cfgSrc.ExternalIP, server.cfgSrc.FreeProxyFilter)
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ExternalIP != "1.1.1.1" || reloaded.FreeProxyFilter.MinTier != "simple_web" || reloaded.FreeProxyFilter.Workers != 12 {
+		t.Fatalf("invalid free proxy filter tier should not be persisted: external_ip=%q filter=%#v", reloaded.ExternalIP, reloaded.FreeProxyFilter)
+	}
+}
+
 func TestHandleSettingsRejectsNonPositiveFreeProxyDurationsWithoutMutatingMemory(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
@@ -1112,6 +1164,7 @@ free_proxy_sources:
 		{name: "negative timeout", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","url":"https://example.test/proxies.txt","format":"txt","timeout":"-1s","max_nodes":100,"max_bytes":1024}]}`},
 		{name: "negative max nodes", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","url":"https://example.test/proxies.txt","format":"txt","timeout":"5s","max_nodes":-1,"max_bytes":1024}]}`},
 		{name: "negative max bytes", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","url":"https://example.test/proxies.txt","format":"txt","timeout":"5s","max_nodes":100,"max_bytes":-1}]}`},
+		{name: "enabled missing locator", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","format":"txt","timeout":"5s","enabled":true}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(tc.body))
@@ -1128,6 +1181,92 @@ free_proxy_sources:
 				t.Fatalf("invalid free proxy source numbers should not be persisted: external_ip=%q max=%d sources=%#v", reloaded.ExternalIP, reloaded.FreeProxyMaxNodes, reloaded.FreeProxySources)
 			}
 		})
+	}
+}
+
+func TestHandleSettingsRejectsInvalidFreeProxySourceEnumsBeforePersisting(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+external_ip: 1.1.1.1
+free_proxy_sources:
+  - name: good-source
+    url: https://example.test/proxies.txt
+    default_scheme: http
+    format: txt
+    timeout: 5s
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "bad format", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","url":"https://example.test/proxies.txt","format":"bad-format","default_scheme":"http","timeout":"5s"}]}`},
+		{name: "bad default scheme", body: `{"external_ip":"2.2.2.2","free_proxy_sources":[{"name":"bad-source","url":"https://example.test/proxies.txt","format":"txt","default_scheme":"bad-scheme","timeout":"5s"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+
+			server.handleSettings(rec, req)
+
+			assertSettingsErrorCode(t, rec, http.StatusBadRequest, "invalid_free_proxy_source")
+			if server.cfgSrc.ExternalIP != "1.1.1.1" || len(server.cfgSrc.FreeProxySources) != 1 || server.cfgSrc.FreeProxySources[0].Name != "good-source" {
+				t.Fatalf("invalid free proxy source enum should not mutate memory: external_ip=%q sources=%#v", server.cfgSrc.ExternalIP, server.cfgSrc.FreeProxySources)
+			}
+			reloaded, err := config.Load(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.ExternalIP != "1.1.1.1" || len(reloaded.FreeProxySources) != 1 || reloaded.FreeProxySources[0].Name != "good-source" || reloaded.FreeProxySources[0].Format != "txt" {
+				t.Fatalf("invalid free proxy source enum should not be persisted: external_ip=%q sources=%#v", reloaded.ExternalIP, reloaded.FreeProxySources)
+			}
+		})
+	}
+}
+
+func TestHandleSettingsAllowsDisabledFreeProxySourceWithoutLocator(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_sources: []
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg}
+
+	body := []byte(`{"free_proxy_sources":[{"name":"disabled-placeholder","enabled":false,"format":"text"}]}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	server.handleSettings(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.FreeProxySources) != 1 || reloaded.FreeProxySources[0].EnabledValue() || reloaded.FreeProxySources[0].Name != "disabled-placeholder" {
+		t.Fatalf("disabled placeholder source was not preserved: %#v", reloaded.FreeProxySources)
 	}
 }
 
@@ -2556,6 +2695,80 @@ free_proxy_filter:
 	}
 }
 
+func TestHandleSettingsClearsStaleFreeProxyRefreshStatusWhenSourcesDisabled(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	sourcePath := filepath.Join(tmp, "free.txt")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	if err := os.WriteFile(sourcePath, []byte("http://127.0.0.1:18080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+free_proxy_filter:
+  enabled: false
+free_proxy_sources:
+  - name: local-test
+    file: ` + sourcePath + `
+    default_scheme: http
+    format: txt
+    enabled: true
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeNodeManager{done: make(chan struct{})}
+	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
+	if _, started, err := server.startFreeProxyRefresh("test"); err != nil || !started {
+		t.Fatalf("startFreeProxyRefresh started=%v err=%v", started, err)
+	}
+	status := waitFreeProxyRefreshDone(t, server, 2*time.Second)
+	if status.State != "succeeded" || status.Accepted != 1 || status.EnabledSources != 1 {
+		t.Fatalf("expected seeded successful status, got %#v", status)
+	}
+
+	body := []byte(`{
+		"free_proxy_sources": [
+			{"name":"local-test","file":"` + sourcePath + `","default_scheme":"http","format":"txt","enabled":false,"max_nodes":0}
+		],
+		"free_proxy_cache": {"enabled":true,"path":"` + cachePath + `","auto_reload":true,"workers":1,"max_age":"6h"},
+		"free_proxy_filter": {"enabled":false,"min_tier":"http_basic","workers":1,"timeout":"100ms","max_candidates":0}
+	}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		NeedReload             bool                   `json:"need_reload"`
+		FreeProxyRefreshNeeded bool                   `json:"free_proxy_refresh_needed"`
+		FreeProxyRefreshStatus freeProxyRefreshStatus `json:"free_proxy_refresh_status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.NeedReload || resp.FreeProxyRefreshNeeded {
+		t.Fatalf("disabling a previously refreshable source should request reload without refresh: %#v body=%s", resp, rec.Body.String())
+	}
+	if resp.FreeProxyRefreshStatus.State != "idle" || resp.FreeProxyRefreshStatus.Accepted != 0 || resp.FreeProxyRefreshStatus.EnabledSources != 0 || len(resp.FreeProxyRefreshStatus.Sources) != 0 {
+		t.Fatalf("stale free proxy refresh status was not cleared: %#v body=%s", resp.FreeProxyRefreshStatus, rec.Body.String())
+	}
+	status = server.currentFreeProxyRefreshStatus()
+	if status.State != "idle" || status.Accepted != 0 || status.EnabledSources != 0 || len(status.Sources) != 0 {
+		t.Fatalf("global free proxy refresh status still stale: %#v", status)
+	}
+}
+
 func TestFreeProxyRefreshStatusIncludesPerSourceFailureDetails(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
@@ -2994,6 +3207,7 @@ free_proxy_cache:
   path: ` + cachePath + `
   auto_reload: true
   max_age: 1h
+  workers: 1
 free_proxy_filter:
   enabled: false
   min_tier: http_basic
@@ -3012,7 +3226,11 @@ free_proxy_sources:
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeMatchingFreeProxyCacheMetadata(t, cfg, configPath)
+	metaCfg := *cfg
+	metaCfg.FreeProxySources = append([]nodesource.SourceConfig(nil), cfg.FreeProxySources...)
+	enabled := true
+	metaCfg.FreeProxySources[0].Enabled = &enabled
+	writeMatchingFreeProxyCacheMetadata(t, &metaCfg, configPath)
 	fake := &fakeNodeManager{done: make(chan struct{})}
 	server := &Server{cfgSrc: cfg, nodeMgr: fake, reloadState: "idle"}
 
@@ -3021,7 +3239,7 @@ free_proxy_sources:
 			{"name":"remote","url":"http://127.0.0.1:1/missing.txt","format":"txt","enabled":true,"timeout":"1s"}
 		],
 		"free_proxy_cache": {"enabled":true,"path":"` + cachePath + `","auto_reload":true,"workers":1,"max_age":"1h"},
-		"free_proxy_filter": {"enabled":false,"min_tier":"http_basic","workers":1,"timeout":"200ms","max_candidates":0}
+		"free_proxy_filter": {"enabled":false,"min_tier":"http_basic","workers":1,"timeout":"100ms","max_candidates":0}
 	}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -3070,6 +3288,7 @@ free_proxy_cache:
   path: ` + cachePath + `
   auto_reload: true
   max_age: 1h
+  workers: 1
 free_proxy_filter:
   enabled: false
   min_tier: http_basic
@@ -3102,7 +3321,7 @@ free_proxy_sources:
 			{"name":"remote","url":"http://127.0.0.1:1/missing.txt","format":"txt","enabled":true,"timeout":"1s"}
 		],
 		"free_proxy_cache": {"enabled":true,"path":"` + cachePath + `","auto_reload":true,"workers":1,"max_age":"1h"},
-		"free_proxy_filter": {"enabled":false,"min_tier":"http_basic","workers":1,"timeout":"200ms","max_candidates":0}
+		"free_proxy_filter": {"enabled":false,"min_tier":"http_basic","workers":1,"timeout":"100ms","max_candidates":0}
 	}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -3432,6 +3651,74 @@ free_proxy_sources:
 	}
 	if !strings.Contains(resp.Message, "没有已启用") {
 		t.Fatalf("message should explain no enabled sources, got %#v body=%s", resp, rec.Body.String())
+	}
+}
+
+func TestFreeProxyRefreshStatusReflectsConfiguredSourceCountsBeforeRefresh(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	cachePath := filepath.Join(tmp, "cache.txt")
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+free_proxy_cache:
+  enabled: true
+  path: ` + cachePath + `
+  auto_reload: true
+free_proxy_filter:
+  enabled: true
+  min_tier: http_basic
+  workers: 3
+  timeout: 2s
+  max_candidates: 0
+  max_probe_candidates: 123
+free_proxy_sources:
+  - name: enabled-a
+    url: http://127.0.0.1:1/a.txt
+    enabled: true
+    format: txt
+  - name: enabled-default
+    url: http://127.0.0.1:1/b.txt
+    format: txt
+  - name: disabled-c
+    url: http://127.0.0.1:1/c.txt
+    enabled: false
+    format: txt
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, reloadState: "idle"}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/free-proxy/refresh/status", nil)
+	server.handleFreeProxyRefreshStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		State             string `json:"state"`
+		TotalSources      int    `json:"total_sources"`
+		EnabledSources    int    `json:"enabled_sources"`
+		CacheEnabled      bool   `json:"cache_enabled"`
+		AutoReload        bool   `json:"auto_reload"`
+		FilterEnabled     bool   `json:"filter_enabled"`
+		FilterMinTier     string `json:"filter_min_tier"`
+		FilterProbeBudget int    `json:"filter_probe_budget"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.State != "idle" || resp.TotalSources != 3 || resp.EnabledSources != 2 {
+		t.Fatalf("status should reflect configured source counts before any refresh, got %#v body=%s", resp, rec.Body.String())
+	}
+	if !resp.CacheEnabled || !resp.AutoReload || !resp.FilterEnabled || resp.FilterMinTier != "http_basic" || resp.FilterProbeBudget != 123 {
+		t.Fatalf("status should include current cache/filter context, got %#v body=%s", resp, rec.Body.String())
 	}
 }
 
@@ -3858,6 +4145,127 @@ func TestHandleSettingsPreservesManagementListenWhenOmitted(t *testing.T) {
 	}
 }
 
+func TestHandleSettingsKeepsSessionWhenManagementPasswordUnchanged(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil {
+		t.Fatal("server is nil")
+	}
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+management:
+  listen: 127.0.0.1:0
+  password: same-secret
+listener:
+  username: user
+  password: pass
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetConfig(cfg)
+
+	authRec := httptest.NewRecorder()
+	srv.handleAuth(authRec, httptest.NewRequest(http.MethodPost, "/api/auth", strings.NewReader(`{"password":"same-secret"}`)))
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("login should work before unchanged settings save: status=%d body=%s", authRec.Code, authRec.Body.String())
+	}
+	cookies := authRec.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("login did not set session cookie")
+	}
+
+	body := `{"management":{"listen":"127.0.0.1:0","password":"same-secret"},"listener":{"username":"user","password":"pass"}}`
+	settingsRec := httptest.NewRecorder()
+	srv.handleSettings(settingsRec, httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(body)))
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, body = %s", settingsRec.Code, settingsRec.Body.String())
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	statusReq.AddCookie(cookies[0])
+	statusRec := httptest.NewRecorder()
+	srv.handleAuthStatus(statusRec, statusReq)
+	var statusBody struct {
+		Authenticated bool `json:"authenticated"`
+	}
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &statusBody); err != nil {
+		t.Fatal(err)
+	}
+	if !statusBody.Authenticated {
+		t.Fatalf("session should survive settings save when management password is unchanged: %s", statusRec.Body.String())
+	}
+}
+
+func TestHandleSettingsManagementPasswordHotAppliesToAuth(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(Config{Enabled: true, Listen: "127.0.0.1:0"}, mgr, nil)
+	if srv == nil {
+		t.Fatal("server is nil")
+	}
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("nodes:\n  - name: base\n    uri: http://127.0.0.1:18080\nmanagement:\n  listen: 127.0.0.1:0\n  password: old-secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.SetConfig(cfg)
+
+	oldAuth := httptest.NewRecorder()
+	srv.handleAuth(oldAuth, httptest.NewRequest(http.MethodPost, "/api/auth", strings.NewReader(`{"password":"old-secret"}`)))
+	if oldAuth.Code != http.StatusOK {
+		t.Fatalf("old password should work before update: status=%d body=%s", oldAuth.Code, oldAuth.Body.String())
+	}
+	oldCookie := oldAuth.Result().Cookies()[0]
+
+	rec := httptest.NewRecorder()
+	srv.handleSettings(rec, httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"management":{"password":"new-secret"}}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	statusReq.AddCookie(oldCookie)
+	statusRec := httptest.NewRecorder()
+	srv.handleAuthStatus(statusRec, statusReq)
+	var statusBody struct {
+		Authenticated bool `json:"authenticated"`
+	}
+	if err := json.Unmarshal(statusRec.Body.Bytes(), &statusBody); err != nil {
+		t.Fatal(err)
+	}
+	if statusBody.Authenticated {
+		t.Fatalf("old session should be invalidated after password change: %s", statusRec.Body.String())
+	}
+
+	wrong := httptest.NewRecorder()
+	srv.handleAuth(wrong, httptest.NewRequest(http.MethodPost, "/api/auth", strings.NewReader(`{"password":"old-secret"}`)))
+	if wrong.Code != http.StatusUnauthorized {
+		t.Fatalf("old password should fail after update: status=%d body=%s", wrong.Code, wrong.Body.String())
+	}
+
+	right := httptest.NewRecorder()
+	srv.handleAuth(right, httptest.NewRequest(http.MethodPost, "/api/auth", strings.NewReader(`{"password":"new-secret"}`)))
+	if right.Code != http.StatusOK {
+		t.Fatalf("new password should work after update: status=%d body=%s", right.Code, right.Body.String())
+	}
+}
+
 func TestHandleSettingsPreservesManagementPasswordWhenOmitted(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.yaml")
@@ -3892,6 +4300,134 @@ management:
 	}
 	if reloaded.Management.Listen != listen || reloaded.Management.Password != "old-secret" {
 		t.Fatalf("management partial update should preserve password: %#v", reloaded.Management)
+	}
+}
+
+func TestHandleSettingsRoundTripDoesNotClearManagementPassword(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+management:
+  listen: ` + listen + `
+  password: old-secret
+listener:
+  username: user
+  password: pass
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, cfg: Config{Listen: listen, Password: "old-secret"}, reloadState: "idle"}
+
+	getRec := httptest.NewRecorder()
+	server.handleSettings(getRec, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", getRec.Code, getRec.Body.String())
+	}
+	if strings.Contains(getRec.Body.String(), "old-secret") {
+		t.Fatalf("GET should not leak management password: %s", getRec.Body.String())
+	}
+
+	putRec := httptest.NewRecorder()
+	server.handleSettings(putRec, httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(getRec.Body.Bytes())))
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, body = %s", putRec.Code, putRec.Body.String())
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Management.Password != "old-secret" {
+		t.Fatalf("GET/PUT round-trip should preserve management password, got %#v", reloaded.Management)
+	}
+}
+
+func TestHandleSettingsClearsManagementPasswordOnlyWhenExplicit(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	listen := freeLocalListen(t)
+	initial := []byte(`nodes:
+  - name: base
+    uri: http://127.0.0.1:18080
+management:
+  listen: ` + listen + `
+  password: old-secret
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{cfgSrc: cfg, cfg: Config{Listen: listen, Password: "old-secret"}, reloadState: "idle"}
+
+	preserveRec := httptest.NewRecorder()
+	server.handleSettings(preserveRec, httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"management":{"listen":"`+listen+`","password":""}}`)))
+	if preserveRec.Code != http.StatusOK {
+		t.Fatalf("preserve status = %d, body = %s", preserveRec.Code, preserveRec.Body.String())
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Management.Password != "old-secret" {
+		t.Fatalf("empty management password should preserve old password, got %#v", reloaded.Management)
+	}
+
+	clearRec := httptest.NewRecorder()
+	server.handleSettings(clearRec, httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(`{"management":{"listen":"`+listen+`","clear_password":true}}`)))
+	if clearRec.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, body = %s", clearRec.Code, clearRec.Body.String())
+	}
+	reloaded, err = config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Management.Password != "" {
+		t.Fatalf("explicit clear_password should clear management password, got %#v", reloaded.Management)
+	}
+}
+
+func TestHandleSettingsDoesNotReturnManagementPassword(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Management: config.ManagementConfig{
+			Listen:   "127.0.0.1:0",
+			Password: "super-secret",
+		},
+	}
+	server := &Server{cfgSrc: cfg, cfg: Config{Listen: cfg.Management.Listen}}
+
+	rec := httptest.NewRecorder()
+	server.handleSettings(rec, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Management map[string]any `json:"management"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if got := body.Management["password"]; got != "" {
+		t.Fatalf("management password should not be returned, got %#v body=%s", got, rec.Body.String())
+	}
+	if got := body.Management["password_set"]; got != true {
+		t.Fatalf("management password_set should be true, got %#v body=%s", got, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "super-secret") {
+		t.Fatalf("settings response leaked management password: %s", rec.Body.String())
 	}
 }
 

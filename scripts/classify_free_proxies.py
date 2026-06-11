@@ -71,7 +71,7 @@ def curl_cmd(proxy: str, probe: Probe, timeout: float) -> list[str]:
     cmd = [
         "curl",
         "--noproxy",
-        "*",
+        "",
         "--max-time",
         str(timeout),
         "-sS",

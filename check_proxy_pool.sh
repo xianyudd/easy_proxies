@@ -46,18 +46,20 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 curl_proxy() {
   local proxy_url="$1"
   local target="$2"
+  local proxy_user="${3:-$LISTENER_USER:$LISTENER_PASS}"
   curl --max-time "$TIMEOUT" --silent --show-error -L \
     --proxy "$proxy_url" \
-    --proxy-user "$LISTENER_USER:$LISTENER_PASS" \
+    --proxy-user "$proxy_user" \
     "$target"
 }
 
 proxy_http_code() {
   local proxy_url="$1"
   local target="$2"
+  local proxy_user="${3:-$LISTENER_USER:$LISTENER_PASS}"
   curl --max-time "$TIMEOUT" --silent -o /dev/null -w '%{http_code}' \
     --proxy "$proxy_url" \
-    --proxy-user "$LISTENER_USER:$LISTENER_PASS" \
+    --proxy-user "$proxy_user" \
     "$target" || true
 }
 
@@ -68,11 +70,12 @@ parse_country() {
 show_result() {
   local name="$1"
   local proxy_url="$2"
+  local proxy_user="${3:-$LISTENER_USER:$LISTENER_PASS}"
   local code ip info country
-  code="$(proxy_http_code "$proxy_url" "http://cp.cloudflare.com/generate_204")"
+  code="$(proxy_http_code "$proxy_url" "http://cp.cloudflare.com/generate_204" "$proxy_user")"
   if [ "$code" = "204" ] || [ "$code" = "200" ]; then
-    ip="$(curl_proxy "$proxy_url" "https://api.ipify.org" 2>/dev/null || true)"
-    info="$(curl_proxy "$proxy_url" "https://ipinfo.io/json" 2>/dev/null || true)"
+    ip="$(curl_proxy "$proxy_url" "https://api.ipify.org" "$proxy_user" 2>/dev/null || true)"
+    info="$(curl_proxy "$proxy_url" "https://ipinfo.io/json" "$proxy_user" 2>/dev/null || true)"
     country="$(printf '%s' "$info" | parse_country)"
     if [ -n "$country" ]; then
       echo "[OK] $name | HTTP=$code | IP=$ip | Country=$country"
@@ -97,9 +100,13 @@ show_result "默认代理池" "$POOL_PROXY"
 
 echo
 if [ "$GEOIP_ENABLED" = "true" ]; then
-  for region in us jp hk sg; do
-    show_result "地域代理/$region" "http://${GEOIP_ADDR}:${GEOIP_PORT}/${region}/"
-  done
+  if [ -z "$LISTENER_USER" ]; then
+    echo "[SKIP] GeoIP 地域路由需要 listener.username 才能用用户名后缀选区"
+  else
+    for region in us jp hk sg; do
+      show_result "地域代理/$region" "http://${GEOIP_ADDR}:${GEOIP_PORT}" "${LISTENER_USER}-${region}:${LISTENER_PASS}"
+    done
+  fi
 else
   echo "[SKIP] GeoIP 地域路由未启用，US/JP/HK/SG 入口当前不可用"
 fi

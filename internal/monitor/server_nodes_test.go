@@ -6,9 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"easy_proxies/internal/config"
 )
 
 func TestHandleNodesLegacyAndUnknownQueryUseFilteredNodes(t *testing.T) {
@@ -63,6 +67,105 @@ func TestHandleNodesPagedFiltersSourceAndAvailability(t *testing.T) {
 	}
 	if payload.SourceStats["subscription"] != 1 || payload.SourceStats["free_proxy"] != 2 {
 		t.Fatalf("bad source stats: %#v", payload.SourceStats)
+	}
+}
+
+func TestHandleNodesPagedSearchAliasesFilterRows(t *testing.T) {
+	server := newTestNodesServer(t)
+	for _, tc := range []struct {
+		name    string
+		path    string
+		wantTag string
+	}{
+		{name: "q", path: "/api/nodes?page=1&page_size=10&availability=all&q=Sub%20A", wantTag: "sub-a"},
+		{name: "search", path: "/api/nodes?page=1&page_size=10&availability=all&search=2.2.2.2", wantTag: "free-b"},
+		{name: "keyword", path: "/api/nodes?page=1&page_size=10&availability=all&keyword=Free%20C", wantTag: "free-c"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rr := httptest.NewRecorder()
+
+			server.handleNodes(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status=%d, want 200 body=%s", rr.Code, rr.Body.String())
+			}
+			var payload struct {
+				Nodes         []Snapshot `json:"nodes"`
+				TotalFiltered int        `json:"total_filtered"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.TotalFiltered != 1 || len(payload.Nodes) != 1 || payload.Nodes[0].Tag != tc.wantTag {
+				t.Fatalf("expected only %s, got %#v", tc.wantTag, payload)
+			}
+		})
+	}
+}
+
+func TestHandleNodesPagedAvailableBoolAliasFiltersRows(t *testing.T) {
+	server := newTestNodesServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes?page=1&page_size=10&source=free_proxy&available=true", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleNodes(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Nodes         []Snapshot `json:"nodes"`
+		TotalFiltered int        `json:"total_filtered"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.TotalFiltered != 0 || len(payload.Nodes) != 0 {
+		t.Fatalf("available=true should filter to healthy free_proxy rows, got %#v", payload)
+	}
+}
+
+func TestHandleNodesPagedRegionOtherIncludesBlankAndOtherOnly(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Register(NodeInfo{Tag: "blank-region", Name: "Blank Region", URI: "http://1.1.1.1:80", Region: "", Source: "free_proxy", Port: 13001}).MarkInitialCheckDone(true)
+	mgr.Register(NodeInfo{Tag: "other-region", Name: "Other Region", URI: "http://2.2.2.2:80", Region: "other", Source: "free_proxy", Port: 13002}).MarkInitialCheckDone(true)
+	mgr.Register(NodeInfo{Tag: "us-region", Name: "US Region", URI: "http://3.3.3.3:80", Region: "us", Source: "free_proxy", Port: 13003}).MarkInitialCheckDone(true)
+	server := &Server{mgr: mgr}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes?page=1&page_size=10&region=other&availability=all", nil)
+	rr := httptest.NewRecorder()
+	server.handleNodes(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Nodes         []Snapshot     `json:"nodes"`
+		TotalFiltered int            `json:"total_filtered"`
+		RegionStats   map[string]int `json:"region_stats"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.TotalFiltered != 2 || len(payload.Nodes) != 2 {
+		t.Fatalf("region=other should expose only blank/other queue rows, got %#v", payload)
+	}
+	gotTags := map[string]bool{}
+	for _, node := range payload.Nodes {
+		gotTags[node.Tag] = true
+		if node.Tag == "us-region" {
+			t.Fatalf("region=other must not include concrete region rows: %#v", payload.Nodes)
+		}
+	}
+	if !gotTags["blank-region"] || !gotTags["other-region"] {
+		t.Fatalf("region=other missing blank/other rows: %#v", payload.Nodes)
+	}
+	if payload.RegionStats["other"] != 2 || payload.RegionStats["us"] != 1 {
+		t.Fatalf("summary stats should count blank region as other and keep concrete regions: %#v", payload.RegionStats)
 	}
 }
 
@@ -188,6 +291,38 @@ func TestHandleNodesAcceptsFrontendDefaultLatencySort(t *testing.T) {
 	}
 	if payload.TotalFiltered != 1 || len(payload.Nodes) != 1 || payload.Nodes[0].Tag != "sub-a" {
 		t.Fatalf("expected available node sorted by latency, got %#v", payload)
+	}
+}
+
+func TestSortNodeSnapshotsDefaultUsesStablePortOrder(t *testing.T) {
+	nodes := []Snapshot{
+		{NodeInfo: NodeInfo{Tag: "slow", Name: "Slow", Port: 13003}, LastLatencyMs: 1},
+		{NodeInfo: NodeInfo{Tag: "fast", Name: "Fast", Port: 13001}, LastLatencyMs: 999},
+		{NodeInfo: NodeInfo{Tag: "middle", Name: "Middle", Port: 13002}, LastLatencyMs: 50},
+	}
+
+	sortNodeSnapshots(nodes, "")
+
+	got := []string{nodes[0].Tag, nodes[1].Tag, nodes[2].Tag}
+	want := []string{"fast", "middle", "slow"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("default sort tags=%v, want stable port order %v", got, want)
+	}
+}
+
+func TestSortNodeSnapshotsLatencySortRemainsExplicit(t *testing.T) {
+	nodes := []Snapshot{
+		{NodeInfo: NodeInfo{Tag: "slow", Name: "Slow", Port: 13003}, LastLatencyMs: 999},
+		{NodeInfo: NodeInfo{Tag: "fast", Name: "Fast", Port: 13001}, LastLatencyMs: 1},
+		{NodeInfo: NodeInfo{Tag: "middle", Name: "Middle", Port: 13002}, LastLatencyMs: 50},
+	}
+
+	sortNodeSnapshots(nodes, "latency")
+
+	got := []string{nodes[0].Tag, nodes[1].Tag, nodes[2].Tag}
+	want := []string{"fast", "middle", "slow"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("latency sort tags=%v, want %v", got, want)
 	}
 }
 
@@ -558,5 +693,95 @@ func assertNodeActionErrorCode(t *testing.T, rr *httptest.ResponseRecorder, code
 	}
 	if body.Error == "" || body.Code != code {
 		t.Fatalf("unexpected body: %#v raw=%s", body, rr.Body.String())
+	}
+}
+
+func TestNodeActionRegionConfirmsRuntimeRegionAndPersistsOverride(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	initial := []byte(`nodes:
+  - name: manual
+    uri: http://4.4.4.4:80#Manual
+`)
+	if err := os.WriteFile(configPath, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Register(NodeInfo{Tag: "manual-node", Name: "Manual", URI: "http://4.4.4.4:80#Manual", Region: "other", Country: "Unknown", Source: "free_proxy", Port: 13030})
+	server := &Server{mgr: mgr, cfgSrc: cfg}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/nodes/manual-node/region", strings.NewReader(`{"region":"jp"}`))
+	rr := httptest.NewRecorder()
+	server.handleNodeAction(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		NeedReload bool     `json:"need_reload"`
+		Node       Snapshot `json:"node"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.NeedReload || payload.Node.Region != "jp" || payload.Node.Country != "日本" {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+	snap, err := mgr.SnapshotFor("manual-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Region != "jp" || snap.Country != "日本" {
+		t.Fatalf("runtime region not updated: %#v", snap)
+	}
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := reloaded.RegionOverrideForURI("http://4.4.4.4:80#manual"); !ok || got != "jp" {
+		t.Fatalf("persisted override = %q, %v; want jp,true", got, ok)
+	}
+}
+
+func TestNodeActionRegionRejectsOtherAndInvalidRegionWithoutMutation(t *testing.T) {
+	mgr, err := NewManager(Config{Enabled: true, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.Register(NodeInfo{Tag: "manual-node", Name: "Manual", URI: "http://4.4.4.4:80", Region: "other", Country: "Unknown", Source: "free_proxy", Port: 13030})
+	server := &Server{mgr: mgr}
+
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "other", body: `{"region":"other"}`},
+		{name: "all", body: `{"region":"all"}`},
+		{name: "invalid", body: `{"region":"moon"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/nodes/manual-node/region", strings.NewReader(tc.body))
+			rr := httptest.NewRecorder()
+			server.handleNodeAction(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400 body=%s", rr.Code, rr.Body.String())
+			}
+			assertNodeActionErrorCode(t, rr, "invalid_region")
+			snap, err := mgr.SnapshotFor("manual-node")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snap.Region != "other" || snap.Country != "Unknown" {
+				t.Fatalf("invalid region request should not mutate node, got %#v", snap)
+			}
+		})
 	}
 }
