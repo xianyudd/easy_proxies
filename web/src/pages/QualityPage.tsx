@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { InputNumber, Progress, Select, Space, Table } from 'antd'
+import { InputNumber, Pagination, Progress, Select, Space, Table } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { getNodes, getNodesSummary } from '../api/nodes'
@@ -28,6 +28,16 @@ function qualityTone(score: number) { return score >= 80 ? 'good' : score >= 60 
 function riskPenalty(level?: string) { return level === 'low' ? 0 : level === 'medium' ? 18 : level === 'high' ? 36 : level === 'failed' ? 50 : 12 }
 function riskScore(row?: ReputationResult) { const r = row?.result || row; return Number(r?.risk_score) || 0 }
 function failedCf(row: CloudflareResult) { return row.level === 'failed' || !!row.error }
+function sourceLabel(source?: string) {
+  return ({
+    all: '全部来源',
+    free_proxy: '免费源',
+    subscription: '订阅源',
+    inline: '内联',
+    nodes_file: '节点文件',
+    unknown: '未知',
+  } as Record<string, string>)[source || ''] || source || '-'
+}
 function rowKey(row: { node_tag?: string; port?: number; target_index?: number; node_name?: string; name?: string; host?: string; exit_ip?: string }) {
   return row.node_tag
     || (typeof row.target_index === 'number' ? `target:${row.target_index}` : '')
@@ -88,7 +98,7 @@ function regionUpdateText(summary?: ReputationRegionUpdateSummary | null) {
   return `检查 ${summary.checked || 0} 个，更新 ${summary.updated || 0} 个，未变 ${summary.unchanged || 0} 个，跳过 ${summary.skipped || 0} 个，持久化 ${summary.persisted || 0} 个`
 }
 
-type QualityRow = { key: string; row: CloudflareResult; rep?: ReputationResult; repRisk: string; score: number; tier?: string; pool?: string }
+type QualityRow = { key: string; row: CloudflareResult; rep?: ReputationResult; repRisk: string; score: number; tier?: string; pool?: string; source?: string }
 const QUALITY_REGION_OPTIONS = Object.entries(REGION_META).map(([value, meta]) => ({ value, label: meta.label }))
 
 function reputationExitIp(row: ReputationResult) {
@@ -115,6 +125,8 @@ export function QualityPage() {
   const [filter, setFilter] = useState('all')
   const [tierFilter, setTierFilter] = useState('all')
   const [poolFilter, setPoolFilter] = useState('all')
+  const [mobileResultPage, setMobileResultPage] = useState(1)
+  const [mobileResultPageSize, setMobileResultPageSize] = useState(20)
   const toast = useToast(s => s.show)
   const setActiveTab = useAppStore(s => s.setActiveTab)
   const setExtractorParams = useExtractorStore(s => s.setParams)
@@ -133,7 +145,7 @@ export function QualityPage() {
   const sourceCountLabel = (key: string) => hasSummaryError ? '未知' : String(sourceStats[key] || 0)
   const sourceCount = source === 'all' ? (nodesSummary.data?.total_nodes || nodesQuery.data?.length || 0) : Number(sourceStats[source] || 0)
   const scanCount = Math.min(50, Math.max(1, count))
-  const pipelineCount = source === 'all' ? Math.max(sourceCount, 500) : sourceCount
+  const pipelineCount = sourceCount
   const hasPipelineTargets = pipelineCount > 0
   const jobRunning = !!jobId && !isTerminalJob(jobQuery.data)
   const cacheLoading = cfCache.isFetching || repCache.isFetching
@@ -141,7 +153,10 @@ export function QualityPage() {
   const canCreatePipeline = !nodesSummary.isLoading && !hasSummaryError && !jobRunning && hasPipelineTargets
   const canRetryPipeline = !nodesSummary.isLoading && !hasSummaryError && hasPipelineTargets
   const canRunSampleCheck = !nodesSummary.isLoading && !hasSummaryError && !jobRunning
+  const selectedSourceLabel = sourceLabel(source)
   const scanAllLabel = nodesSummary.isLoading ? 'Pipeline 扫描节点（统计加载中）' : hasSummaryError ? 'Pipeline 扫描节点（数量未知）' : !hasPipelineTargets ? 'Pipeline 无可扫描节点' : `Pipeline 扫描 ${pipelineCount} 个节点`
+  const pipelineTargetText = nodesSummary.isLoading ? '统计加载中' : hasSummaryError ? '数量未知' : `${selectedSourceLabel} · ${pipelineCount} 个目标`
+  const sampleTargetText = nodesSummary.isLoading ? '统计加载中' : hasSummaryError ? '数量未知' : `${selectedSourceLabel} · 抽样 ${scanCount} 个`
   const qualitySource = source === 'all' ? undefined : source
   const showCacheMode = () => {
     setJobId('')
@@ -264,11 +279,27 @@ export function QualityPage() {
         const latencyPenalty = Number(r.latency_ms) > 3000 ? 12 : Number(r.latency_ms) > 1000 ? 6 : Number(r.latency_ms) > 500 ? 3 : 0
         const rawJob = jobMetaByKey.get(rowKey(r))
         const score = jobId && typeof rawJob?.final_score === 'number' ? Number(rawJob.final_score) : Math.max(0, Math.min(100, Math.round(cfScore - riskPenalty(repRisk) - latencyPenalty)))
-        return { key: rowKey(r), row: r, rep, repRisk, score, tier: rawJob?.tier, pool: rawJob?.pool }
+        return { key: rowKey(r), row: r, rep, repRisk, score, tier: rawJob?.tier, pool: rawJob?.pool, source: rawJob?.source || (jobId ? undefined : source) }
       })
     const filtered = mapped.filter(item => (tierFilter === 'all' || item.tier === tierFilter) && (poolFilter === 'all' || item.pool === poolFilter))
     return jobId ? filtered : filtered.sort((a, b) => b.score - a.score || (Number(a.row.latency_ms) || 0) - (Number(b.row.latency_ms) || 0))
-  }, [activeCfRows, filter, jobId, poolFilter, repByExitIp, repByPort, jobMetaByKey, tierFilter])
+  }, [activeCfRows, filter, jobId, poolFilter, repByExitIp, repByPort, jobMetaByKey, source, tierFilter])
+  useEffect(() => {
+    setMobileResultPage(1)
+  }, [filter, tierFilter, poolFilter, source, region, jobId])
+  const mobilePage = jobId ? resultPage : mobileResultPage
+  const mobilePageSize = jobId ? resultPageSize : mobileResultPageSize
+  const mobileTotal = jobId ? (jobResults.data?.count || rows.length) : rows.length
+  const mobileRows = jobId ? rows : rows.slice((mobileResultPage - 1) * mobileResultPageSize, mobileResultPage * mobileResultPageSize)
+  const onMobilePageChange = (page: number, pageSize: number) => {
+    if (jobId) {
+      setResultPage(page)
+      setResultPageSize(pageSize)
+      return
+    }
+    setMobileResultPage(page)
+    setMobileResultPageSize(pageSize)
+  }
   const proxyUrl = (row: CloudflareResult) => {
     const mp = (settings.data?.multi_port || {}) as Record<string, unknown>
     const host = String(row.host || mp.address || '127.0.0.1')
@@ -304,7 +335,38 @@ export function QualityPage() {
     {jobId && jobQuery.isError && <QueryErrorBanner title="后台任务状态加载失败" error={jobQuery.error} onRetry={() => { void jobQuery.refetch() }} />}
     {jobId && jobResults.isError && <QueryErrorBanner title="后台任务结果加载失败" error={jobResults.error} onRetry={() => { void jobResults.refetch() }} />}
     <div className="card quality-control-card">
-      <div className="quality-control-head"><div><div className="panel-title">检测流程</div><div className="panel-subtitle">Pipeline 会先快速预筛，再只对可连通节点执行 CF/IP 风险深度检测；同步 CF 抽样最多 50 个节点。</div></div><div className="quality-control-actions"><Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => { void startQualityJob(false) }}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button><Button disabled={!canRetryPipeline || retryScan.isPending} onClick={() => { void startQualityJob(true) }}>{retryScan.isPending ? '重试中...' : jobRunning ? '替换当前任务并重试失败节点' : 'Pipeline 重试失败节点'}</Button><Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button><Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button><Button disabled={!canRunSampleCheck || regionCalibrate.isPending} onClick={() => regionCalibrate.mutate()}>{regionCalibrate.isPending ? '校准中...' : '出口校准地区'}</Button><Button variant="primary" disabled={!needRegionReload || regionReload.isPending || regionReloadState === 'reloading'} onClick={() => regionReload.mutate()}>{regionReloadState === 'reloading' ? '重载中...' : '重载入池'}</Button></div></div>
+      <div className="quality-control-head">
+        <div>
+          <div className="panel-title">检测流程</div>
+          <div className="panel-subtitle">全量 Pipeline 与同步抽样检测拆开控制：Pipeline 使用当前来源的实际节点数；样本数只影响 CF 抽样和出口地区校准。</div>
+        </div>
+      </div>
+      <div className="quality-action-split" aria-label="质量检测操作区">
+        <section className="quality-action-lane quality-action-lane-primary">
+          <div>
+            <span className="action-kicker">Pipeline</span>
+            <strong>后台全量质量扫描</strong>
+            <p>{pipelineTargetText}。适合正式筛选，结果会写入质量缓存并按 Tier/池展示。</p>
+          </div>
+          <div className="quality-control-actions">
+            <Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => { void startQualityJob(false) }}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button>
+            <Button disabled={!canRetryPipeline || retryScan.isPending} onClick={() => { void startQualityJob(true) }}>{retryScan.isPending ? '重试中...' : jobRunning ? '替换当前任务并重试失败节点' : 'Pipeline 重试失败节点'}</Button>
+            <Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button>
+          </div>
+        </section>
+        <section className="quality-action-lane">
+          <div>
+            <span className="action-kicker">Sample</span>
+            <strong>同步抽样与地区校准</strong>
+            <p>{sampleTargetText}。适合快速确认探针和地区识别；不会替代 Pipeline 的全量结果。</p>
+          </div>
+          <div className="quality-control-actions">
+            <Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button>
+            <Button disabled={!canRunSampleCheck || regionCalibrate.isPending} onClick={() => regionCalibrate.mutate()}>{regionCalibrate.isPending ? '校准中...' : '出口校准地区'}</Button>
+            <Button variant="primary" disabled={!needRegionReload || regionReload.isPending || regionReloadState === 'reloading'} onClick={() => regionReload.mutate()}>{regionReloadState === 'reloading' ? '重载中...' : '重载入池'}</Button>
+          </div>
+        </section>
+      </div>
       <div className="quality-filter-grid modern-filter-grid">
         <div className="field console-field">
           <label>地区范围</label>
@@ -340,6 +402,53 @@ export function QualityPage() {
     </div>
     <div className="summary-grid quality-summary-grid"><div className="metric"><div className="label">预筛通过</div><div className="value success">{summary?.quick?.ok ?? '-'}</div></div><div className="metric"><div className="label">最终推荐</div><div className="value success">{hasCacheError && !jobId ? '-' : summary?.final?.recommend ?? rows.filter(r => r.score >= 75).length}</div></div><div className="metric"><div className="label">CF 优秀</div><div className="value success">{hasCacheError && !jobId ? '-' : summary?.cloudflare?.excellent ?? activeCfRows.filter(r=>r.level==='excellent').length}</div></div><div className="metric"><div className="label">失败/高风险</div><div className="value error">{hasCacheError && !jobId ? '-' : failedCount}</div></div></div>
     <div className="charts-grid quality-charts"><div className="chart-panel"><div className="chart-title">CF 评分分布 <span>{jobId ? 'Current Page' : 'Compatibility'}</span></div><CfDistributionChart rows={activeCfRows} /></div><div className="chart-panel"><div className="chart-title">IP 风险等级 <span>{jobId ? 'Current Page' : 'Reputation'}</span></div><ReputationRiskChart rows={activeRepRows} /></div><div className="chart-panel wide compact-rank-chart"><div className="chart-title">CF 高分节点排行 <span>{jobId ? 'Current Page' : 'Top Scores'}</span></div><CfScoreRankChart rows={rows.slice(0, 10).map(item => item.row)} /></div></div>
-    <div className="card quality-table-card"><div className="panel-header"><div><div className="panel-title">可用节点列表</div><div className="panel-subtitle">{jobId ? `当前页 ${rows.length} 条 / 任务共 ${jobResults.data?.count || 0} 条；后台任务结果由服务端分页返回，不在前端二次筛选排序。` : `共 ${rows.length} 条结果。`}</div></div></div><Table className="quality-table" columns={columns} dataSource={rows} size="middle" scroll={{ x: 1260 }} pagination={jobId ? { current: resultPage, pageSize: resultPageSize, total: jobResults.data?.count || 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (page, pageSize) => { setResultPage(page); setResultPageSize(pageSize) } } : { pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 条` }} locale={{ emptyText: jobResults.isError ? '任务结果接口失败，请先重试。' : hasCacheError ? '质量缓存加载失败，请先重试。' : '暂无质量数据，请先检测或查看缓存。' }} /></div>
+    <div className="card quality-table-card">
+      <div className="panel-header"><div><div className="panel-title">可用节点列表</div><div className="panel-subtitle">{jobId ? `当前页 ${rows.length} 条 / 任务共 ${jobResults.data?.count || 0} 条；后台任务结果由服务端分页返回，不在前端二次筛选排序。` : `共 ${rows.length} 条结果。`}</div></div></div>
+      <div className="quality-table-desktop">
+        <Table className="quality-table" columns={columns} dataSource={rows} size="middle" scroll={{ x: 1260 }} pagination={jobId ? { current: resultPage, pageSize: resultPageSize, total: jobResults.data?.count || 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (page, pageSize) => { setResultPage(page); setResultPageSize(pageSize) } } : { pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 条` }} locale={{ emptyText: jobResults.isError ? '任务结果接口失败，请先重试。' : hasCacheError ? '质量缓存加载失败，请先重试。' : '暂无质量数据，请先检测或查看缓存。' }} />
+      </div>
+      <div className="quality-mobile-list" aria-label="移动端质量卡片列表">
+        {mobileRows.length ? mobileRows.map(item => (
+          <article className="node-card quality-node-card" key={`${item.key}-quality-card`}>
+            <div className="node-card-head">
+              <div>
+                <strong>{item.row.node_name || item.row.node_tag || '-'}</strong>
+                <span className="mono">{item.row.node_tag || ''}</span>
+              </div>
+              <Badge tone={qualityTone(item.score)}>{item.score} / {qualityLabel(item.score)}</Badge>
+            </div>
+            <div className="node-card-meta quality-card-meta">
+              <div><span>地区 / 端口</span><strong>{regionLabel(item.row.region)}:{item.row.port || '-'}</strong></div>
+              <div><span>来源</span><strong>{sourceLabel(item.source)}</strong></div>
+              <div><span>出口 IP</span><strong>{item.row.exit_ip || '-'}</strong></div>
+              <div><span>CF 分</span><strong>{item.row.score ?? '-'} / {cfLabel(item.row.level)}</strong></div>
+              <div><span>IP 风险</span><strong>{item.repRisk}{item.rep ? ` / ${riskScore(item.rep)}` : ''}</strong></div>
+              <div><span>Tier / 池</span><strong>{item.tier || '-'} / {item.pool || '-'}</strong></div>
+              <div><span>延迟</span><strong>{item.row.latency_ms || 0} ms</strong></div>
+              <div><span>出口地区</span><strong>{item.row.cf_loc || item.rep?.country || '-'}</strong></div>
+            </div>
+            <div className="node-card-foot quality-card-foot">
+              <span>{item.row.error ? `错误：${item.row.error}` : `代理 ${proxyUrl(item.row)}`}</span>
+              <div className="quality-card-actions">
+                <Button variant="primary" onClick={() => { void copyToClipboard(proxyUrl(item.row), toast, '代理已复制') }}>复制</Button>
+                <Button onClick={() => { void copyToClipboard(`curl -x ${proxyUrl(item.row)} http://cp.cloudflare.com/generate_204`, toast, 'curl 已复制') }}>curl</Button>
+                <Button onClick={() => extract(item.row)}>提取</Button>
+              </div>
+            </div>
+          </article>
+        )) : <div className="empty-state compact-empty"><strong>{jobProgressLoading || cacheLoading ? '加载中...' : '暂无质量数据'}</strong><span>{jobResults.isError ? '任务结果接口失败，请先重试。' : hasCacheError ? '质量缓存加载失败，请先重试。' : '先刷新缓存、抽样检测或启动 Pipeline。'}</span></div>}
+      </div>
+      {mobileTotal > 0 && <div className="quality-mobile-pagination">
+        <Pagination
+          current={mobilePage}
+          pageSize={mobilePageSize}
+          total={mobileTotal}
+          showSizeChanger
+          pageSizeOptions={[10, 20, 50, 100]}
+          showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`}
+          onChange={onMobilePageChange}
+        />
+      </div>}
+    </div>
   </div>
 }

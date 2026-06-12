@@ -4,6 +4,26 @@ type Tab = 'extractor'|'overview'|'review'|'config'|'quality'|'status'|'settings
 type Theme = 'dark'|'light'
 type AuthState = 'unknown'|'authenticated'|'unauthenticated'
 
+const THEME_STORAGE_KEY = 'easy-proxies-theme'
+
+function initialTheme(): Theme {
+  if (typeof window === 'undefined') return 'dark'
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'
+  } catch {
+    return 'dark'
+  }
+}
+
+function persistTheme(theme: Theme) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+  } catch {
+    // Ignore storage failures; theme still applies for the current session.
+  }
+}
+
 interface AppState {
   activeTab: Tab
   theme: Theme
@@ -15,9 +35,12 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set) => ({
   activeTab: 'extractor',
-  theme: 'dark',
+  theme: initialTheme(),
   authenticated: 'unknown',
   setActiveTab: (activeTab) => set({ activeTab }),
-  setTheme: (theme) => set({ theme }),
+  setTheme: (theme) => {
+    persistTheme(theme)
+    set({ theme })
+  },
   setAuthenticated: (authenticated) => set({ authenticated }),
 }))

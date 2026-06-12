@@ -182,7 +182,7 @@ export function DiagnosticsPage() {
     window.setTimeout(() => URL.revokeObjectURL(url), 0)
   }
   const clearFilters = () => { setKeyword(''); setLevelFilter('all'); setCaseSensitive(false) }
-  const clearLogs = () => { setAuto(false); setLogs('') }
+  const clearLogs = () => { setAuto(false); setLogs(''); toast('已清空当前页面显示，不会删除服务端日志文件', 'ok') }
   const refreshLogs = async () => {
     if (manualLogRefreshPending || logQuery.isFetching) return
     setManualLogRefreshPending(true)
@@ -211,7 +211,7 @@ export function DiagnosticsPage() {
       <div className="log-console refined-log-console terminal-console-panel diagnostics-log-panel">
         <div className="log-toolbar refined-log-toolbar terminal-toolbar">
           <div><div className="panel-title">实时日志</div><div className="panel-subtitle">{auto ? '每 2 秒自动刷新并滚动到底部' : '自动刷新已暂停'} · 匹配 {filteredLogRows.length}/{logRows.length} 行{hiddenLogRows ? ` · 仅渲染最近 ${LOG_RENDER_LIMIT} 行` : ''}</div></div>
-          <div className="toolbar diagnostics-actions"><Button onClick={() => { void refreshLogs() }} disabled={manualLogRefreshPending || logQuery.isFetching}><RefreshCw size={15} />{manualLogRefreshPending || logQuery.isFetching ? '刷新中...' : '刷新'}</Button><Button onClick={clearLogs} disabled={manualLogRefreshPending}><Trash2 size={15} />清屏</Button><Button onClick={download} disabled={!logs}><Download size={15} />下载</Button></div>
+          <div className="toolbar diagnostics-actions"><Button onClick={() => { void refreshLogs() }} disabled={manualLogRefreshPending || logQuery.isFetching}><RefreshCw size={15} />{manualLogRefreshPending || logQuery.isFetching ? '刷新中...' : '刷新'}</Button><Button onClick={clearLogs} disabled={manualLogRefreshPending} title="只清空当前页面显示，不删除服务端日志文件"><Trash2 size={15} />清空显示</Button><Button onClick={download} disabled={!logs}><Download size={15} />下载</Button></div>
           <div className="diagnostics-log-filters">
             <input className="diagnostics-log-search" value={keyword} onChange={event=>setKeyword(event.target.value)} placeholder="筛选关键词" aria-label="筛选日志关键词" />
             <select className="diagnostics-log-select" value={levelFilter} onChange={event=>setLevelFilter(event.target.value as LogFilter)} aria-label="筛选日志级别">{LOG_LEVELS.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</select>
@@ -222,7 +222,7 @@ export function DiagnosticsPage() {
         <div className="terminal-frame diagnostics-terminal-frame">
           <div className="terminal-chrome"><span></span><span></span><span></span><strong>easy_proxies.log</strong></div>
           <div ref={logRef} className="terminal-logbox" role="log" aria-label="实时日志">
-            {visibleLogRows.length ? visibleLogRows.map(row => <div key={row.id} className={`terminal-logline terminal-logline-${row.level}`}>{highlightKeyword(row.text || ' ', normalizedKeyword, caseSensitive)}</div>) : <div className="terminal-log-empty">{logs ? '当前筛选没有匹配日志' : '日志已清空；点击刷新可重新加载最新日志'}</div>}
+            {visibleLogRows.length ? visibleLogRows.map(row => <div key={row.id} className={`terminal-logline terminal-logline-${row.level}`}>{highlightKeyword(row.text || ' ', normalizedKeyword, caseSensitive)}</div>) : <div className="terminal-log-empty">{logs ? '当前筛选没有匹配日志' : '当前页面显示已清空；点击刷新可重新加载最新日志，服务端日志文件不会被删除'}</div>}
           </div>
         </div>
       </div>

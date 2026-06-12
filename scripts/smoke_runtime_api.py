@@ -37,6 +37,7 @@ PASSWORD = os.environ.get("EP_SMOKE_PASSWORD", os.environ.get("WEBUI_PASSWORD", 
 TIMEOUT = float(os.environ.get("EP_SMOKE_TIMEOUT", "20"))
 POLL_SECONDS = float(os.environ.get("EP_SMOKE_POLL_SECONDS", "20"))
 SKIP_RELOAD = os.environ.get("EP_SMOKE_SKIP_RELOAD", "").lower() in {"1", "true", "yes"}
+SKIP_FREE_PROXY_REFRESH = os.environ.get("EP_SMOKE_SKIP_FREE_PROXY_REFRESH", "").lower() in {"1", "true", "yes"}
 ALLOW_NO_PASSWORD = os.environ.get("EP_SMOKE_ALLOW_NO_PASSWORD", "").lower() in {"1", "true", "yes"}
 FREE_PROXY_FIXTURE = os.environ.get("EP_SMOKE_FREE_PROXY_FIXTURE", "").lower() in {"1", "true", "yes"}
 ALLOW_MAIN_PORT = os.environ.get("EP_SMOKE_ALLOW_MAIN_PORT", "").lower() in {"1", "true", "yes"}
@@ -56,6 +57,8 @@ Environment:
   EP_SMOKE_TIMEOUT            Per-request timeout seconds. Default: 20
   EP_SMOKE_POLL_SECONDS       Background operation poll budget. Default: 20
   EP_SMOKE_SKIP_RELOAD        Skip manual reload path when set to 1/true/yes
+  EP_SMOKE_SKIP_FREE_PROXY_REFRESH
+                               Skip manual free-proxy refresh when set to 1/true/yes
   EP_SMOKE_FREE_PROXY_FIXTURE Exercise temporary free-proxy source add/restore when set to 1/true/yes
   EP_SMOKE_ALLOW_MAIN_PORT    Allow mutating checks against port 9091 when set to 1/true/yes
 """
@@ -570,6 +573,9 @@ def check_port_continuity(opener: urllib.request.OpenerDirector) -> None:
 
 
 def check_free_proxy_refresh(opener: urllib.request.OpenerDirector) -> None:
+    if SKIP_FREE_PROXY_REFRESH:
+        print("free-proxy-refresh: skipped by EP_SMOKE_SKIP_FREE_PROXY_REFRESH")
+        return
     code, payload = request(opener, "POST", "/api/free-proxy/refresh")
     require(code == 200 and isinstance(payload, dict), f"POST /api/free-proxy/refresh failed HTTP {code}: {payload!r}")
     status = payload.get("status") if isinstance(payload.get("status"), dict) else {}

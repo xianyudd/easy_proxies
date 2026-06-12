@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Input, InputNumber, Pagination, Select } from 'antd'
 import { Clock3, Plus, RefreshCw, Save, ServerCog, Trash2, X } from 'lucide-react'
@@ -51,6 +51,7 @@ export function NodeConfigPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
+  const editorRef = useRef<HTMLElement | null>(null)
 
   const nodesQuery = useQuery({ queryKey: ['config-nodes'], queryFn: getConfigNodes })
   const reloadStatus = useQuery({
@@ -115,6 +116,7 @@ export function NodeConfigPage() {
   const editNode = (node: ConfigNode) => {
     setEditingName(String(node.name || ''))
     setDraft({ ...emptyDraft, ...node })
+    window.setTimeout(() => editorRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0)
   }
   const updateDraft = (patch: Partial<ConfigNode>) => setDraft(prev => ({ ...prev, ...patch }))
   const validateDraft = () => {
@@ -203,7 +205,7 @@ export function NodeConfigPage() {
       <div className="metric"><div className="label">重载状态</div><div className="value">{reloadText(reloadState === 'reloading' ? reloadStatus.data?.state : reloadState)}</div></div>
     </div>
 
-    <section className="card settings-section settings-section-featured">
+    <section ref={editorRef} className="card settings-section settings-section-featured">
       <div className="panel-header settings-section-header">
         <div><div className="panel-title">{editingName ? `编辑节点：${editingName}` : '新增节点'}</div><div className="panel-subtitle">URI 支持 http/socks5 等代理格式；端口为 0 时由系统按当前模式自动分配。</div></div>
         <div className="toolbar"><Button variant="ghost" onClick={resetDraft}><X size={15} />清空</Button><Button variant="primary" onClick={() => saveNode.mutate()} disabled={saveNode.isPending}><Save size={16} />{saveNode.isPending ? '保存中...' : editingName ? '保存修改' : '新增节点'}</Button></div>
@@ -224,40 +226,81 @@ export function NodeConfigPage() {
       <div className="form-grid-3 compact-form-grid node-config-filters">
         <div className="field settings-form-item"><label>搜索</label><Input aria-label="搜索节点配置" className="settings-input" value={searchTerm} onChange={event => { setSearchTerm(event.target.value); setPage(1) }} placeholder="名称 / URI / 来源 / 端口" /></div>
         <div className="field settings-form-item"><label>来源</label><Select aria-label="筛选节点来源" className="settings-input" value={sourceFilter} options={sourceOptions} onChange={value => { setSourceFilter(value); setPage(1) }} /></div>
-        <div className="field settings-form-item"><label>每页</label><Select className="settings-input" value={pageSize} options={[25, 50, 100, 200].map(value => ({ value, label: `${value} 条` }))} onChange={value => { setPageSize(value); setPage(1) }} /></div>
+        <div className="field settings-form-item"><label>每页</label><Select aria-label="节点配置每页数量" className="settings-input" value={pageSize} options={[25, 50, 100, 200].map(value => ({ value, label: `${value} 条` }))} onChange={value => { setPageSize(value); setPage(1) }} /></div>
       </div>
-      <DataTable headers={['名称', '来源', 'URI', '端口', '认证', '操作']} empty={nodesQuery.isLoading ? '加载中...' : nodesQuery.isError ? '接口失败，请先重试。' : '暂无配置节点'}>
-        {pagedRows.map((node, idx) => {
+      <div className="node-config-table-view">
+        <DataTable headers={['名称', '来源', 'URI', '端口', '认证', '操作']} empty={nodesQuery.isLoading ? '加载中...' : nodesQuery.isError ? '接口失败，请先重试。' : '暂无配置节点'}>
+          {pagedRows.map((node, idx) => {
+            const name = String(node.name || '')
+            const canEdit = node.source !== 'free_proxy' && !!name
+            return <tr key={nodeKey(node, idx)}>
+              <td><strong>{name || '-'}</strong></td>
+              <td><Badge tone={node.source === 'free_proxy' ? 'neutral' : 'info'}>{sourceLabel(node.source)}</Badge></td>
+              <td><span className="mono muted node-config-uri">{String(node.uri || '-')}</span></td>
+              <td>{Number(node.port || 0) || '自动'}</td>
+              <td>{node.username || node.password ? '已配置' : '无'}</td>
+              <td><div className="toolbar">
+                <Button aria-label={`编辑节点 ${name}`} disabled={!canEdit} onClick={() => editNode(node)}>编辑</Button>
+                <Button
+                  aria-label={confirmDeleteName === name ? `确认删除节点 ${name}` : `删除节点 ${name}`}
+                  variant="danger"
+                  disabled={!canEdit || removeNode.isPending}
+                  onClick={() => {
+                    if (confirmDeleteName === name) removeNode.mutate(name)
+                    else setConfirmDeleteName(name)
+                  }}
+                ><Trash2 size={15} />{confirmDeleteName === name ? '确认删除' : '删除'}</Button>
+              </div></td>
+            </tr>
+          })}
+        </DataTable>
+      </div>
+      <div className="node-config-mobile-list" aria-label="移动端节点配置卡片列表">
+        {pagedRows.length ? pagedRows.map((node, idx) => {
           const name = String(node.name || '')
           const canEdit = node.source !== 'free_proxy' && !!name
-          return <tr key={nodeKey(node, idx)}>
-            <td><strong>{name || '-'}</strong></td>
-            <td><Badge tone={node.source === 'free_proxy' ? 'neutral' : 'info'}>{sourceLabel(node.source)}</Badge></td>
-            <td><span className="mono muted node-config-uri">{String(node.uri || '-')}</span></td>
-            <td>{Number(node.port || 0) || '自动'}</td>
-            <td>{node.username || node.password ? '已配置' : '无'}</td>
-            <td><div className="toolbar">
-              <Button aria-label={`编辑节点 ${name}`} disabled={!canEdit} onClick={() => editNode(node)}>编辑</Button>
-              <Button
-                aria-label={confirmDeleteName === name ? `确认删除节点 ${name}` : `删除节点 ${name}`}
-                variant="danger"
-                disabled={!canEdit || removeNode.isPending}
-                onClick={() => {
-                  if (confirmDeleteName === name) removeNode.mutate(name)
-                  else setConfirmDeleteName(name)
-                }}
-              ><Trash2 size={15} />{confirmDeleteName === name ? '确认删除' : '删除'}</Button>
-            </div></td>
-          </tr>
-        })}
-      </DataTable>
-      <div className="toolbar" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+          return <article className="node-card node-config-card" key={`${nodeKey(node, idx)}-config-card`}>
+            <div className="node-card-head">
+              <div>
+                <strong>{name || '-'}</strong>
+                <span className="mono">{sourceLabel(node.source)}</span>
+              </div>
+              <Badge tone={node.source === 'free_proxy' ? 'neutral' : 'info'}>{Number(node.port || 0) || '自动端口'}</Badge>
+            </div>
+            <div className="node-card-meta">
+              <div><span>来源</span><strong>{sourceLabel(node.source)}</strong></div>
+              <div><span>端口</span><strong>{Number(node.port || 0) || '自动'}</strong></div>
+              <div><span>认证</span><strong>{node.username || node.password ? '已配置' : '无'}</strong></div>
+              <div><span>编辑状态</span><strong>{canEdit ? '可编辑' : '只读'}</strong></div>
+            </div>
+            <div className="node-config-card-uri">
+              <span>URI</span>
+              <code>{String(node.uri || '-')}</code>
+            </div>
+            <div className="node-card-foot">
+              <span>{canEdit ? '修改后需手动重载生效' : '免费源缓存节点请在免费源设置中管理'}</span>
+              <div className="quality-card-actions">
+                <Button aria-label={`编辑节点 ${name}`} disabled={!canEdit} onClick={() => editNode(node)}>编辑</Button>
+                <Button
+                  aria-label={confirmDeleteName === name ? `确认删除节点 ${name}` : `删除节点 ${name}`}
+                  variant="danger"
+                  disabled={!canEdit || removeNode.isPending}
+                  onClick={() => {
+                    if (confirmDeleteName === name) removeNode.mutate(name)
+                    else setConfirmDeleteName(name)
+                  }}
+                ><Trash2 size={15} />{confirmDeleteName === name ? '确认删除' : '删除'}</Button>
+              </div>
+            </div>
+          </article>
+        }) : <div className="empty-state compact-empty"><strong>{nodesQuery.isLoading ? '加载中...' : '暂无配置节点'}</strong><span>{nodesQuery.isError ? '接口失败，请先重试。' : '调整搜索或来源筛选后再查看。'}</span></div>}
+      </div>
+      <div className="toolbar list-pagination-toolbar" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
         <Pagination
           current={page}
           pageSize={pageSize}
           total={filteredRows.length}
-          showSizeChanger
-          pageSizeOptions={[25, 50, 100, 200]}
+          showSizeChanger={false}
           showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`}
           onChange={(nextPage, nextPageSize) => {
             setPage(nextPage)

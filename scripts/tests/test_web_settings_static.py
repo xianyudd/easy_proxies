@@ -22,6 +22,14 @@ def test_settings_page_does_not_overwrite_dirty_draft_on_refetch():
     assert "setDraft(settings.data)" in text
     assert "if (!subsDirty) setSubs(listValue(settings.data.subscriptions))" in text
     assert "后台状态刷新不会覆盖当前表单草稿" in text
+    assert "const updateDirtyState = (nextDraft: SettingsResponse" in text
+    assert "isSettingsDraftDirty(nextDraft, settings.data)" in text
+    assert "Boolean(passwordDraft.trim()) || clearPassword" in text
+    assert "if (!settingsDirty) {" in text
+    assert "if (subsDirty) saveSubscriptions()" in text
+    assert "if (!subsDirty) return" in text
+    assert "disabled={save.isPending || saveSub.isPending || settingsUnavailable || !hasUnsavedChanges}" in text
+    assert "disabled={saveSub.isPending || settingsUnavailable || !subsDirty}" in text
 
 
 def test_settings_page_tracks_reload_and_free_proxy_refresh_status():
@@ -51,7 +59,11 @@ def test_settings_section_hashes_route_and_scroll_reliably():
     page = read(SETTINGS_PAGE)
     for section in ("#subscriptions", "#free-proxy", "#pool", "#multi-port", "#routing", "#quality-check", "#management"):
         assert f"['{section}', 'settings']" in app
+    assert "function settingsSectionFromHash(hash: string): SettingsSectionId | ''" in page
+    assert "if (id === 'settings' || id === '') return 'subscriptions'" in page
+    assert "return settingsSectionFromHash(window.location.hash) || 'subscriptions'" in page
     assert "syncHashSection" in page
+    assert "const id = settingsSectionFromHash(window.location.hash)" in page
     assert "window.addEventListener('hashchange', syncHashSection)" in page
     assert "window.removeEventListener('hashchange', syncHashSection)" in page
     assert "document.getElementById(id)?.scrollIntoView" in page
@@ -120,7 +132,9 @@ def test_settings_page_explains_disabled_free_proxy_sources_and_validates_only_e
     assert "<span>启用源</span><strong>{Number(freeRefresh?.enabled_sources" not in text
     assert "当前免费代理源都未启用，手动刷新不会下载任何源" in text
     assert "启用至少一个源并保存后，系统才会后台下载、筛选、写缓存并按配置自动重载" in text
-    assert "disabled={manualFreeRefresh.isPending || freeProxyRefreshState === 'refreshing' || freeProxyHasNoEnabledSources}" in text
+    assert "freeProxyRefreshNeedsSavedDraft" in text
+    assert "手动刷新只读取后端已保存配置" in text
+    assert "freeProxyHasNoEnabledSources || freeProxyRefreshNeedsSavedDraft" in text
     assert "src.enabled !== false && !String(src.url || src.file || '').trim()" in text
 
 
@@ -134,6 +148,17 @@ def test_settings_page_can_batch_enable_or_disable_free_proxy_sources():
     assert "delete next.enabled" in text
     assert "启用全部" in text
     assert "全部停用" in text
+
+
+def test_settings_page_has_sticky_unsaved_action_bar():
+    text = read(SETTINGS_PAGE)
+    css = read(ROOT / "web" / "src" / "styles" / "globals.css")
+    assert "settings-sticky-actions" in text
+    assert "aria-label=\"未保存设置操作条\"" in text
+    assert "const resetDrafts = () =>" in text
+    assert "放弃更改" in text
+    assert ".settings-sticky-actions" in css
+    assert "position: fixed" in css
     assert "默认启用" in text
     assert "disabled={!freeSources.length || freeSourcesEnabledCount === freeSources.length}" in text
     assert "disabled={!freeSources.length || freeSourcesEnabledCount === 0}" in text
@@ -158,6 +183,21 @@ def test_settings_page_infers_socks5_default_scheme_for_free_proxy_source_displa
     assert "未显式设置时会根据源名/URL 中的 socks5 自动显示" in text
     assert "value={src.default_scheme || 'http'}" not in text
     assert "default_scheme: freeSourceDefaultScheme(src)" in helper
+
+
+def test_free_proxy_sources_use_readable_card_layout():
+    page = read(SETTINGS_PAGE)
+    css = read(ROOT / "web" / "src" / "styles" / "globals.css")
+    assert "free-source-card-head" in page
+    assert "free-source-card-grid" in page
+    assert "free-source-url-field" in page
+    assert "free-source-list-note" in page
+    assert "{Number(src.max_nodes || 0) > 0 ? `最多 ${src.max_nodes} 条` : '全量解析'}" in page
+    assert ".free-source-card-head" in css
+    assert ".free-source-card-grid" in css
+    assert "minmax(340px, 2fr)" in css
+    assert ".free-source-url-field" in css
+    assert ".free-source-card-grid .settings-helper-text" in css
 
 
 def test_settings_page_uses_focused_section_layout_for_long_content():
@@ -187,6 +227,9 @@ def test_settings_management_password_is_write_only_in_ui():
     assert '"password_set": strings.TrimSpace(cfg.Management.Password) != ""' in server
     assert "managementPasswordDraft" in page
     assert "managementPasswordClear" in page
+    assert "updateDirtyState(draft, value, false)" in page
+    assert "const nextPasswordDraft = value ? '' : managementPasswordDraft" in page
+    assert "updateDirtyState(draft, nextPasswordDraft, value)" in page
     assert "function normalizeManagementForSave" in helper
     assert "next.clear_password = true" in helper
     assert "delete next.clear_password" in helper
@@ -247,11 +290,19 @@ def test_settings_save_payload_omits_unchanged_free_proxy_config(tmp_path):
         assert.equal(Object.hasOwn(payload2, 'free_proxy_sources'), true)
         assert.equal(payload2.free_proxy_sources[0].default_scheme, 'socks5')
 
-        import {{ isSubscriptionDraftDirty }} from {str(SETTINGS_SAVE_PAYLOAD)!r}
+        import {{ isSettingsDraftDirty, isSubscriptionDraftDirty }} from {str(SETTINGS_SAVE_PAYLOAD)!r}
         assert.equal(isSubscriptionDraftDirty('https://a.example/sub\\nhttps://b.example/sub', ['https://a.example/sub', 'https://b.example/sub']), false)
         assert.equal(isSubscriptionDraftDirty('https://a.example/sub\\nhttps://b.example/sub\\n', ['https://a.example/sub', 'https://b.example/sub']), true)
         assert.equal(isSubscriptionDraftDirty('  https://a.example/sub  \\nhttps://b.example/sub  ', ['https://a.example/sub', 'https://b.example/sub']), false)
         assert.equal(isSubscriptionDraftDirty('https://a.example/sub\\nhttps://b.example/sub\\nhttps://c.example/sub', ['https://a.example/sub', 'https://b.example/sub']), true)
+
+        const draftWithFreeSourceAddedAndRemoved = JSON.parse(JSON.stringify(server))
+        draftWithFreeSourceAddedAndRemoved.free_proxy_sources.push({{ name:'new-free-source', enabled:true, url:'', format:'text', default_scheme:'http' }})
+        draftWithFreeSourceAddedAndRemoved.free_proxy_sources.pop()
+        assert.equal(isSettingsDraftDirty(draftWithFreeSourceAddedAndRemoved, server), false)
+        const draftWithFreeSourceAdded = JSON.parse(JSON.stringify(server))
+        draftWithFreeSourceAdded.free_proxy_sources.push({{ name:'new-free-source', enabled:true, url:'https://example.test/proxies.txt', format:'text', default_scheme:'http' }})
+        assert.equal(isSettingsDraftDirty(draftWithFreeSourceAdded, server), true)
     """))
     subprocess.run([
         "node",
@@ -278,6 +329,7 @@ if __name__ == "__main__":
     test_settings_page_can_batch_enable_or_disable_free_proxy_sources()
     test_settings_page_defends_non_array_free_proxy_refresh_sources()
     test_settings_page_infers_socks5_default_scheme_for_free_proxy_source_display()
+    test_free_proxy_sources_use_readable_card_layout()
     test_settings_page_uses_focused_section_layout_for_long_content()
     test_settings_management_password_is_write_only_in_ui()
     test_settings_save_payload_omits_unchanged_free_proxy_config(Path("/tmp"))

@@ -5,7 +5,7 @@ import { useAppStore } from './store/appStore'
 import { getAuthStatus, login } from './api/logs'
 import { UNAUTHORIZED_EVENT } from './api/client'
 import { Button } from './components/ui/Button'
-import { useToast } from './components/ui/Toast'
+import { Toast, useToast } from './components/ui/Toast'
 import { ExtractorPage } from './pages/ExtractorPage'
 import { NodeOverviewPage } from './pages/NodeOverviewPage'
 import { RegionReviewPage } from './pages/RegionReviewPage'
@@ -22,6 +22,7 @@ const hashTabMap = new Map<string, ReturnType<typeof useAppStore.getState>['acti
   ['#region-review', 'review'],
   ['#unclassified', 'review'],
   ['#config', 'config'],
+  ['#node-config', 'config'],
   ['#quality', 'quality'],
   ['#status', 'status'],
   ['#settings', 'settings'],
@@ -41,11 +42,15 @@ function LoginPage() {
   const toast = useToast(s => s.show)
   const queryClient = useQueryClient()
   const mutation = useMutation({ mutationFn: login, onSuccess: () => { queryClient.setQueryData(['auth-probe'], { authenticated: true, password_required: true }); queryClient.invalidateQueries({ queryKey: ['auth-probe'] }); setAuthed('authenticated'); toast('登录成功', 'ok') }, onError: (e) => toast(e instanceof Error ? e.message : '登录失败', 'error') })
-  return <div className="login"><form className="login-box" onSubmit={(e) => { e.preventDefault(); mutation.mutate(password) }}>
-    <h2>Easy Proxies</h2><p className="muted">请输入本地管理密码。</p>
-    <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} autoFocus />
-    <Button variant="primary" htmlType="submit" disabled={mutation.isPending}>{mutation.isPending ? '验证中...' : '登录'}</Button>
-  </form></div>
+  return <>
+    <div className="login"><form className="login-box" onSubmit={(e) => { e.preventDefault(); mutation.mutate(password) }}>
+      <h2>Easy Proxies</h2><p className="muted">请输入本地管理密码。</p>
+      <label htmlFor="login-password" className="sr-only">管理密码</label>
+      <input id="login-password" className="input" type="password" aria-label="管理密码" value={password} onChange={e => setPassword(e.target.value)} autoFocus autoComplete="current-password" />
+      <Button variant="primary" htmlType="submit" disabled={mutation.isPending}>{mutation.isPending ? '验证中...' : '登录'}</Button>
+    </form></div>
+    <Toast />
+  </>
 }
 
 export default function App() {
@@ -58,8 +63,7 @@ export default function App() {
   const verifyingAuth = authenticated === 'authenticated' && (authProbe.isLoading || authProbe.isFetching)
   useEffect(() => {
     const syncHash = () => {
-      const tab = hashTabMap.get(window.location.hash)
-      if (tab) setActiveTab(tab)
+      setActiveTab(hashTabMap.get(window.location.hash) || 'extractor')
     }
     syncHash()
     window.addEventListener('hashchange', syncHash)

@@ -108,6 +108,14 @@ def test_smoke_script_can_exercise_local_free_proxy_fixture_safely():
     assert 'cache file should contain accepted fixture proxies' in text
 
 
+def test_smoke_script_can_skip_mutating_free_proxy_refresh():
+    text = read_source()
+    assert 'EP_SMOKE_SKIP_FREE_PROXY_REFRESH' in text
+    assert 'SKIP_FREE_PROXY_REFRESH' in text
+    assert 'free-proxy-refresh: skipped by EP_SMOKE_SKIP_FREE_PROXY_REFRESH' in text
+    assert 'if SKIP_FREE_PROXY_REFRESH:' in text
+
+
 def test_smoke_script_fixture_verifies_auto_reload_nodes_enter_runtime():
     text = read_source()
     assert "fetch_nodes_summary" in text
@@ -192,6 +200,7 @@ if __name__ == "__main__":
     test_smoke_script_checks_port_continuity_after_reload()
     test_smoke_script_checks_auth_negative_paths_by_default()
     test_smoke_script_can_exercise_local_free_proxy_fixture_safely()
+    test_smoke_script_can_skip_mutating_free_proxy_refresh()
     test_smoke_script_fixture_verifies_auto_reload_nodes_enter_runtime()
     test_smoke_script_uses_env_configurable_base_url_and_password()
     test_smoke_script_has_help_without_waiting_for_webui()

@@ -38,7 +38,8 @@ def test_quality_page_caps_sync_cf_sample_count_and_explains_limit():
     text = read(QUALITY_PAGE)
     assert "Math.min(50, Math.max(1, count))" in text
     assert "max={50}" in text
-    assert "同步 CF 抽样最多 50 个节点" in text
+    assert "样本数只影响 CF 抽样和出口地区校准" in text
+    assert "Sample" in text
 
 
 def test_quality_page_matches_reputation_cache_by_ip_or_exit_ip():
@@ -129,12 +130,14 @@ def test_quality_page_sample_and_cache_refresh_exit_job_result_mode():
 
 def test_quality_page_does_not_fallback_to_total_count_for_empty_source():
     text = read(QUALITY_PAGE)
-    assert "const pipelineCount = source === 'all' ? Math.max(sourceCount, 500) : sourceCount" in text
+    assert "const pipelineCount = sourceCount" in text
     assert "const hasPipelineTargets = pipelineCount > 0" in text
     assert "!hasPipelineTargets" in text
     assert "Pipeline 无可扫描节点" in text
     assert "count: pipelineCount" in text
     assert "sourceCount || nodesSummary.data?.total_nodes" not in text
+    assert "Math.max(sourceCount, 500)" not in text
+    assert "样本数只影响 CF 抽样和出口地区校准" in text
 
 
 def test_quality_page_allows_retry_replace_while_job_is_running():
@@ -152,6 +155,42 @@ def test_quality_page_extract_action_keeps_hash_in_sync():
     assert "setActiveTab('extractor')" in text
     assert "window.history.replaceState(null, '', '#extractor')" in text
     assert "已带入代理提取页" in text
+
+
+def test_quality_page_has_mobile_card_view_instead_of_only_wide_table():
+    page = read(QUALITY_PAGE)
+    css = read(ROOT / "web" / "src" / "styles" / "globals.css")
+    assert "quality-table-desktop" in page
+    assert "quality-mobile-list" in page
+    assert "移动端质量卡片列表" in page
+    assert "quality-node-card" in page
+    assert "quality-card-meta" in page
+    assert "quality-card-actions" in page
+    assert ".quality-table-desktop" in css
+    assert ".quality-mobile-list" in css
+    assert "display: none;" in css
+    assert "@media (max-width: 640px)" in css
+    assert ".quality-table-desktop {\n    display: none;" in css
+    assert ".quality-mobile-list {\n    display: grid;" in css or ".quality-mobile-list {\r\n    display: grid;" in css
+
+
+def test_quality_mobile_cards_keep_copy_curl_extract_actions_and_pagination():
+    text = read(QUALITY_PAGE)
+    assert "const [mobileResultPage, setMobileResultPage] = useState(1)" in text
+    assert "const [mobileResultPageSize, setMobileResultPageSize] = useState(20)" in text
+    assert "const mobileRows = jobId ? rows : rows.slice" in text
+    assert "onMobilePageChange" in text
+    assert "Pagination" in text
+    assert "代理已复制" in text
+    assert "curl 已复制" in text
+    assert "extract(item.row)" in text
+    assert "sourceLabel(item.source)" in text
+
+
+def test_quality_mobile_empty_state_does_not_render_blank_pagination():
+    text = read(QUALITY_PAGE)
+    assert "{mobileTotal > 0 && <div className=\"quality-mobile-pagination\">" in text
+    assert "total={mobileTotal}" in text
 
 
 if __name__ == "__main__":
@@ -172,3 +211,6 @@ if __name__ == "__main__":
     test_quality_page_does_not_fallback_to_total_count_for_empty_source()
     test_quality_page_allows_retry_replace_while_job_is_running()
     test_quality_page_extract_action_keeps_hash_in_sync()
+    test_quality_page_has_mobile_card_view_instead_of_only_wide_table()
+    test_quality_mobile_cards_keep_copy_curl_extract_actions_and_pagination()
+    test_quality_mobile_empty_state_does_not_render_blank_pagination()

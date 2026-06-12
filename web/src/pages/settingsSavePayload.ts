@@ -49,6 +49,11 @@ function sameSettingsValue(a: unknown, b: unknown) {
   return stable(a) === stable(b)
 }
 
+export function isSettingsDraftDirty(draft: SettingsResponse, serverSettings?: SettingsResponse) {
+  if (!serverSettings) return false
+  return !sameSettingsValue(draft, serverSettings)
+}
+
 function normalizeSubscriptionDraftText(value: string) {
   return String(value || '').replace(/\r\n/g, '\n').split('\n').map(item => item.trim()).join('\n')
 }

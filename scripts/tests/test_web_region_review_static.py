@@ -8,6 +8,7 @@ TYPES = ROOT / "web" / "src" / "types" / "node.ts"
 ISO = ROOT / "web" / "src" / "data" / "iso3166.ts"
 GO_ISO = ROOT / "internal" / "geoip" / "iso3166_data.go"
 REGION_TS = ROOT / "web" / "src" / "components" / "charts" / "region.ts"
+CSS = ROOT / "web" / "src" / "styles" / "globals.css"
 
 
 def read_page() -> str:
@@ -57,8 +58,48 @@ def test_manual_region_options_are_all_concrete_iso_countries():
     assert "{ value: 'other'" in region_ts
 
 
+def test_region_review_has_mobile_card_queue_for_manual_confirmation():
+    text = read_page()
+    css = CSS.read_text()
+    assert "region-review-table-view" in text
+    assert "region-review-mobile-list" in text
+    assert "移动端待确认节点卡片列表" in text
+    assert "region-review-card-controls" in text
+    assert "regionSelectFor(tag, selected)" in text
+    assert ".region-review-mobile-list" in css
+    assert ".region-review-table-view" in css
+    mobile = css.split("@media (max-width: 640px)", 1)[1]
+    assert ".region-review-table-view" in mobile
+    assert ".region-review-mobile-list" in mobile
+    assert "grid-template-columns: 1fr" in mobile
+
+
+def test_region_review_filters_have_accessible_labels_for_click_level_tests():
+    text = read_page()
+    assert 'aria-label="搜索待确认节点"' in text
+    assert 'aria-label="筛选待确认节点来源"' in text
+    assert 'aria-label="筛选待确认节点状态"' in text
+    assert 'aria-label="待确认节点每页数量"' in text
+    assert 'aria-label={`确认 ${tag} 的地区`}' in text
+
+
+def test_region_review_exposes_batch_confirmation_and_evidence():
+    text = read_page()
+    css = CSS.read_text()
+    assert "reviewEvidence(node)" in text
+    assert "识别线索" in text
+    assert "selectedConfirmations" in text
+    assert "batchConfirmRegions" in text
+    assert "确认本页已选择" in text
+    assert "该节点缺少 tag，无法持久化确认" in text
+    assert ".region-review-evidence" in css
+
+
 if __name__ == "__main__":
     test_region_review_uses_other_queue_but_manual_choices_are_concrete_only()
     test_region_review_saves_override_and_exposes_reload_flow()
     test_frontend_and_backend_iso3166_region_codes_stay_in_sync()
     test_manual_region_options_are_all_concrete_iso_countries()
+    test_region_review_has_mobile_card_queue_for_manual_confirmation()
+    test_region_review_filters_have_accessible_labels_for_click_level_tests()
+    test_region_review_exposes_batch_confirmation_and_evidence()

@@ -14,6 +14,7 @@ function ThemedApp() {
   const isDark = currentTheme === 'dark'
   return <ConfigProvider
     locale={zhCN}
+    button={{ autoInsertSpace: false }}
     theme={{
       algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
       token: {

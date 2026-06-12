@@ -47,6 +47,18 @@ function tagOf(node: NodeSnapshot, idx: number) {
   return String(node.tag || node.name || node.uri || `node-${idx}`)
 }
 
+function reviewEvidence(node: NodeSnapshot) {
+  const items = [
+    node.exit_ip ? `出口 IP ${String(node.exit_ip)}` : '',
+    node.cf_loc ? `CF ${String(node.cf_loc)}` : '',
+    node.country ? `国家 ${String(node.country)}` : '',
+    node.region && node.region !== 'other' ? `地区 ${String(node.region)}` : '',
+    node.failure_count ? `失败 ${String(node.failure_count)} 次` : '',
+    node.last_error ? `错误 ${String(node.last_error)}` : '',
+  ].filter(Boolean)
+  return items.length ? items.join(' · ') : '暂无识别线索'
+}
+
 export function RegionReviewPage() {
   const toast = useToast(s => s.show)
   const queryClient = useQueryClient()
@@ -73,6 +85,12 @@ export function RegionReviewPage() {
   })
 
   const rows = safeRows<NodeSnapshot>(nodes.data?.nodes)
+  const selectedConfirmations = rows
+    .map((node, idx) => {
+      const tag = tagOf(node, idx)
+      return { tag: String(node.tag || ''), key: tag, region: selectedRegions[tag] || '' }
+    })
+    .filter(item => item.tag && item.region)
   const sourceOptions = useMemo(() => [
     { value: 'all', label: '全部来源' },
     { value: 'free_proxy', label: '免费源' },
@@ -114,6 +132,26 @@ export function RegionReviewPage() {
     onError: error => toast(error instanceof Error ? error.message : '地区确认失败', 'error'),
   })
 
+  const batchConfirmRegions = useMutation({
+    mutationFn: async () => {
+      let needReloadNext = false
+      for (const item of selectedConfirmations) {
+        const res = await confirmNodeRegion(item.tag, item.region)
+        if (res.need_reload) needReloadNext = true
+      }
+      return { count: selectedConfirmations.length, need_reload: needReloadNext }
+    },
+    onSuccess: res => {
+      toast(`已确认 ${res.count} 个节点地区`, 'ok')
+      if (res.need_reload) setNeedReload(true)
+      setSelectedRegions({})
+      void queryClient.invalidateQueries({ queryKey: ['nodes-page'] })
+      void queryClient.invalidateQueries({ queryKey: ['nodes-summary'] })
+      void nodes.refetch()
+    },
+    onError: error => toast(error instanceof Error ? error.message : '批量确认地区失败', 'error'),
+  })
+
   const startReload = useMutation({
     mutationFn: reloadCore,
     onSuccess: res => {
@@ -132,6 +170,17 @@ export function RegionReviewPage() {
     setPage(1)
   }
 
+  const regionSelectFor = (tag: string, selected: string) => (
+    <Select
+      aria-label={`确认 ${tag} 的地区`}
+      className="console-select"
+      value={selected || undefined}
+      placeholder="选择地区"
+      options={MANUAL_REGION_OPTIONS}
+      onChange={region => setSelectedRegions(prev => ({ ...prev, [tag]: region }))}
+    />
+  )
+
   return <div className="page region-review-page">
     <div className="page-header">
       <div>
@@ -139,6 +188,7 @@ export function RegionReviewPage() {
         <p>这里只展示自动识别不到、落到 other/空地区的节点。手动确认地区后会写入持久化覆盖；点击“重载入池”后进入对应地区池。</p>
       </div>
       <div className="toolbar">
+        <Button variant="primary" onClick={() => batchConfirmRegions.mutate()} disabled={!selectedConfirmations.length || batchConfirmRegions.isPending || confirmRegion.isPending}>{batchConfirmRegions.isPending ? '确认中...' : `确认本页已选择${selectedConfirmations.length ? `（${selectedConfirmations.length}）` : ''}`}</Button>
         <Button onClick={() => { void nodes.refetch() }} disabled={nodes.isFetching}><RefreshCw size={16} />{nodes.isFetching ? '刷新中...' : '刷新'}</Button>
         <Button variant="primary" onClick={() => startReload.mutate()} disabled={!needReload || startReload.isPending || reloadState === 'reloading'}><ServerCog size={16} />{reloadState === 'reloading' ? '重载中...' : '重载入池'}</Button>
       </div>
@@ -171,9 +221,9 @@ export function RegionReviewPage() {
       </div>
       <div className="form-grid-3 overview-filter-grid modern-filter-grid">
         <div className="field console-field"><label>搜索</label><Input className="console-input" aria-label="搜索待确认节点" value={search} onChange={event => { setSearch(event.target.value); setPage(1) }} placeholder="名称 / tag / URI / 来源" /></div>
-        <div className="field console-field"><label>来源</label><Select className="console-select" value={source} onChange={resetPage(setSource)} options={sourceOptions} /></div>
-        <div className="field console-field"><label>状态</label><Select className="console-select" value={availability} onChange={resetPage(setAvailability)} options={[{ value: 'available', label: '可用待确认' }, { value: 'all', label: '全部状态' }, { value: 'unavailable', label: '不可用 / 无法确认' }, { value: 'unchecked', label: '未检测' }, { value: 'blacklisted', label: '已拉黑' }]} /></div>
-        <div className="field console-field"><label>每页</label><Select className="console-select" value={pageSize} onChange={(value) => { setPageSize(value); setPage(1) }} options={[50, 100, 200, 500].map(value => ({ value, label: `${value} 条` }))} /></div>
+        <div className="field console-field"><label>来源</label><Select aria-label="筛选待确认节点来源" className="console-select" value={source} onChange={resetPage(setSource)} options={sourceOptions} /></div>
+        <div className="field console-field"><label>状态</label><Select aria-label="筛选待确认节点状态" className="console-select" value={availability} onChange={resetPage(setAvailability)} options={[{ value: 'available', label: '可用待确认' }, { value: 'all', label: '全部状态' }, { value: 'unavailable', label: '不可用 / 无法确认' }, { value: 'unchecked', label: '未检测' }, { value: 'blacklisted', label: '已拉黑' }]} /></div>
+        <div className="field console-field"><label>每页</label><Select aria-label="待确认节点每页数量" className="console-select" value={pageSize} onChange={(value) => { setPageSize(value); setPage(1) }} options={[50, 100, 200, 500].map(value => ({ value, label: `${value} 条` }))} /></div>
       </div>
     </section>
 
@@ -184,22 +234,56 @@ export function RegionReviewPage() {
           <div className="panel-subtitle">默认只展示可用待确认节点，避免无效免费源或 CDN 地址污染人工确认；需要排查时再切换到不可用 / 全部状态。</div>
         </div>
       </div>
-      <DataTable headers={['节点', '来源', 'URI', '状态', '延迟', '确认地区', '操作']} empty={nodes.isLoading ? '加载中...' : nodes.isError ? '接口失败，请先重试。' : '暂无待确认节点'}>
-        {rows.map((node, idx) => {
+      <div className="region-review-table-view">
+        <DataTable headers={['节点', '来源', 'URI', '识别线索', '状态', '延迟', '确认地区', '操作']} empty={nodes.isLoading ? '加载中...' : nodes.isError ? '接口失败，请先重试。' : '暂无待确认节点'}>
+          {rows.map((node, idx) => {
+            const tag = tagOf(node, idx)
+            const selected = selectedRegions[tag] || ''
+            return <tr key={`${tag}-${idx}`}>
+              <td><strong>{node.name || node.tag || '-'}</strong><br /><span className="muted mono">{node.tag || ''}</span></td>
+              <td>{SOURCE_LABELS[String(node.source || 'unknown')] || String(node.source || '-')}</td>
+              <td><span className="mono muted node-config-uri">{String(node.uri || '-')}</span></td>
+              <td><span className="muted region-review-evidence">{reviewEvidence(node)}</span></td>
+              <td><Badge tone={statusTone(node)}>{statusLabel(node)}</Badge></td>
+              <td>{latencyLabel(node.last_latency_ms)}</td>
+              <td>{regionSelectFor(tag, selected)}</td>
+              <td><Button variant="primary" title={!node.tag ? '该节点缺少 tag，无法持久化确认' : !selected ? '请先选择具体国家/地区' : '确认该节点地区'} disabled={!node.tag || !selected || confirmRegion.isPending || batchConfirmRegions.isPending} onClick={() => confirmRegion.mutate({ tag: String(node.tag), region: selected })}>确认地区</Button></td>
+            </tr>
+          })}
+        </DataTable>
+      </div>
+      <div className="region-review-mobile-list" aria-label="移动端待确认节点卡片列表">
+        {rows.length ? rows.map((node, idx) => {
           const tag = tagOf(node, idx)
           const selected = selectedRegions[tag] || ''
-          return <tr key={`${tag}-${idx}`}>
-            <td><strong>{node.name || node.tag || '-'}</strong><br /><span className="muted mono">{node.tag || ''}</span></td>
-            <td>{SOURCE_LABELS[String(node.source || 'unknown')] || String(node.source || '-')}</td>
-            <td><span className="mono muted node-config-uri">{String(node.uri || '-')}</span></td>
-            <td><Badge tone={statusTone(node)}>{statusLabel(node)}</Badge></td>
-            <td>{latencyLabel(node.last_latency_ms)}</td>
-            <td><Select aria-label={`确认 ${tag} 的地区`} className="console-select" value={selected || undefined} placeholder="选择地区" options={MANUAL_REGION_OPTIONS} onChange={region => setSelectedRegions(prev => ({ ...prev, [tag]: region }))} /></td>
-            <td><Button variant="primary" disabled={!node.tag || !selected || confirmRegion.isPending} onClick={() => confirmRegion.mutate({ tag: String(node.tag), region: selected })}>确认地区</Button></td>
-          </tr>
-        })}
-      </DataTable>
-      <div className="toolbar" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+          return <article className="node-card region-review-card" key={`${tag}-mobile-${idx}`}>
+            <div className="node-card-head">
+              <div>
+                <strong>{node.name || node.tag || '-'}</strong>
+                <span className="mono">{node.tag || ''}</span>
+              </div>
+              <Badge tone={statusTone(node)}>{statusLabel(node)}</Badge>
+            </div>
+            <div className="node-card-meta">
+              <div><span>来源</span><strong>{SOURCE_LABELS[String(node.source || 'unknown')] || String(node.source || '-')}</strong></div>
+              <div><span>延迟</span><strong>{latencyLabel(node.last_latency_ms)}</strong></div>
+              <div><span>识别线索</span><strong>{reviewEvidence(node)}</strong></div>
+            </div>
+            <div className="node-config-card-uri">
+              <span>URI</span>
+              <code>{String(node.uri || '-')}</code>
+            </div>
+            <div className="region-review-card-controls">
+              <div className="field console-field">
+                <label>确认地区</label>
+                {regionSelectFor(tag, selected)}
+              </div>
+              <Button variant="primary" title={!node.tag ? '该节点缺少 tag，无法持久化确认' : !selected ? '请先选择具体国家/地区' : '确认该节点地区'} disabled={!node.tag || !selected || confirmRegion.isPending || batchConfirmRegions.isPending} onClick={() => confirmRegion.mutate({ tag: String(node.tag), region: selected })}>确认地区</Button>
+            </div>
+          </article>
+        }) : <div className="empty-state compact-empty"><strong>{nodes.isLoading ? '加载中...' : '暂无待确认节点'}</strong><span>{nodes.isError ? '接口失败，请先重试。' : '当前没有需要人工确认的可用节点。'}</span></div>}
+      </div>
+      <div className="toolbar list-pagination-toolbar" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
         <Pagination
           current={page}
           pageSize={pageSize}

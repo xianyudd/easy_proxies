@@ -150,27 +150,27 @@ export function NodeOverviewPage() {
       <div className="form-grid-3 overview-filter-grid modern-filter-grid">
         <div className="field console-field">
           <label>地区</label>
-          <Select className="console-select" value={region} onChange={resetPage(setRegion)} options={[{ value: 'all', label: '全部' }, ...regions.map(([code, count]) => ({ value: code, label: `${regionLabel(code)} (${count})` }))]} />
+          <Select aria-label="筛选节点地区" className="console-select" value={region} onChange={resetPage(setRegion)} options={[{ value: 'all', label: '全部' }, ...regions.map(([code, count]) => ({ value: code, label: `${regionLabel(code)} (${count})` }))]} />
         </div>
         <div className="field console-field">
           <label>来源</label>
-          <Select className="console-select" value={source} onChange={resetPage(setSource)} options={[{ value: 'all', label: '全部' }, ...sources.map(([code, count]) => ({ value: code, label: `${SOURCE_LABELS[code] || code} (${count})` }))]} />
+          <Select aria-label="筛选节点来源" className="console-select" value={source} onChange={resetPage(setSource)} options={[{ value: 'all', label: '全部' }, ...sources.map(([code, count]) => ({ value: code, label: `${SOURCE_LABELS[code] || code} (${count})` }))]} />
         </div>
         <div className="field console-field">
           <label>状态</label>
-          <Select className="console-select" value={availability} onChange={resetPage(setAvailability)} options={[{ value: 'available', label: '可用（默认）' }, { value: 'all', label: '全部状态' }, { value: 'unavailable', label: '不可用' }, { value: 'blacklisted', label: '已拉黑' }, { value: 'unchecked', label: '未检测' }]} />
+          <Select aria-label="筛选节点状态" className="console-select" value={availability} onChange={resetPage(setAvailability)} options={[{ value: 'available', label: '可用（默认）' }, { value: 'all', label: '全部状态' }, { value: 'unavailable', label: '不可用' }, { value: 'blacklisted', label: '已拉黑' }, { value: 'unchecked', label: '未检测' }]} />
         </div>
         <div className="field console-field">
           <label>延迟</label>
-          <Select className="console-select" value={latency} onChange={resetPage(setLatency)} options={[{ value: 'all', label: '全部' }, { value: 'fast', label: '800ms 以下' }, { value: 'slow', label: '800ms 以上' }, { value: 'tested', label: '已测速' }, { value: 'untested', label: '未测速' }]} />
+          <Select aria-label="筛选节点延迟" className="console-select" value={latency} onChange={resetPage(setLatency)} options={[{ value: 'all', label: '全部' }, { value: 'fast', label: '800ms 以下' }, { value: 'slow', label: '800ms 以上' }, { value: 'tested', label: '已测速' }, { value: 'untested', label: '未测速' }]} />
         </div>
         <div className="field console-field">
           <label>排序</label>
-          <Select className="console-select" value={sortKey} onChange={resetPage(setSortKey)} options={[{ value: 'latency', label: '延迟升序' }, { value: 'latency_desc', label: '延迟降序' }, { value: 'region', label: '地区' }, { value: 'source', label: '来源' }, { value: 'name', label: '名称字母序' }]} />
+          <Select aria-label="节点排序方式" className="console-select" value={sortKey} onChange={resetPage(setSortKey)} options={[{ value: 'latency', label: '延迟升序' }, { value: 'latency_desc', label: '延迟降序' }, { value: 'region', label: '地区' }, { value: 'source', label: '来源' }, { value: 'name', label: '名称字母序' }]} />
         </div>
         <div className="field console-field">
           <label>每页</label>
-          <Select className="console-select" value={pageSize} onChange={(value) => { setPageSize(value); setPage(1) }} options={[50, 100, 200, 500].map(value => ({ value, label: `${value} 条` }))} />
+          <Select aria-label="节点列表每页数量" className="console-select" value={pageSize} onChange={(value) => { setPageSize(value); setPage(1) }} options={[50, 100, 200, 500].map(value => ({ value, label: `${value} 条` }))} />
         </div>
       </div>
     </div>
@@ -230,7 +230,7 @@ export function NodeOverviewPage() {
           </article>
         )) : <div className="empty-state compact-empty"><strong>{isLoading ? '加载中...' : '暂无节点'}</strong><span>{isError ? '接口失败，请先重试。' : '调整筛选条件后再查看。'}</span></div>}
       </div>
-      <div className="toolbar" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+      <div className="toolbar list-pagination-toolbar" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
         <Pagination
           current={page}
           pageSize={pageSize}

@@ -4,8 +4,10 @@ ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "web" / "src" / "App.tsx"
 SETTINGS = ROOT / "web" / "src" / "pages" / "SettingsPage.tsx"
 QUALITY = ROOT / "web" / "src" / "pages" / "QualityPage.tsx"
+OVERVIEW = ROOT / "web" / "src" / "pages" / "NodeOverviewPage.tsx"
 SIDEBAR = ROOT / "web" / "src" / "components" / "layout" / "Sidebar.tsx"
 CSS = ROOT / "web" / "src" / "styles" / "globals.css"
+MAIN = ROOT / "web" / "src" / "main.tsx"
 
 
 def read(path: Path) -> str:
@@ -78,6 +80,54 @@ def test_mobile_primary_nav_fits_all_actions_at_phone_width():
     assert "grid-template-columns: repeat(4, minmax(0, 1fr))" in mobile
 
 
+def test_mobile_page_headers_stack_toolbars_without_wide_flex_overflow():
+    css = read(CSS)
+    assert ".page {" in css
+    assert "grid-template-columns: minmax(0, 1fr)" in css
+    mobile = css.split("@media (max-width: 640px)", 1)[1]
+    assert ".page-header," in mobile
+    assert ".panel-header," in mobile
+    assert "grid-template-columns: minmax(0, 1fr)" in mobile
+    assert "justify-items: stretch" in mobile
+    assert ".page-header .toolbar" in mobile
+    assert "width: 100%" in mobile
+    assert "justify-content: flex-start" in mobile
+    assert "flex-wrap: wrap" in mobile
+
+
+def test_mobile_pagination_wraps_instead_of_sliding_off_canvas():
+    css = read(CSS)
+    mobile = css.split("@media (max-width: 640px)", 1)[1]
+    assert ".list-pagination-toolbar" in css
+    assert ".list-pagination-toolbar .ant-pagination" in mobile
+    assert "flex-wrap: wrap" in mobile
+    assert "justify-content: flex-start!important" in mobile
+    assert ".list-pagination-toolbar .ant-pagination-total-text" in mobile
+    assert "flex: 1 0 100%" in mobile
+    assert "white-space: normal" in mobile
+
+
+def test_chinese_buttons_keep_compact_labels_and_mobile_status_cards_stay_dense():
+    main = read(MAIN)
+    css = read(CSS)
+    mobile = css.split("@media (max-width: 640px)")[-1]
+    assert "button={{ autoInsertSpace: false }}" in main
+    assert ".settings-status-grid" in mobile
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in mobile
+    assert ".status-card strong" in mobile
+    assert "overflow-wrap: anywhere" in mobile
+
+
+def test_node_overview_filters_have_accessible_labels_for_click_level_tests():
+    page = read(OVERVIEW)
+    assert 'aria-label="筛选节点地区"' in page
+    assert 'aria-label="筛选节点来源"' in page
+    assert 'aria-label="筛选节点状态"' in page
+    assert 'aria-label="筛选节点延迟"' in page
+    assert 'aria-label="节点排序方式"' in page
+    assert 'aria-label="节点列表每页数量"' in page
+
+
 if __name__ == "__main__":
     test_main_hash_routes_have_layout_targets()
     test_settings_layout_is_section_focused_and_responsive()
@@ -85,3 +135,7 @@ if __name__ == "__main__":
     test_quality_table_uses_horizontal_scroll_instead_of_page_overflow()
     test_mobile_shell_uses_grid_nav_without_document_overflow()
     test_mobile_primary_nav_fits_all_actions_at_phone_width()
+    test_mobile_page_headers_stack_toolbars_without_wide_flex_overflow()
+    test_mobile_pagination_wraps_instead_of_sliding_off_canvas()
+    test_chinese_buttons_keep_compact_labels_and_mobile_status_cards_stay_dense()
+    test_node_overview_filters_have_accessible_labels_for_click_level_tests()

@@ -24,6 +24,22 @@ def test_web_does_not_render_protected_app_before_auth_probe_resolves():
     assert "return <LoginPage />" in app
 
 
+def test_unknown_hash_falls_back_to_default_extractor_tab():
+    app = read(APP)
+    assert "setActiveTab(hashTabMap.get(window.location.hash) || 'extractor')" in app
+
+
+def test_theme_preference_persists_across_reload():
+    store = read(STORE)
+    assert "const THEME_STORAGE_KEY = 'easy-proxies-theme'" in store
+    assert "function initialTheme(): Theme" in store
+    assert "window.localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'" in store
+    assert "function persistTheme(theme: Theme)" in store
+    assert "window.localStorage.setItem(THEME_STORAGE_KEY, theme)" in store
+    assert "theme: initialTheme()" in store
+    assert "persistTheme(theme)" in store
+
+
 def test_web_handles_session_expiry_from_any_api_401():
     app = read(APP)
     client = read(ROOT / "web" / "src" / "api" / "client.ts")
@@ -37,6 +53,16 @@ def test_web_handles_session_expiry_from_any_api_401():
     assert "window.removeEventListener(UNAUTHORIZED_EVENT" in app
 
 
+def test_login_page_mounts_toast_container_for_failed_auth_feedback():
+    app = read(APP)
+    assert "import { Toast, useToast } from './components/ui/Toast'" in app
+    assert "<Toast />" in app
+    assert "onError: (e) => toast(e instanceof Error ? e.message : '登录失败', 'error')" in app
+
+
 if __name__ == "__main__":
     test_web_does_not_render_protected_app_before_auth_probe_resolves()
+    test_unknown_hash_falls_back_to_default_extractor_tab()
+    test_theme_preference_persists_across_reload()
     test_web_handles_session_expiry_from_any_api_401()
+    test_login_page_mounts_toast_container_for_failed_auth_feedback()

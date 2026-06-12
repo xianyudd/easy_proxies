@@ -70,11 +70,28 @@ def test_node_config_page_filters_paginates_and_wraps_long_uri():
     assert "filteredRows" in page
     assert "pagedRows" in page
     assert "Pagination" in page
-    assert "pageSizeOptions" in page
+    assert 'aria-label="节点配置每页数量"' in page
+    assert "showSizeChanger={false}" in page
     assert "setPage(1)" in page
     assert 'aria-label="搜索节点配置"' in page
     assert 'aria-label="筛选节点来源"' in page
     assert "node-config-uri" in page
+    assert "list-pagination-toolbar" in page
+
+
+def test_node_config_page_has_mobile_cards_for_large_uri_lists():
+    page = read(PAGE)
+    css = read(ROOT / "web" / "src" / "styles" / "globals.css")
+    assert "node-config-table-view" in page
+    assert "node-config-mobile-list" in page
+    assert "移动端节点配置卡片列表" in page
+    assert "node-config-card" in page
+    assert "node-config-card-uri" in page
+    assert "免费源缓存节点请在免费源设置中管理" in page
+    assert ".node-config-mobile-list" in css
+    assert ".node-config-table-view" in css
+    assert ".node-config-card-uri code" in css
+    assert "word-break: break-all" in css
 
 
 def test_node_config_reload_refreshes_runtime_node_caches():
@@ -107,6 +124,7 @@ if __name__ == "__main__":
     test_node_config_api_client_covers_crud_and_reload()
     test_node_config_page_handles_crud_need_reload_and_reload_polling()
     test_node_config_page_filters_paginates_and_wraps_long_uri()
+    test_node_config_page_has_mobile_cards_for_large_uri_lists()
     test_node_config_reload_refreshes_runtime_node_caches()
     test_node_config_page_does_not_show_zero_counts_during_initial_load()
     test_node_config_page_defends_non_array_nodes_payload()

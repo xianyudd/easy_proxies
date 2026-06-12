@@ -27,6 +27,7 @@ export function EChart({ option, height = 320, className = '' }: { option: EChar
     observer?.observe(ref.current)
     window.addEventListener('resize', resize)
     window.setTimeout(resize, 0)
+    window.requestAnimationFrame?.(resize)
     return () => {
       observer?.disconnect()
       window.removeEventListener('resize', resize)
@@ -38,6 +39,7 @@ export function EChart({ option, height = 320, className = '' }: { option: EChar
     if (!ref.current) return
     const chart = echarts.getInstanceByDom(ref.current)
     chart?.setOption(option, true)
+    window.requestAnimationFrame?.(() => chart?.resize())
   }, [option])
 
   return <div ref={ref} className={`chart ${className}`} style={{ height }} />
