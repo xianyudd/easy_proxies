@@ -6,6 +6,7 @@ import { useToast } from '../components/ui/Toast'
 import { ExtractorForm } from '../components/extractor/ExtractorForm'
 import { QuickExtractBar } from '../components/extractor/QuickExtractBar'
 import { ProxyResultList, entriesToText } from '../components/extractor/ProxyResultList'
+import { formats } from '../components/extractor/formatRules'
 import { useExtractorStore } from '../store/extractorStore'
 import { copyToClipboard } from '../lib/clipboard'
 import type { ExtractorEntry, ExtractorParams } from '../types/extractor'
@@ -57,8 +58,27 @@ export function ExtractorPage() {
     a.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 0)
   }
-  return <div className="page">
-    <div className="page-header"><div><h1>代理提取</h1><p>先选择模式和区域，再生成可复制、可下载的代理结果。常用预设收纳在参数区，减少页面跳动。</p></div></div>
+  const resultCount = entries.length
+  const formatLabel = formats.find(([value]) => value === params.format)?.[1] || params.format
+  return <div className="page extractor-page">
+    <div className="page-header extractor-hero">
+      <div>
+        <div className="eyebrow">Proxy Workbench</div>
+        <h1>代理提取</h1>
+        <p>按“选择范围 → 生成 → 复制/下载”的顺序完成，常用场景已经收纳为快捷预设，避免在多个页面之间来回跳。</p>
+      </div>
+      <div className="extractor-hero-stats" aria-label="当前提取参数摘要">
+        <div><span>模式</span><strong>{params.mode}</strong></div>
+        <div><span>区域</span><strong>{params.region}</strong></div>
+        <div><span>数量</span><strong>{params.count}</strong></div>
+        <div><span>结果</span><strong>{resultCount}</strong></div>
+      </div>
+    </div>
+    <div className="extractor-flow" aria-label="代理提取流程">
+      <div><strong>1</strong><span>选择区域、模式和格式</span></div>
+      <div><strong>2</strong><span>生成结构化代理结果</span></div>
+      <div><strong>3</strong><span>复制单条、全部复制或下载 TXT</span></div>
+    </div>
     <div className="workspace-grid">
       <div className="dashboard-stack">
         <div className="card control-panel">
@@ -77,8 +97,13 @@ export function ExtractorPage() {
       </div>
       <div className="card result-panel">
         <div className="panel-header">
-          <div><div className="panel-title">提取结果</div><div className="panel-subtitle">{meta || '尚未生成代理'}</div></div>
+          <div><div className="panel-title">提取结果</div><div className="panel-subtitle">{meta || `等待生成 · ${params.mode} · ${formatLabel}`}</div></div>
           <div className="toolbar"><Button onClick={copyAll}>复制全部</Button><Button onClick={download}>下载 TXT</Button></div>
+        </div>
+        <div className="result-summary" aria-label="提取结果摘要">
+          <div><span>输出条数</span><strong>{resultCount}</strong></div>
+          <div><span>输出格式</span><strong>{formatLabel}</strong></div>
+          <div><span>凭据</span><strong>{params.reveal ? '显示' : '隐藏'}</strong></div>
         </div>
         <div>{warnings.map(w => <div className="hint" key={w}>{w}</div>)}{entries.length ? <ProxyResultList entries={entries} /> : <div className="empty-state"><div><strong>等待生成代理</strong><span>左侧选择区域、模式和格式，点击生成后这里会展示结构化结果。</span></div></div>}</div>
         <textarea className="input mono result-textarea" readOnly value={text} placeholder="原始文本输出会显示在这里" />

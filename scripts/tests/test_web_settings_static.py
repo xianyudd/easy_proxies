@@ -175,8 +175,8 @@ def test_settings_page_uses_focused_section_layout_for_long_content():
     assert "settings-card-grid-hidden" in css
     assert "settings-anchor-nav a.active" in css
     assert "aria-current={activeSettingsSection === section.id ? 'page' : undefined}" in page
-    assert "grid-auto-flow: column" in css
-    assert "scroll-snap-type: x proximity" in css
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in css
+    assert ".settings-anchor-nav span:not(.nav-kicker)" in css
 
 
 def test_settings_management_password_is_write_only_in_ui():

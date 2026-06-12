@@ -34,8 +34,8 @@ def test_settings_layout_is_section_focused_and_responsive():
     assert "settings-card-grid-hidden" in css
     assert "settings-anchor-nav" in css
     assert "@media (max-width: 980px)" in css
-    assert "grid-auto-flow: column" in css
-    assert "scroll-snap-type: x proximity" in css
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in css
+    assert ".settings-anchor-nav span:not(.nav-kicker)" in css
 
 
 def test_settings_management_password_field_is_write_only_layout():
@@ -56,24 +56,26 @@ def test_quality_table_uses_horizontal_scroll_instead_of_page_overflow():
     assert "overflow-x: auto" in css
 
 
-def test_mobile_shell_uses_horizontal_nav_without_document_overflow():
+def test_mobile_shell_uses_grid_nav_without_document_overflow():
     css = read(CSS)
     assert "@media (max-width: 980px)" in css
     assert ".sidebar" in css
-    assert "overflow-x: auto" in css
+    mobile = css.split("@media (max-width: 640px)", 1)[1]
+    assert "grid-template-columns: repeat(4, minmax(0, 1fr))" in mobile
+    assert "overflow: visible" in mobile
     assert ".settings-anchor-nav" in css
-    assert "scrollbar-width: thin" in css
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in mobile
 
 
-def test_mobile_primary_nav_fits_three_actions_at_phone_width():
+def test_mobile_primary_nav_fits_all_actions_at_phone_width():
     css = read(CSS)
     mobile = css.split("@media (max-width: 640px)", 1)[1]
     assert ".nav button" in mobile
-    assert "min-width: 118px" in mobile
-    assert "flex: 0 0 118px" in mobile
-    assert "min-height: 42px" in mobile
-    assert "white-space: nowrap" in mobile
-    assert "overscroll-behavior-x: contain" in mobile
+    assert "min-width: 0" in mobile
+    assert "min-height: 68px" in mobile
+    assert "justify-items: center" in mobile
+    assert "white-space: normal" in mobile
+    assert "grid-template-columns: repeat(4, minmax(0, 1fr))" in mobile
 
 
 if __name__ == "__main__":
@@ -81,5 +83,5 @@ if __name__ == "__main__":
     test_settings_layout_is_section_focused_and_responsive()
     test_settings_management_password_field_is_write_only_layout()
     test_quality_table_uses_horizontal_scroll_instead_of_page_overflow()
-    test_mobile_shell_uses_horizontal_nav_without_document_overflow()
-    test_mobile_primary_nav_fits_three_actions_at_phone_width()
+    test_mobile_shell_uses_grid_nav_without_document_overflow()
+    test_mobile_primary_nav_fits_all_actions_at_phone_width()
