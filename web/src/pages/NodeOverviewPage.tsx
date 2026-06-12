@@ -66,7 +66,7 @@ export function NodeOverviewPage() {
   const [latency, setLatency] = useState('all')
   const [sortKey, setSortKey] = useState<'name'|'latency'|'latency_desc'|'region'|'source'>('latency')
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(100)
+  const [pageSize, setPageSize] = useState(() => (typeof window !== 'undefined' && window.innerWidth <= 640 ? 50 : 100))
   const toast = useToast(s => s.show)
 
   const queryParams = { page, page_size: pageSize, region, source, availability, latency, sort: sortKey }
@@ -183,28 +183,53 @@ export function NodeOverviewPage() {
         </div>
 
       </div>
-      <DataTable headers={['节点', '来源', '地区', '端口', '状态', '延迟', '连接', '失败', '操作']} empty={isLoading ? '加载中...' : isError ? '接口失败，请先重试。' : '暂无节点'}>
-        {rows.map((node, idx) => (
-          <tr key={`${node.tag || node.name || 'node'}-${idx}`}>
-            <td>
-              <strong>{node.name || node.tag || '-'}</strong><br />
-              <span className="muted mono">{node.tag || ''}</span>
-            </td>
-            <td>{SOURCE_LABELS[String(node.source || 'unknown')] || String(node.source || '-')}</td>
-            <td>{regionLabel(node.region)}</td>
-            <td>{node.port || '-'}</td>
-            <td><Badge tone={levelTone(node)}>{statusLabel(node)}</Badge></td>
-            <td>{latencyLabel(node.last_latency_ms)}</td>
-            <td>{Number(node.active_connections) || 0}</td>
-            <td>{Number(node.failure_count) || 0}</td>
-            <td>
-              <div className="toolbar">
-                <Button onClick={() => copyNode(node)}>复制</Button>
+      <div className="overview-table-view">
+        <DataTable headers={['节点', '来源', '地区', '端口', '状态', '延迟', '连接', '失败', '操作']} empty={isLoading ? '加载中...' : isError ? '接口失败，请先重试。' : '暂无节点'}>
+          {rows.map((node, idx) => (
+            <tr key={`${node.tag || node.name || 'node'}-${idx}`}>
+              <td>
+                <strong>{node.name || node.tag || '-'}</strong><br />
+                <span className="muted mono">{node.tag || ''}</span>
+              </td>
+              <td>{SOURCE_LABELS[String(node.source || 'unknown')] || String(node.source || '-')}</td>
+              <td>{regionLabel(node.region)}</td>
+              <td>{node.port || '-'}</td>
+              <td><Badge tone={levelTone(node)}>{statusLabel(node)}</Badge></td>
+              <td>{latencyLabel(node.last_latency_ms)}</td>
+              <td>{Number(node.active_connections) || 0}</td>
+              <td>{Number(node.failure_count) || 0}</td>
+              <td>
+                <div className="toolbar">
+                  <Button onClick={() => copyNode(node)}>复制</Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </DataTable>
+      </div>
+      <div className="overview-mobile-list" aria-label="移动端节点卡片列表">
+        {rows.length ? rows.map((node, idx) => (
+          <article className="node-card" key={`${node.tag || node.name || 'node'}-card-${idx}`}>
+            <div className="node-card-head">
+              <div>
+                <strong>{node.name || node.tag || '-'}</strong>
+                <span className="mono">{node.tag || ''}</span>
               </div>
-            </td>
-          </tr>
-        ))}
-      </DataTable>
+              <Badge tone={levelTone(node)}>{statusLabel(node)}</Badge>
+            </div>
+            <div className="node-card-meta">
+              <div><span>来源</span><strong>{SOURCE_LABELS[String(node.source || 'unknown')] || String(node.source || '-')}</strong></div>
+              <div><span>地区</span><strong>{regionLabel(node.region)}</strong></div>
+              <div><span>端口</span><strong>{node.port || '-'}</strong></div>
+              <div><span>延迟</span><strong>{latencyLabel(node.last_latency_ms)}</strong></div>
+            </div>
+            <div className="node-card-foot">
+              <span>连接 {Number(node.active_connections) || 0} · 失败 {Number(node.failure_count) || 0}</span>
+              <Button onClick={() => copyNode(node)}>复制</Button>
+            </div>
+          </article>
+        )) : <div className="empty-state compact-empty"><strong>{isLoading ? '加载中...' : '暂无节点'}</strong><span>{isError ? '接口失败，请先重试。' : '调整筛选条件后再查看。'}</span></div>}
+      </div>
       <div className="toolbar" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
         <Pagination
           current={page}

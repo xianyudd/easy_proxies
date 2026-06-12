@@ -3,6 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 NODE_OVERVIEW = ROOT / "web" / "src" / "pages" / "NodeOverviewPage.tsx"
 ISO = ROOT / "web" / "src" / "data" / "iso3166.ts"
+CSS = ROOT / "web" / "src" / "styles" / "globals.css"
 
 
 def read_source() -> str:
@@ -43,8 +44,23 @@ def test_node_overview_sanitizes_summary_records():
     assert "Object.values(data?.region_healthy || {})" not in text
 
 
+def test_node_overview_has_mobile_card_list_instead_of_dense_table_only():
+    text = read_source()
+    css = CSS.read_text()
+    assert "overview-table-view" in text
+    assert "overview-mobile-list" in text
+    assert "className=\"node-card\"" in text
+    assert "node-card-meta" in text
+    assert ".overview-table-view" in css
+    assert ".overview-mobile-list" in css
+    assert "display: none" in css
+    assert "display: grid" in css
+    assert "window.innerWidth <= 640 ? 50 : 100" in text
+
+
 if __name__ == "__main__":
     test_node_overview_labels_all_backend_regions()
     test_node_overview_reconciles_server_clamped_page_and_copies_stable_tag()
     test_node_overview_defends_non_array_nodes_payload()
     test_node_overview_sanitizes_summary_records()
+    test_node_overview_has_mobile_card_list_instead_of_dense_table_only()
