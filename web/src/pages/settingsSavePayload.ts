@@ -49,6 +49,18 @@ function sameSettingsValue(a: unknown, b: unknown) {
   return stable(a) === stable(b)
 }
 
+function normalizeSubscriptionDraftText(value: string) {
+  return String(value || '').replace(/\r\n/g, '\n').split('\n').map(item => item.trim()).join('\n')
+}
+
+export function subscriptionText(subscriptions: unknown) {
+  return Array.isArray(subscriptions) ? subscriptions.map(item => String(item).trim()).join('\n') : ''
+}
+
+export function isSubscriptionDraftDirty(draft: string, serverSubscriptions: unknown) {
+  return normalizeSubscriptionDraftText(draft) !== subscriptionText(serverSubscriptions)
+}
+
 export function buildSettingsSavePayload({
   draft,
   serverSettings,

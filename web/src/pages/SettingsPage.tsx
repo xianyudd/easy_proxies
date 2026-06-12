@@ -9,7 +9,7 @@ import { Button } from '../components/ui/Button'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { Badge } from '../components/ui/Badge'
 import { useToast } from '../components/ui/Toast'
-import { buildSettingsSavePayload, freeSourceDefaultScheme } from './settingsSavePayload'
+import { buildSettingsSavePayload, freeSourceDefaultScheme, isSubscriptionDraftDirty } from './settingsSavePayload'
 import type { FreeProxyCache, FreeProxyFilter, FreeProxyRefreshStatus, FreeProxySource, SettingsResponse } from '../types/settings'
 import type { CloudflareResult } from '../types/cloudflare'
 import type { ReputationResult } from '../types/reputation'
@@ -295,7 +295,10 @@ export function SettingsPage() {
     setManagementPasswordClear(value)
     if (value) setManagementPasswordDraft('')
   }
-  const updateSubsDraft = (next: string) => { setSubsDirty(true); setSubs(next) }
+  const updateSubsDraft = (next: string) => {
+    setSubs(next)
+    setSubsDirty(isSubscriptionDraftDirty(next, settings.data?.subscriptions))
+  }
   const input = (label:string, value:string, onChange:(v:string)=>void, type='text') => <div className="field settings-form-item"><label>{label}</label><Input className="settings-input" aria-label={label} type={type} autoComplete={type === 'password' ? label.includes('新管理') ? 'new-password' : 'current-password' : label.includes('用户名') ? 'username' : undefined} value={value} onChange={e=>onChange(e.target.value)} /></div>
   const toggle = (label:string, checked:boolean, onChange:(v:boolean)=>void) => <Checkbox className="settings-checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}>{label}</Checkbox>
   const listener = (draft.listener || {}) as Record<string, unknown>

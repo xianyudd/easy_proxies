@@ -141,6 +141,8 @@ def test_smoke_script_checks_proxy_auth_without_bypassing_proxy():
     assert "check_proxy_auth_runtime" in text
     assert "curl_proxy_status" in text
     assert "wait_for_listening_multi_port" in text
+    assert "multi_port_wait_seconds" in text
+    assert "max(45.0, POLL_SECONDS * 3)" in text
     assert "wait_for_tcp_port" in text
     assert "did not start listening" in text
     assert "socket.create_connection" in text

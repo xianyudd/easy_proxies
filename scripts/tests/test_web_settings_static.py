@@ -246,6 +246,12 @@ def test_settings_save_payload_omits_unchanged_free_proxy_config(tmp_path):
         }})
         assert.equal(Object.hasOwn(payload2, 'free_proxy_sources'), true)
         assert.equal(payload2.free_proxy_sources[0].default_scheme, 'socks5')
+
+        import {{ isSubscriptionDraftDirty }} from {str(SETTINGS_SAVE_PAYLOAD)!r}
+        assert.equal(isSubscriptionDraftDirty('https://a.example/sub\\nhttps://b.example/sub', ['https://a.example/sub', 'https://b.example/sub']), false)
+        assert.equal(isSubscriptionDraftDirty('https://a.example/sub\\nhttps://b.example/sub\\n', ['https://a.example/sub', 'https://b.example/sub']), true)
+        assert.equal(isSubscriptionDraftDirty('  https://a.example/sub  \\nhttps://b.example/sub  ', ['https://a.example/sub', 'https://b.example/sub']), false)
+        assert.equal(isSubscriptionDraftDirty('https://a.example/sub\\nhttps://b.example/sub\\nhttps://c.example/sub', ['https://a.example/sub', 'https://b.example/sub']), true)
     """))
     subprocess.run([
         "node",

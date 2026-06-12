@@ -226,8 +226,13 @@ def wait_for_tcp_port(host: str, port: int, label: str, *, seconds: float = 15) 
     raise RuntimeSmokeError(f"{label} port {host}:{port} did not start listening within {seconds}s")
 
 
-def wait_for_listening_multi_port(opener: urllib.request.OpenerDirector, host: str, *, seconds: float = 15) -> int:
-    deadline = time.time() + seconds
+def multi_port_wait_seconds() -> float:
+    return max(45.0, POLL_SECONDS * 3)
+
+
+def wait_for_listening_multi_port(opener: urllib.request.OpenerDirector, host: str, *, seconds: float | None = None) -> int:
+    wait_seconds = multi_port_wait_seconds() if seconds is None else seconds
+    deadline = time.time() + wait_seconds
     last_ports: list[int] = []
     while time.time() < deadline:
         code, page = request(opener, "GET", "/api/nodes?page=1&page_size=50&sort=port")
@@ -238,7 +243,7 @@ def wait_for_listening_multi_port(opener: urllib.request.OpenerDirector, host: s
                 if tcp_connects(host, port):
                     return port
         time.sleep(0.5)
-    raise RuntimeSmokeError(f"no listening multi-port endpoint found within {seconds}s; last_ports={last_ports[:10]}")
+    raise RuntimeSmokeError(f"no listening multi-port endpoint found within {wait_seconds}s; last_ports={last_ports[:10]}")
 
 
 def curl_proxy_status(proxy_url: str, *, timeout: float = 6) -> tuple[int, str]:
