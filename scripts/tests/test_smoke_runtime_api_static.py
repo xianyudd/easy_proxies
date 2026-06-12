@@ -63,7 +63,8 @@ def test_smoke_script_control_plane_requests_ignore_environment_proxies():
     assert "def make_control_opener" in text
     assert "urllib.request.ProxyHandler({})" in text
     assert "make_control_opener()" in text
-    assert "control-plane probes must always talk directly" in text
+    assert "urllib honors HTTP_PROXY/HTTPS_PROXY from the environment by default" in text
+    assert "Control-plane probes must always talk directly to BASE_URL" in text
 
 
 def test_smoke_script_waits_for_webui_ready_before_checks():

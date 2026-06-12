@@ -1,8 +1,11 @@
+import subprocess
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "web" / "src" / "App.tsx"
 SETTINGS_PAGE = ROOT / "web" / "src" / "pages" / "SettingsPage.tsx"
+SETTINGS_SAVE_PAYLOAD = ROOT / "web" / "src" / "pages" / "settingsSavePayload.ts"
 SETTINGS_TYPES = ROOT / "web" / "src" / "types" / "settings.ts"
 SERVER = ROOT / "internal" / "monitor" / "server.go"
 
@@ -148,12 +151,13 @@ def test_settings_page_defends_non_array_free_proxy_refresh_sources():
 
 def test_settings_page_infers_socks5_default_scheme_for_free_proxy_source_display():
     text = read(SETTINGS_PAGE)
-    assert "function freeSourceDefaultScheme" in text
-    assert "hint.includes('socks5') ? 'socks5' : 'http'" in text
+    helper = read(SETTINGS_SAVE_PAYLOAD)
+    assert "function freeSourceDefaultScheme" in helper
+    assert "hint.includes('socks5') ? 'socks5' : 'http'" in helper
     assert "value={freeSourceDefaultScheme(src)}" in text
     assert "未显式设置时会根据源名/URL 中的 socks5 自动显示" in text
     assert "value={src.default_scheme || 'http'}" not in text
-    assert "default_scheme: freeSourceDefaultScheme(src)" in text
+    assert "default_scheme: freeSourceDefaultScheme(src)" in helper
 
 
 def test_settings_page_uses_focused_section_layout_for_long_content():
@@ -177,21 +181,81 @@ def test_settings_page_uses_focused_section_layout_for_long_content():
 
 def test_settings_management_password_is_write_only_in_ui():
     page = read(SETTINGS_PAGE)
+    helper = read(SETTINGS_SAVE_PAYLOAD)
     server = read(SERVER)
     assert '"password":     ""' in server
     assert '"password_set": strings.TrimSpace(cfg.Management.Password) != ""' in server
     assert "managementPasswordDraft" in page
     assert "managementPasswordClear" in page
-    assert "function normalizeManagementForSave" in page
-    assert "next.clear_password = true" in page
-    assert "delete next.clear_password" in page
-    assert "delete next.password" in page
-    assert "delete next.password_set" in page
+    assert "function normalizeManagementForSave" in helper
+    assert "next.clear_password = true" in helper
+    assert "delete next.clear_password" in helper
+    assert "delete next.password" in helper
+    assert "delete next.password_set" in helper
     assert "新管理 password（留空保持不变）" in page
     assert "清空管理密码" in page
     assert "密码不会从接口回显" in page
-    assert "management: normalizeManagementForSave(mgmt, managementPasswordDraft, managementPasswordClear)" in page
+    assert "buildSettingsSavePayload" in page
+    assert "managementPasswordDraft" in page
     assert "String(mgmt.password||'')" not in page
+
+
+def test_settings_save_payload_omits_unchanged_free_proxy_config(tmp_path):
+    entry = tmp_path / "settings_save_payload_check.mjs"
+    bundle = tmp_path / "settings_save_payload_check.bundle.mjs"
+    entry.write_text(textwrap.dedent(f"""
+        import assert from 'node:assert/strict'
+        import {{ buildSettingsSavePayload }} from {str(SETTINGS_SAVE_PAYLOAD)!r}
+
+        const server = {{
+          quality_check: {{ enabled:false, count:500, interval:'1h0m0s', region:'all' }},
+          management: {{ listen:'127.0.0.1:19093', password:'', password_set:true }},
+          subscriptions: ['https://sub.example/a'],
+          free_proxy_sources: [
+            {{ name:'socks-list', url:'https://example.test/socks5.txt', file:'', format:'txt', enabled:true, timeout:'8s', max_nodes:0, max_bytes:0 }}
+          ],
+          free_proxy_filter: {{ enabled:true, min_tier:'http_basic', workers:200, timeout:'2s', max_candidates:0, max_probe_candidates:12000, probes:{{ http:'http://cp.cloudflare.com/generate_204', https:'https://example.com/' }} }},
+          free_proxy_cache: {{ enabled:true, path:'/tmp/free.txt', refresh_on_start:false, auto_reload:true, workers:8, max_age:'6h0m0s' }},
+          free_proxy_max_nodes: 0,
+        }}
+        const draftQualityOnly = JSON.parse(JSON.stringify(server))
+        draftQualityOnly.quality_check.count = 499
+        const payload = buildSettingsSavePayload({{
+          draft: draftQualityOnly,
+          serverSettings: server,
+          management: draftQualityOnly.management,
+          managementPasswordDraft: '',
+          managementPasswordClear: false,
+          subscriptions: server.subscriptions,
+        }})
+        assert.equal(payload.quality_check.count, 499)
+        assert.equal(Object.hasOwn(payload, 'free_proxy_sources'), false)
+        assert.equal(Object.hasOwn(payload, 'free_proxy_filter'), false)
+        assert.equal(Object.hasOwn(payload, 'free_proxy_cache'), false)
+        assert.equal(Object.hasOwn(payload, 'free_proxy_max_nodes'), false)
+
+        const draftSourceChanged = JSON.parse(JSON.stringify(server))
+        draftSourceChanged.free_proxy_sources[0].default_scheme = 'socks5'
+        const payload2 = buildSettingsSavePayload({{
+          draft: draftSourceChanged,
+          serverSettings: server,
+          management: draftSourceChanged.management,
+          managementPasswordDraft: '',
+          managementPasswordClear: false,
+          subscriptions: server.subscriptions,
+        }})
+        assert.equal(Object.hasOwn(payload2, 'free_proxy_sources'), true)
+        assert.equal(payload2.free_proxy_sources[0].default_scheme, 'socks5')
+    """))
+    subprocess.run([
+        "node",
+        "-e",
+        (
+            "const esbuild=require('./web/node_modules/esbuild');"
+            f"esbuild.buildSync({{entryPoints:['{entry}'], bundle:true, platform:'node', format:'esm', outfile:'{bundle}', logLevel:'silent'}})"
+        ),
+    ], cwd=ROOT, check=True)
+    subprocess.run(["node", str(bundle)], cwd=ROOT, check=True)
 
 
 if __name__ == "__main__":
@@ -210,3 +274,4 @@ if __name__ == "__main__":
     test_settings_page_infers_socks5_default_scheme_for_free_proxy_source_display()
     test_settings_page_uses_focused_section_layout_for_long_content()
     test_settings_management_password_is_write_only_in_ui()
+    test_settings_save_payload_omits_unchanged_free_proxy_config(Path("/tmp"))

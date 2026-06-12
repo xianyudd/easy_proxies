@@ -292,7 +292,7 @@ text = Path(sys.argv[1]).read_text()
 for key in ("subscriptions", "free_proxy_sources", "external_ip", "log_level", "skip_cert_verify", "upstream_proxy"):
     count = sum(1 for line in text.splitlines() if line.startswith(key + ":"))
     if count != 1:
-        raise SystemExit(f"{key} top-level count={count}\\n{text}")
+        raise SystemExit(f"{{key}} top-level count={{count}}\\n{{text}}")
 required = [
     "listen: 127.0.0.1:19093",
     "password: \\"ep123\\"",
@@ -305,7 +305,7 @@ required = [
 ]
 for needle in required:
     if needle not in text:
-        raise SystemExit(f"missing {needle!r}\\n{text}")
+        raise SystemExit(f"missing {{needle!r}}\\n{{text}}")
 PY
 """
     result = run_bash(script)

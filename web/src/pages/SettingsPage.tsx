@@ -9,6 +9,7 @@ import { Button } from '../components/ui/Button'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { Badge } from '../components/ui/Badge'
 import { useToast } from '../components/ui/Toast'
+import { buildSettingsSavePayload, freeSourceDefaultScheme } from './settingsSavePayload'
 import type { FreeProxyCache, FreeProxyFilter, FreeProxyRefreshStatus, FreeProxySource, SettingsResponse } from '../types/settings'
 import type { CloudflareResult } from '../types/cloudflare'
 import type { ReputationResult } from '../types/reputation'
@@ -47,36 +48,6 @@ function splitLines(value: string) { return value.split('\n').map(s => s.trim())
 function editableLines(value: string) { return value === '' ? [] : value.split('\n') }
 function isWideOpen(value: unknown) { return String(value || '').trim() === '0.0.0.0' }
 function safeRows<T>(rows: unknown): T[] { return Array.isArray(rows) ? rows : [] }
-function freeSourceKey(src: FreeProxySource) { return `${src.name || ''}|${src.url || ''}|${src.file || ''}` }
-function freeSourceDefaultScheme(src: FreeProxySource) {
-  const explicit = String(src.default_scheme || '').trim().toLowerCase()
-  if (explicit === 'http' || explicit === 'socks5') return explicit
-  const hint = `${src.name || ''} ${src.url || ''} ${src.file || ''}`.toLowerCase()
-  return hint.includes('socks5') ? 'socks5' : 'http'
-}
-function normalizeFreeSourcesForSave(draftSources: FreeProxySource[], serverSources: FreeProxySource[]) {
-  const serverEnabled = new Map(serverSources.map(src => [freeSourceKey(src), src.enabled !== false]))
-  return draftSources.map(src => {
-    const key = freeSourceKey(src)
-    const knownEnabled = serverEnabled.get(key)
-    return {...src, enabled: src.enabled ?? knownEnabled ?? true, default_scheme: freeSourceDefaultScheme(src)}
-  })
-}
-function normalizeManagementForSave(management: Record<string, unknown>, passwordDraft: string, clearPassword: boolean) {
-  const next = {...management}
-  if (clearPassword) {
-    next.clear_password = true
-    delete next.password
-  } else if (passwordDraft.trim()) {
-    next.password = passwordDraft
-    delete next.clear_password
-  } else {
-    delete next.password
-    delete next.clear_password
-  }
-  delete next.password_set
-  return next
-}
 function latestCheckedAt(rows: Array<{ checked_at?: unknown; result?: unknown }>) {
   const latest = rows
     .map(row => {
@@ -383,13 +354,14 @@ export function SettingsPage() {
       toast('请先补全免费代理源的 URL 或文件路径', 'error')
       return
     }
-    const serverSources = Array.isArray(settings.data?.free_proxy_sources) ? settings.data.free_proxy_sources as FreeProxySource[] : []
-    const normalizedDraft = {
-      ...draft,
-      management: normalizeManagementForSave(mgmt, managementPasswordDraft, managementPasswordClear),
+    const normalizedDraft = buildSettingsSavePayload({
+      draft,
+      serverSettings: settings.data,
+      management: mgmt,
+      managementPasswordDraft,
+      managementPasswordClear,
       subscriptions: cleanSubItems,
-      free_proxy_sources: normalizeFreeSourcesForSave(freeSources, serverSources),
-    }
+    })
     save.mutate(normalizedDraft)
   }
   const saveSubscriptions = () => saveSub.mutate({
