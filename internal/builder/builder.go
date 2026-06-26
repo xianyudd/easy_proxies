@@ -307,7 +307,7 @@ func Build(cfg *config.Config) (option.Options, error) {
 		route.Final = poolout.Tag
 	}
 
-	// Build multi-port inbounds (one port per node)
+	// Build multi-port inbounds (one port per node, excluding free-proxy nodes)
 	if enableMultiPort {
 		addr, err := parseAddr(cfg.MultiPort.Address)
 		if err != nil {
@@ -315,6 +315,9 @@ func Build(cfg *config.Config) (option.Options, error) {
 		}
 		for _, tag := range memberTags {
 			meta := metadata[tag]
+			if meta.Source == string(config.NodeSourceFreeProxy) {
+				continue
+			}
 			perMeta := map[string]poolout.MemberMeta{tag: meta}
 			poolTag := fmt.Sprintf("%s-%s", poolout.Tag, tag)
 			perOptions := poolout.Options{
