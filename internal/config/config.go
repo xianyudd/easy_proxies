@@ -341,6 +341,12 @@ func (c *Config) appendCachedFreeProxyNodes(path string) error {
 		log.Printf("⚠️ Failed to load free proxy cache %q: %v (skipping)", path, err)
 		return nil
 	}
+	filter := c.FreeProxyFilter.Normalized()
+	if filter.Enabled && len(sourceNodes) > 0 {
+		before := len(sourceNodes)
+		sourceNodes = filterFreeProxyCandidates(sourceNodes, filter, "free-proxy-cache", false)
+		log.Printf("🔎 Free proxy cache prefilter kept %d/%d nodes (min_tier=%s)", len(sourceNodes), before, filter.MinTier)
+	}
 	added := c.appendFreeProxyNodeCandidates(sourceNodes, c.FreeProxyMaxNodes)
 	if added > 0 {
 		log.Printf("✅ Loaded %d/%d nodes from free proxy cache %q", added, len(sourceNodes), path)
