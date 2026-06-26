@@ -329,6 +329,7 @@ func (c *Config) appendCachedFreeProxyNodes(path string) error {
 		Format:        "txt",
 		DefaultScheme: "http",
 		MaxNodes:      c.FreeProxyMaxNodes,
+		MaxBytes:      256 * 1024 * 1024, // cache file can be large; no network risk
 	}
 	provider := nodesource.NewProvider(cacheSource)
 	sourceNodes, err := provider.LoadLimited(c.FreeProxyMaxNodes)
