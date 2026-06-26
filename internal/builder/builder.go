@@ -164,9 +164,14 @@ func Build(cfg *config.Config) (option.Options, error) {
 			}()
 		}
 
-		// Send jobs
+		// Send jobs — free-proxy nodes skip the GeoIP DB lookup (too many to
+		// query synchronously at startup) and fall through to text-based region
+		// classification below.
 		for i, tag := range memberTags {
 			meta := metadata[tag]
+			if meta.Source == string(config.NodeSourceFreeProxy) {
+				continue
+			}
 			jobs <- geoJob{index: i, tag: tag, uri: meta.URI}
 		}
 		close(jobs)
@@ -189,6 +194,20 @@ func Build(cfg *config.Config) (option.Options, error) {
 		}
 
 		log.Printf("🌍 GeoIP resolution completed in %.1fs", time.Since(geoStart).Seconds())
+
+		// Free-proxy nodes were skipped in GeoIP lookup; classify them by name/URI text.
+		for _, tag := range memberTags {
+			meta := metadata[tag]
+			if meta.Source != string(config.NodeSourceFreeProxy) {
+				continue
+			}
+			overrideRegion, hasOverride := cfg.RegionOverrideForURI(meta.URI)
+			resolvedRegion, resolvedCountry := resolveRegionForNode(geoip.RegionInfo{}, meta.Name+"\n"+tag+"\n"+meta.URI, overrideRegion, hasOverride)
+			meta.Region = resolvedRegion
+			meta.Country = resolvedCountry
+			metadata[tag] = meta
+			regionMembers[resolvedRegion] = append(regionMembers[resolvedRegion], tag)
+		}
 	} else {
 		// No GeoIP - use name/URI matching first, then fallback to "other"
 		for _, tag := range memberTags {

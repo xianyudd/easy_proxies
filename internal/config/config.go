@@ -738,8 +738,11 @@ func (c *Config) normalize() error {
 			c.Nodes[idx].Name = fmt.Sprintf("node-%d", idx)
 		}
 
-		// Auto-assign port in multi-port/hybrid mode, skip occupied ports
-		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") {
+		// Auto-assign port in multi-port/hybrid mode, skip occupied ports.
+		// Free-proxy nodes are not assigned individual ports — they route through
+		// the shared pool listener and do not need per-node port binding.
+		isFreeProxy := c.Nodes[idx].Source == NodeSourceFreeProxy
+		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") && !isFreeProxy {
 			for !IsPortAvailable(c.MultiPort.Address, portCursor) {
 				log.Printf("⚠️  Port %d is in use, trying next port", portCursor)
 				portCursor++
@@ -749,12 +752,12 @@ func (c *Config) normalize() error {
 			}
 			c.Nodes[idx].Port = portCursor
 			portCursor++
-		} else if c.Nodes[idx].Port == 0 {
+		} else if c.Nodes[idx].Port == 0 && !isFreeProxy {
 			c.Nodes[idx].Port = portCursor
 			portCursor++
 		}
 
-		if c.Mode == "multi-port" || c.Mode == "hybrid" {
+		if !isFreeProxy && (c.Mode == "multi-port" || c.Mode == "hybrid") {
 			if c.Nodes[idx].Username == "" {
 				c.Nodes[idx].Username = c.MultiPort.Username
 				c.Nodes[idx].Password = c.MultiPort.Password
