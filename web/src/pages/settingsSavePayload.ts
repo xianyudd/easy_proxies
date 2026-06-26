@@ -20,7 +20,7 @@ function normalizeFreeSourcesForSave(draftSources: FreeProxySource[], serverSour
   })
 }
 
-function normalizeManagementForSave(management: Record<string, unknown>, passwordDraft: string, clearPassword: boolean) {
+function normalizeManagementForSave(management: Record<string, unknown>, passwordDraft: string, clearPassword: boolean, serverManagement?: Record<string, unknown>) {
   const next = { ...management }
   if (clearPassword) {
     next.clear_password = true
@@ -33,6 +33,10 @@ function normalizeManagementForSave(management: Record<string, unknown>, passwor
     delete next.clear_password
   }
   delete next.password_set
+  // 只有 listen 实际发生变化时才发送，避免触发不必要的端口 rebind 检测
+  if (serverManagement && String(next.listen || '').trim() === String(serverManagement.listen || '').trim()) {
+    delete next.listen
+  }
   return next
 }
 
@@ -81,9 +85,10 @@ export function buildSettingsSavePayload({
   managementPasswordClear: boolean
   subscriptions: string[]
 }): SettingsResponse {
+  const serverManagement = serverSettings?.management as Record<string, unknown> | undefined
   const payload: SettingsResponse = {
     ...draft,
-    management: normalizeManagementForSave(management, managementPasswordDraft, managementPasswordClear),
+    management: normalizeManagementForSave(management, managementPasswordDraft, managementPasswordClear, serverManagement),
     subscriptions,
   }
 

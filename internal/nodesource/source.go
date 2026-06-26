@@ -29,6 +29,9 @@ type SourceConfig struct {
 	Timeout       time.Duration `yaml:"timeout" json:"timeout"`
 	MaxNodes      int           `yaml:"max_nodes" json:"max_nodes"`
 	MaxBytes      int64         `yaml:"max_bytes" json:"max_bytes"`
+	// DownloadProxy overrides the global download proxy for this source.
+	// If empty, the global FreeProxyDownloadProxy config or HTTPS_PROXY env is used.
+	DownloadProxy string `yaml:"download_proxy" json:"download_proxy,omitempty"`
 }
 
 // EnabledValue reports whether this source should be loaded.
@@ -46,15 +49,31 @@ type Node struct {
 
 // Provider loads nodes from a configured source.
 type Provider struct {
-	cfg SourceConfig
+	cfg           SourceConfig
+	downloadProxy string // global download proxy, overridden per-source by cfg.DownloadProxy
 }
 
 func NewProvider(cfg SourceConfig) *Provider {
 	return &Provider{cfg: cfg}
 }
 
+// NewProviderWithProxy creates a Provider that routes HTTP fetches through the
+// given proxy URL (global default). Per-source DownloadProxy takes precedence.
+func NewProviderWithProxy(cfg SourceConfig, globalProxy string) *Provider {
+	return &Provider{cfg: cfg, downloadProxy: globalProxy}
+}
+
 func (p *Provider) Load() ([]Node, error) {
 	return p.LoadLimited(0)
+}
+
+// effectiveDownloadProxy returns the proxy URL to use for this fetch.
+// Per-source DownloadProxy overrides the global; empty means use env.
+func (p *Provider) effectiveDownloadProxy() string {
+	if v := strings.TrimSpace(p.cfg.DownloadProxy); v != "" {
+		return v
+	}
+	return p.downloadProxy
 }
 
 // LoadLimited loads nodes with an optional caller cap. The lower positive cap
@@ -82,7 +101,7 @@ func (p *Provider) LoadLimited(maxNodes int) ([]Node, error) {
 			return nil, fmt.Errorf("read source file: %w", err)
 		}
 	case strings.TrimSpace(p.cfg.URL) != "":
-		body, err = fetch(p.cfg.URL, p.cfg.Timeout, maxBytes)
+		body, err = fetchWithProxy(p.cfg.URL, p.cfg.Timeout, maxBytes, p.effectiveDownloadProxy())
 		if err != nil {
 			return nil, err
 		}
@@ -149,11 +168,49 @@ func newFetchHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
+// newFetchHTTPClientWithProxy builds a fetch client that routes through the given
+// proxy URL string. If proxyURL is empty it falls back to http.ProxyFromEnvironment.
+func newFetchHTTPClientWithProxy(timeout time.Duration, proxyURL string) *http.Client {
+	if timeout <= 0 {
+		timeout = DefaultFetchTimeout
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if proxyURL = strings.TrimSpace(proxyURL); proxyURL != "" {
+		u, err := url.Parse(proxyURL)
+		if err == nil {
+			transport.Proxy = http.ProxyURL(u)
+		}
+	} else {
+		transport.Proxy = http.ProxyFromEnvironment
+	}
+	return &http.Client{Timeout: timeout, Transport: transport}
+}
+
 func fetch(rawURL string, timeout time.Duration, maxBytes int64) ([]byte, error) {
 	if timeout <= 0 {
 		timeout = DefaultFetchTimeout
 	}
 	client := newFetchHTTPClient(timeout)
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetch source: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("source returned status %d", resp.StatusCode)
+	}
+	body, err := readLimited(resp.Body, maxBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read source response: %w", err)
+	}
+	return body, nil
+}
+
+func fetchWithProxy(rawURL string, timeout time.Duration, maxBytes int64, proxyURL string) ([]byte, error) {
+	if timeout <= 0 {
+		timeout = DefaultFetchTimeout
+	}
+	client := newFetchHTTPClientWithProxy(timeout, proxyURL)
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch source: %w", err)

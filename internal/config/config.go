@@ -49,6 +49,7 @@ type Config struct {
 	LogLevel              string                    `yaml:"log_level"`
 	SkipCertVerify        bool                      `yaml:"skip_cert_verify"` // 全局跳过 SSL 证书验证
 	UpstreamProxy         string                    `yaml:"upstream_proxy"`   // Optional SOCKS/HTTP proxy used as sing-box outbound detour
+	FreeProxyDownloadProxy string                   `yaml:"free_proxy_download_proxy"` // HTTP/SOCKS5 proxy for downloading free proxy sources; falls back to HTTPS_PROXY env
 
 	filePath string `yaml:"-"` // 配置文件路径，用于保存
 }
@@ -355,7 +356,7 @@ func (c *Config) appendRemoteFreeProxyNodes() error {
 		if c.FreeProxyMaxNodes > 0 && totalAdded >= c.FreeProxyMaxNodes {
 			break
 		}
-		provider := nodesource.NewProvider(source)
+		provider := nodesource.NewProviderWithProxy(source, c.FreeProxyDownloadProxy)
 		remaining := 0
 		if c.FreeProxyMaxNodes > 0 {
 			remaining = c.FreeProxyMaxNodes - totalAdded
@@ -1855,7 +1856,7 @@ func (c *Config) RefreshFreeProxyCacheSummary(ctx context.Context) (FreeProxyCac
 				if name == "" {
 					name = firstNonEmptyString(source.File, source.URL, "unnamed")
 				}
-				provider := nodesource.NewProvider(source)
+				provider := nodesource.NewProviderWithProxy(source, c.FreeProxyDownloadProxy)
 				// SourceConfig.MaxNodes is an explicit per-source parse cap.
 				// When it is unset/0, load the whole source into the background
 				// candidate pipeline; only the final cache/runtime activation is
