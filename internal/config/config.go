@@ -931,7 +931,8 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	// Second pass: assign new ports for nodes without preserved ports
 	portCursor := c.MultiPort.BasePort
 	for idx := range c.Nodes {
-		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") {
+		isFreeProxy := c.Nodes[idx].Source == NodeSourceFreeProxy
+		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") && !isFreeProxy {
 			// Find next available port that's not used
 			for usedPorts[portCursor] || !IsPortAvailable(c.MultiPort.Address, portCursor) {
 				portCursor++
@@ -943,13 +944,13 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 			usedPorts[portCursor] = true
 			log.Printf("📌 Assigned new port %d for node %q", portCursor, c.Nodes[idx].Name)
 			portCursor++
-		} else if c.Nodes[idx].Port == 0 {
+		} else if c.Nodes[idx].Port == 0 && !isFreeProxy {
 			c.Nodes[idx].Port = portCursor
 			portCursor++
 		}
 
 		// Apply default credentials
-		if c.Mode == "multi-port" || c.Mode == "hybrid" {
+		if !isFreeProxy && (c.Mode == "multi-port" || c.Mode == "hybrid") {
 			if c.Nodes[idx].Username == "" {
 				c.Nodes[idx].Username = c.MultiPort.Username
 				c.Nodes[idx].Password = c.MultiPort.Password
