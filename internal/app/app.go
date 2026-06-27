@@ -106,6 +106,25 @@ func startFreeProxyCacheRefresh(ctx context.Context, cfg *config.Config, boxMgr 
 		return
 	}
 	cache := cfg.FreeProxyCache.Normalized(cfg.FilePath(), len(cfg.FreeProxySources) > 0)
+
+	// If the cache filter is enabled, the startup path skipped live probing to
+	// start sing-box immediately. Trigger a filtered reload in the background so
+	// unresponsive cache nodes are culled without delaying startup.
+	filter := cfg.FreeProxyFilter.Normalized()
+	if cache.EnabledValue() && cache.AutoReloadValue() && filter.Enabled && len(cfg.FreeProxySources) > 0 {
+		go func() {
+			fmt.Println("Starting background free proxy cache filter reload...")
+			reloadedCfg, err := config.Load(cfg.FilePath())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "free proxy cache filter reload: load config failed: %v\n", err)
+				return
+			}
+			if err := boxMgr.ReloadWithPortMap(reloadedCfg, cfg.BuildPortMap()); err != nil {
+				fmt.Fprintf(os.Stderr, "free proxy cache filter reload failed: %v\n", err)
+			}
+		}()
+	}
+
 	if !cache.EnabledValue() || !cache.RefreshOnStartValue() || len(cfg.FreeProxySources) == 0 {
 		return
 	}

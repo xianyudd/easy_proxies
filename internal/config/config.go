@@ -317,12 +317,27 @@ func (c *Config) appendFreeProxyNodes() error {
 		return nil
 	}
 	if c.FreeProxyCache.EnabledValue() && strings.TrimSpace(c.FreeProxyCache.Path) != "" {
-		return c.appendCachedFreeProxyNodes(c.FreeProxyCache.Path)
+		// At startup (normalize) skip the live filter probe so sing-box starts
+		// immediately; the cache is re-filtered on the first post-start reload.
+		return c.appendCachedFreeProxyNodes(c.FreeProxyCache.Path, true)
 	}
 	return c.appendRemoteFreeProxyNodes()
 }
 
-func (c *Config) appendCachedFreeProxyNodes(path string) error {
+func (c *Config) appendFreeProxyNodesFiltered() error {
+	if c == nil || len(c.FreeProxySources) == 0 {
+		return nil
+	}
+	if !hasEnabledFreeProxySource(c.FreeProxySources) {
+		return nil
+	}
+	if c.FreeProxyCache.EnabledValue() && strings.TrimSpace(c.FreeProxyCache.Path) != "" {
+		return c.appendCachedFreeProxyNodes(c.FreeProxyCache.Path, false)
+	}
+	return c.appendRemoteFreeProxyNodes()
+}
+
+func (c *Config) appendCachedFreeProxyNodes(path string, skipFilter bool) error {
 	cacheSource := nodesource.SourceConfig{
 		Name:          "free-proxy-cache",
 		File:          path,
@@ -342,7 +357,7 @@ func (c *Config) appendCachedFreeProxyNodes(path string) error {
 		return nil
 	}
 	filter := c.FreeProxyFilter.Normalized()
-	if filter.Enabled && len(sourceNodes) > 0 {
+	if !skipFilter && filter.Enabled && len(sourceNodes) > 0 {
 		before := len(sourceNodes)
 		sourceNodes = filterFreeProxyCandidates(sourceNodes, filter, "free-proxy-cache", false)
 		log.Printf("🔎 Free proxy cache prefilter kept %d/%d nodes (min_tier=%s)", len(sourceNodes), before, filter.MinTier)
@@ -893,7 +908,7 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 		baseNodes = append(baseNodes, c.Nodes[idx])
 	}
 	c.Nodes = baseNodes
-	if err := c.appendFreeProxyNodes(); err != nil {
+	if err := c.appendFreeProxyNodesFiltered(); err != nil {
 		return err
 	}
 
