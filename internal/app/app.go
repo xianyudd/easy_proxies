@@ -113,6 +113,9 @@ func startFreeProxyCacheRefresh(ctx context.Context, cfg *config.Config, boxMgr 
 	filter := cfg.FreeProxyFilter.Normalized()
 	if cache.EnabledValue() && cache.AutoReloadValue() && filter.Enabled && len(cfg.FreeProxySources) > 0 {
 		go func() {
+			// Wait for the box manager to finish starting before triggering the
+			// filtered reload; the manager may not be ready immediately.
+			time.Sleep(3 * time.Second)
 			fmt.Println("Starting background free proxy cache filter reload...")
 			reloadedCfg, err := config.Load(cfg.FilePath())
 			if err != nil {
