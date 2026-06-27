@@ -14,7 +14,7 @@ const (
 	DefaultFilterWorkers       = 200
 	MaxFilterWorkers           = 800
 	TargetFullScanBatchLatency = 8 * time.Second
-	MinAdaptiveFilterTimeout   = 150 * time.Millisecond
+	MinAdaptiveFilterTimeout   = 2 * time.Second
 )
 
 // FilterConfig controls optional pre-ingestion validation for free proxy sources.
@@ -199,7 +199,13 @@ func (f FilterConfig) effectiveWorkers(candidateCount int) int {
 
 func (f FilterConfig) effectiveTimeout(candidateCount, workers int) time.Duration {
 	f = f.Normalized()
+	// Skip adaptive tuning: when user set max_candidates, when candidates
+	// fit inside one batch, or when candidates vastly outnumber workers
+	// (adaptive formula would yield an unreasonably short timeout).
 	if f.MaxCandidates > 0 || candidateCount <= workers || workers <= 0 || f.Timeout <= MinAdaptiveFilterTimeout {
+		return f.Timeout
+	}
+	if candidateCount > workers*4 {
 		return f.Timeout
 	}
 	target := time.Duration(float64(TargetFullScanBatchLatency) * float64(workers) / float64(candidateCount))
