@@ -66,3 +66,7 @@ sidebar-fixed-extractor.png
 # Frontend dependencies/build cache
 web/node_modules/
 web/tsconfig.tsbuildinfo
+
+# Frontend build output
+internal/monitor/assets/dist/
+sdk/typescript/dist/

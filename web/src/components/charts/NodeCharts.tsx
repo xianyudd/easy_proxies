@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
 import type { NodeSnapshot } from '../../types/node'
 import { Button } from '../ui/Button'
 import { EChart, cssVar, formatBytes } from './EChart'
-import { regionMeta } from './region'
 
 function chartText() { return cssVar('--text', '#eef2ff') }
 function chartMuted() { return cssVar('--muted', '#94a3b8') }
@@ -25,56 +24,127 @@ function safeTrafficNumber(input: unknown) {
   return Number.isFinite(value) && value >= 0 ? value : 0
 }
 
+// ISO code → ECharts world.json country name
+const ISO_TO_ECHARTS: Record<string, string> = {
+  us: 'United States', jp: 'Japan', kr: 'Korea', sg: 'Singapore',
+  in: 'India', ae: 'United Arab Emirates', ch: 'Switzerland',
+  au: 'Australia', de: 'Germany', gb: 'United Kingdom', ca: 'Canada',
+  fr: 'France', nl: 'Netherlands', se: 'Sweden', no: 'Norway',
+  fi: 'Finland', dk: 'Denmark', it: 'Italy', es: 'Spain', pt: 'Portugal',
+  pl: 'Poland', cz: 'Czech Republic', at: 'Austria', be: 'Belgium',
+  ru: 'Russia', tr: 'Turkey', ua: 'Ukraine', br: 'Brazil', mx: 'Mexico',
+  ar: 'Argentina', cl: 'Chile', co: 'Colombia', za: 'South Africa',
+  ng: 'Nigeria', ke: 'Kenya', eg: 'Egypt', id: 'Indonesia', th: 'Thailand',
+  vn: 'Vietnam', my: 'Malaysia', ph: 'Philippines', tw: 'China',
+  hk: 'China', cn: 'China', mo: 'China', nz: 'New Zealand',
+  il: 'Israel', sa: 'Saudi Arabia', kw: 'Kuwait', qa: 'Qatar',
+  pk: 'Pakistan', bd: 'Bangladesh', lk: 'Sri Lanka',
+}
+
+let worldGeoJson: object | null = null
+let worldGeoJsonPromise: Promise<object> | null = null
+
+function loadWorldGeoJson(): Promise<object> {
+  if (worldGeoJson) return Promise.resolve(worldGeoJson)
+  if (worldGeoJsonPromise) return worldGeoJsonPromise
+    worldGeoJsonPromise = fetch('/assets/geo/world.json') 
+    .then(r => r.json())
+    .then(data => { worldGeoJson = data; return data })
+  return worldGeoJsonPromise
+}
+
 export function RegionAvailabilityChart({ nodes }: { nodes: unknown }) {
+  const [mapReady, setMapReady] = useState(false)
+  const loadedRef = useRef(false)
+
+  useEffect(() => {
+    if (loadedRef.current) return
+    loadedRef.current = true
+    loadWorldGeoJson().then(geoJson => {
+      echarts.registerMap('world', geoJson as any)
+      setMapReady(true)
+    }).catch(() => setMapReady(true))
+  }, [])
+
   const option = useMemo<EChartsOption>(() => {
     const chartNodes = safeRows<NodeSnapshot>(nodes)
-    const stats = new Map<string, { total: number; healthy: number }>()
+    // aggregate by iso code
+    const rawStats = new Map<string, { total: number; healthy: number; codes: string[] }>()
     for (const node of chartNodes) {
       const code = String(node.region || 'other').toLowerCase()
-      const item = stats.get(code) || { total: 0, healthy: 0 }
+      const echartName = ISO_TO_ECHARTS[code]
+      if (!echartName) continue
+      const item = rawStats.get(echartName) || { total: 0, healthy: 0, codes: [] }
       item.total += 1
       if (node.available && !node.blacklisted) item.healthy += 1
-      stats.set(code, item)
+      if (!item.codes.includes(code)) item.codes.push(code)
+      rawStats.set(echartName, item)
     }
-    const entries = [...stats.entries()].sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0]))
-    const total = entries.reduce((sum, [, stat]) => sum + stat.total, 0)
-    const healthy = entries.reduce((sum, [, stat]) => sum + stat.healthy, 0)
-    const data = entries.map(([code, stat]) => {
-      const meta = regionMeta(code)
-      return { name: `${meta.emoji} ${meta.label}`, value: stat.total, code, healthy: stat.healthy, itemStyle: { color: meta.color } }
-    })
+
+    const mapData = Array.from(rawStats.entries()).map(([name, stat]) => ({
+      name,
+      value: stat.total ? Math.round((stat.healthy / stat.total) * 100) : 0,
+      total: stat.total,
+      healthy: stat.healthy,
+      codes: stat.codes,
+    }))
+
+    if (!mapReady) {
+      return { backgroundColor: 'transparent' }
+    }
+
     return {
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'item',
         backgroundColor: chartPanel(),
         borderColor: chartBorder(),
-        textStyle: { color: chartText() },
+        textStyle: { color: chartText(), fontSize: 12 },
         formatter: (p: any) => {
-          const rate = p.data.value ? Math.round((p.data.healthy || 0) * 100 / p.data.value) : 0
-          return `${p.name}<br/>节点总数：${p.data.value}<br/>健康在线：${p.data.healthy || 0}<br/>连通率：${rate}%`
+          if (!p.data) return `${p.name}<br/><span style="color:${chartMuted()}">无节点数据</span>`
+          const rate = p.data.value ?? 0
+          const codes = (p.data.codes || []).join(', ').toUpperCase()
+          const subLabel = codes && codes !== p.name.toUpperCase() ? `<br/><span style="color:${chartMuted()};font-size:11px">${codes}</span>` : ''
+          return `<strong>${p.name}</strong>${subLabel}<br/>节点总数：${p.data.total}<br/>健康在线：${p.data.healthy}<br/>连通率：<strong>${rate}%</strong>`
         },
       },
-      legend: { type: 'scroll', orient: 'vertical', right: 4, top: 36, bottom: 8, textStyle: { color: chartMuted(), fontSize: 12 } },
+      visualMap: {
+        min: 0,
+        max: 100,
+        left: 'left',
+        bottom: 16,
+        text: ['100%', '0%'],
+        textStyle: { color: chartMuted(), fontSize: 11 },
+        inRange: { color: ['#7f1d1d', '#dc2626', '#f59e0b', '#16a34a', '#4ade80'] },
+        calculable: false,
+        itemWidth: 12,
+        itemHeight: 80,
+      },
       series: [{
-        type: 'pie', radius: ['45%', '72%'], center: ['36%', '54%'], minAngle: 5, avoidLabelOverlap: true,
-        itemStyle: { borderRadius: 8, borderColor: chartPanel(), borderWidth: 3 },
-        label: {
-          show: true,
-          position: 'center',
-          formatter: `{a|${total}}\n{b|健康 ${healthy}}`,
-          rich: {
-            a: { color: chartText(), fontSize: 28, fontWeight: 800 },
-            b: { color: chartMuted(), fontSize: 12, lineHeight: 22 },
-          },
+        type: 'map',
+        map: 'world',
+        roam: true,
+        scaleLimit: { min: 1, max: 8 },
+        emphasis: {
+          label: { show: false },
+          itemStyle: { areaColor: '#6366f1', shadowBlur: 8, shadowColor: 'rgba(99,102,241,0.4)' },
         },
-        labelLine: { show: false },
-        data,
+        select: { disabled: true },
+        itemStyle: {
+          areaColor: chartBorder(),
+          borderColor: chartPanel(),
+          borderWidth: 0.5,
+        },
+        data: mapData,
       }],
     }
-  }, [nodes])
+  }, [nodes, mapReady])
 
-  return <EChart option={option} height={340} />
+  if (!mapReady) {
+    return <div style={{ height: 420, display: 'flex', alignItems: 'center', justifyContent: 'center', color: chartMuted(), fontSize: 13 }}>加载地图数据…</div>
+  }
+
+  return <EChart option={option} height={420} />
 }
 
 export function LatencyTopChart({ nodes }: { nodes: unknown }) {

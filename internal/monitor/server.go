@@ -3717,8 +3717,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"cloudflare_timeout":     config.DefaultCloudflareTimeout.String(),
 				"cloudflare_concurrency": config.DefaultCloudflareConcurrency,
 			},
-			"free_proxy_sources":   []any{},
-			"free_proxy_max_nodes": 0,
+			"free_proxy_sources":         []any{},
+			"free_proxy_max_nodes":        0,
+			"free_proxy_download_proxy":   "",
 			"free_proxy_filter": map[string]any{
 				"enabled":        false,
 				"min_tier":       "simple_web",
@@ -3786,6 +3787,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 			resp["free_proxy_sources"] = settingsFreeProxySources(cfg.FreeProxySources)
 			resp["free_proxy_max_nodes"] = cfg.FreeProxyMaxNodes
+			resp["free_proxy_download_proxy"] = cfg.FreeProxyDownloadProxy
 			filter := cfg.FreeProxyFilter.Normalized()
 			resp["free_proxy_filter"] = map[string]any{
 				"enabled":              filter.Enabled,
@@ -3888,6 +3890,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			} `json:"subscription_refresh,omitempty"`
 			FreeProxySources  []nodesourceSourceConfigRequest `json:"free_proxy_sources"`
 			FreeProxyMaxNodes *int                            `json:"free_proxy_max_nodes"`
+			FreeProxyDownloadProxy *string                    `json:"free_proxy_download_proxy"`
 			FreeProxyFilter   *freeProxyFilterRequest         `json:"free_proxy_filter"`
 			FreeProxyCache    *freeProxyCacheRequest          `json:"free_proxy_cache"`
 		}
@@ -3950,6 +3953,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasFreeProxyFilterMaxProbeCandidates := hasNestedJSONKey(body, "free_proxy_filter", "max_probe_candidates")
 		hasFreeProxyCacheWorkers := hasNestedJSONKey(body, "free_proxy_cache", "workers")
 		hasFreeProxyCacheMaxAge := hasNestedJSONKey(body, "free_proxy_cache", "max_age")
+		hasFreeProxyDownloadProxy := hasJSONKey(body, "free_proxy_download_proxy")
 
 		logCfg := config.LogConfig{}
 		hasLogCfg := false
@@ -4352,6 +4356,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.FreeProxyMaxNodes != nil {
 			s.cfgSrc.FreeProxyMaxNodes = *req.FreeProxyMaxNodes
+		}
+		if hasFreeProxyDownloadProxy && req.FreeProxyDownloadProxy != nil {
+			s.cfgSrc.FreeProxyDownloadProxy = *req.FreeProxyDownloadProxy
 		}
 		if req.FreeProxyFilter != nil {
 			s.cfgSrc.FreeProxyFilter = freeProxyFilterFromRequest(req.FreeProxyFilter, s.cfgSrc.FreeProxyFilter, body)

@@ -95,7 +95,7 @@ export function StatusPage() {
     </div>
     <div className="dashboard-grid">
       <div className="dashboard-stack">
-        <div className="chart-panel wide"><div className="chart-title">地域连通率 <span>Region Availability</span></div><RegionAvailabilityChart nodes={data} /></div>
+        <div className="chart-panel wide map-panel"><div className="chart-title">节点地理分布 <span>Node World Map</span></div><RegionAvailabilityChart nodes={data} /></div>
         <div className="charts-grid">
           <div className="chart-panel"><div className="chart-title">最优节点延迟 <span>Top Fastest Nodes</span></div><LatencyTopChart nodes={data} /></div>
           <div className="chart-panel"><div className="chart-title">稳定性掉线排行 <span>Top Unstable Nodes</span></div><FailureRankChart nodes={data} /></div>

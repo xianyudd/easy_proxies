@@ -49,6 +49,7 @@ type Config struct {
 	LogLevel              string                    `yaml:"log_level"`
 	SkipCertVerify        bool                      `yaml:"skip_cert_verify"` // 全局跳过 SSL 证书验证
 	UpstreamProxy         string                    `yaml:"upstream_proxy"`   // Optional SOCKS/HTTP proxy used as sing-box outbound detour
+	FreeProxyDownloadProxy string                   `yaml:"free_proxy_download_proxy"` // HTTP/SOCKS5 proxy for downloading free proxy sources; falls back to HTTPS_PROXY env
 
 	filePath string `yaml:"-"` // 配置文件路径，用于保存
 }
@@ -316,18 +317,34 @@ func (c *Config) appendFreeProxyNodes() error {
 		return nil
 	}
 	if c.FreeProxyCache.EnabledValue() && strings.TrimSpace(c.FreeProxyCache.Path) != "" {
-		return c.appendCachedFreeProxyNodes(c.FreeProxyCache.Path)
+		// At startup (normalize) skip the live filter probe so sing-box starts
+		// immediately; the cache is re-filtered on the first post-start reload.
+		return c.appendCachedFreeProxyNodes(c.FreeProxyCache.Path, true)
 	}
 	return c.appendRemoteFreeProxyNodes()
 }
 
-func (c *Config) appendCachedFreeProxyNodes(path string) error {
+func (c *Config) appendFreeProxyNodesFiltered() error {
+	if c == nil || len(c.FreeProxySources) == 0 {
+		return nil
+	}
+	if !hasEnabledFreeProxySource(c.FreeProxySources) {
+		return nil
+	}
+	if c.FreeProxyCache.EnabledValue() && strings.TrimSpace(c.FreeProxyCache.Path) != "" {
+		return c.appendCachedFreeProxyNodes(c.FreeProxyCache.Path, false)
+	}
+	return c.appendRemoteFreeProxyNodes()
+}
+
+func (c *Config) appendCachedFreeProxyNodes(path string, skipFilter bool) error {
 	cacheSource := nodesource.SourceConfig{
 		Name:          "free-proxy-cache",
 		File:          path,
 		Format:        "txt",
 		DefaultScheme: "http",
 		MaxNodes:      c.FreeProxyMaxNodes,
+		MaxBytes:      256 * 1024 * 1024, // cache file can be large; no network risk
 	}
 	provider := nodesource.NewProvider(cacheSource)
 	sourceNodes, err := provider.LoadLimited(c.FreeProxyMaxNodes)
@@ -338,6 +355,12 @@ func (c *Config) appendCachedFreeProxyNodes(path string) error {
 		}
 		log.Printf("⚠️ Failed to load free proxy cache %q: %v (skipping)", path, err)
 		return nil
+	}
+	filter := c.FreeProxyFilter.Normalized()
+	if !skipFilter && filter.Enabled && len(sourceNodes) > 0 {
+		before := len(sourceNodes)
+		sourceNodes = filterFreeProxyCandidates(sourceNodes, filter, "free-proxy-cache", false)
+		log.Printf("🔎 Free proxy cache prefilter kept %d/%d nodes (min_tier=%s)", len(sourceNodes), before, filter.MinTier)
 	}
 	added := c.appendFreeProxyNodeCandidates(sourceNodes, c.FreeProxyMaxNodes)
 	if added > 0 {
@@ -355,7 +378,7 @@ func (c *Config) appendRemoteFreeProxyNodes() error {
 		if c.FreeProxyMaxNodes > 0 && totalAdded >= c.FreeProxyMaxNodes {
 			break
 		}
-		provider := nodesource.NewProvider(source)
+		provider := nodesource.NewProviderWithProxy(source, c.FreeProxyDownloadProxy)
 		remaining := 0
 		if c.FreeProxyMaxNodes > 0 {
 			remaining = c.FreeProxyMaxNodes - totalAdded
@@ -736,8 +759,11 @@ func (c *Config) normalize() error {
 			c.Nodes[idx].Name = fmt.Sprintf("node-%d", idx)
 		}
 
-		// Auto-assign port in multi-port/hybrid mode, skip occupied ports
-		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") {
+		// Auto-assign port in multi-port/hybrid mode, skip occupied ports.
+		// Free-proxy nodes are not assigned individual ports — they route through
+		// the shared pool listener and do not need per-node port binding.
+		isFreeProxy := c.Nodes[idx].Source == NodeSourceFreeProxy
+		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") && !isFreeProxy {
 			for !IsPortAvailable(c.MultiPort.Address, portCursor) {
 				log.Printf("⚠️  Port %d is in use, trying next port", portCursor)
 				portCursor++
@@ -747,12 +773,12 @@ func (c *Config) normalize() error {
 			}
 			c.Nodes[idx].Port = portCursor
 			portCursor++
-		} else if c.Nodes[idx].Port == 0 {
+		} else if c.Nodes[idx].Port == 0 && !isFreeProxy {
 			c.Nodes[idx].Port = portCursor
 			portCursor++
 		}
 
-		if c.Mode == "multi-port" || c.Mode == "hybrid" {
+		if !isFreeProxy && (c.Mode == "multi-port" || c.Mode == "hybrid") {
 			if c.Nodes[idx].Username == "" {
 				c.Nodes[idx].Username = c.MultiPort.Username
 				c.Nodes[idx].Password = c.MultiPort.Password
@@ -882,7 +908,7 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 		baseNodes = append(baseNodes, c.Nodes[idx])
 	}
 	c.Nodes = baseNodes
-	if err := c.appendFreeProxyNodes(); err != nil {
+	if err := c.appendFreeProxyNodesFiltered(); err != nil {
 		return err
 	}
 
@@ -926,7 +952,8 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	// Second pass: assign new ports for nodes without preserved ports
 	portCursor := c.MultiPort.BasePort
 	for idx := range c.Nodes {
-		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") {
+		isFreeProxy := c.Nodes[idx].Source == NodeSourceFreeProxy
+		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") && !isFreeProxy {
 			// Find next available port that's not used
 			for usedPorts[portCursor] || !IsPortAvailable(c.MultiPort.Address, portCursor) {
 				portCursor++
@@ -938,13 +965,13 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 			usedPorts[portCursor] = true
 			log.Printf("📌 Assigned new port %d for node %q", portCursor, c.Nodes[idx].Name)
 			portCursor++
-		} else if c.Nodes[idx].Port == 0 {
+		} else if c.Nodes[idx].Port == 0 && !isFreeProxy {
 			c.Nodes[idx].Port = portCursor
 			portCursor++
 		}
 
 		// Apply default credentials
-		if c.Mode == "multi-port" || c.Mode == "hybrid" {
+		if !isFreeProxy && (c.Mode == "multi-port" || c.Mode == "hybrid") {
 			if c.Nodes[idx].Username == "" {
 				c.Nodes[idx].Username = c.MultiPort.Username
 				c.Nodes[idx].Password = c.MultiPort.Password
@@ -1855,7 +1882,7 @@ func (c *Config) RefreshFreeProxyCacheSummary(ctx context.Context) (FreeProxyCac
 				if name == "" {
 					name = firstNonEmptyString(source.File, source.URL, "unnamed")
 				}
-				provider := nodesource.NewProvider(source)
+				provider := nodesource.NewProviderWithProxy(source, c.FreeProxyDownloadProxy)
 				// SourceConfig.MaxNodes is an explicit per-source parse cap.
 				// When it is unset/0, load the whole source into the background
 				// candidate pipeline; only the final cache/runtime activation is

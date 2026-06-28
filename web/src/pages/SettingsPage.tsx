@@ -473,9 +473,13 @@ export function SettingsPage() {
         <span>缓存：{freeRefresh?.cache_path || String(freeCache.path || '未配置')} · {freeRefreshCacheNodes} 条 · {cacheFreshLabel(freeRefresh?.cache_fresh)} · 最大年龄 {freeRefresh?.cache_max_age || String(freeCache.max_age || '6h0m0s')}</span>
         <span>策略：启用源 {freeRefreshSources} · 自动重载 {freeRefreshAutoReload ? '开' : '关'} · 筛选 {freeRefreshFilterEnabled ? '开' : '关'} · 最低等级 {freeRefresh?.filter_min_tier || String(freeFilter.min_tier || 'http_basic')} · 探测预算 {freeRefreshProbeBudget > 0 ? freeRefreshProbeBudget : '全量'}</span>
         {freeRefresh?.refresh_pending ? <span>排队：新配置刷新已排队 · 来源 {freeRefresh.pending_requested_by || 'unknown'}</span> : null}
-        {freeRefreshSourceRows.length ? <span>
-          源结果：{freeRefreshSourceRows.map(src => `${src.name || 'unnamed'} ${src.accepted || 0}/${src.candidates || 0}${src.error ? ` 失败: ${src.error}` : ''}`).join('；')}
-        </span> : null}
+        {freeRefreshSourceRows.length ? <ul className="free-refresh-source-list">
+          {freeRefreshSourceRows.map((src, i) => <li key={i} className={src.error ? 'has-error' : ''}>
+            <span className="src-name">{src.name || 'unnamed'}</span>
+            <span className="src-count">{src.accepted || 0}/{src.candidates || 0}</span>
+            {src.error ? <span className="src-error">{src.error}</span> : null}
+          </li>)}
+        </ul> : null}
       </div>
     </div>}
     <div className="settings-layout refined-settings-layout">
@@ -559,14 +563,28 @@ export function SettingsPage() {
               {input('缓存文件', String(freeCache.path || ''), v=>updateFreeCache({path:v}))}
               {input('源下载并发', String(freeCache.workers || 8), v=>updateFreeCache({workers:Number(v)||8}), 'number')}
               {input('缓存最大年龄', String(freeCache.max_age || '6h0m0s'), v=>updateFreeCache({max_age:v}))}
+              <div className="field settings-form-item"><label>源下载代理</label><Input className="settings-input" aria-label="源下载代理" placeholder="留空=跟随 HTTPS_PROXY 环境变量" value={String(draft.free_proxy_download_proxy || '')} onChange={e=>updateDraft({...draft, free_proxy_download_proxy:e.target.value})} /></div>
               {input('HTTP 探针', String(freeFilterProbes.http || 'http://cp.cloudflare.com/generate_204'), v=>updateFreeFilter({probes:{...freeFilterProbes,http:v}}))}
               {input('HTTPS 探针', String(freeFilterProbes.https || 'https://example.com/'), v=>updateFreeFilter({probes:{...freeFilterProbes,https:v}}))}
             </div>
-            <div className="settings-helper-text">推荐保持“启动仅读取缓存”：WebUI 先启动，免费源在后台下载和筛选，完成后自动重载。</div>
+            <div className="settings-helper-text">推荐保持"启动仅读取缓存"：WebUI 先启动，免费源在后台下载和筛选，完成后自动重载。"源下载代理"填 http://host:port 或 socks5://host:port 可让容器穿透防火墙下载 GitHub raw 等源。</div>
           </details>
           </div>
           {freeSourceIssues.length > 0 && <div className="settings-inline-note free-proxy-warning"><AlertCircle size={15} /><span>{freeSourceIssues.map(item => item.issue).join('；')}</span></div>}
-          <div className="settings-inline-note free-source-list-note"><Badge tone="info">源配置</Badge><span>补全协议只作用于 host:port 这类无协议条目；源内已有 http://、https://、socks5:// 会原样保留。单源上限填 0 表示全量解析。</span></div>
+          <div className="settings-inline-note free-source-list-note">
+            <Badge tone="info">源配置</Badge>
+            {freeSources.length > 0 && (
+              <label className="free-source-select-all" title={freeSourcesEnabledCount === freeSources.length ? '取消全选' : '全选所有源'}>
+                <Checkbox
+                  checked={freeSourcesEnabledCount === freeSources.length}
+                  indeterminate={freeSourcesEnabledCount > 0 && freeSourcesEnabledCount < freeSources.length}
+                  onChange={e => e.target.checked ? enableAllFreeSources() : disableAllFreeSources()}
+                />
+                <span>全选（{freeSourcesEnabledCount}/{freeSources.length}）</span>
+              </label>
+            )}
+            <span>补全协议只作用于 host:port 这类无协议条目；源内已有 http://、https://、socks5:// 会原样保留。单源上限填 0 表示全量解析。</span>
+          </div>
           <div className="subscription-list free-source-list">
             {freeSources.length ? freeSources.map((src, idx) => <div className="subscription-item modern-subscription-item free-source-row" key={`${idx}-${String(src.name || src.url || src.file).slice(0, 16)}`}>
               <div className="free-source-card-head">

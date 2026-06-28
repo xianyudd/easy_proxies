@@ -42,6 +42,7 @@ export interface SettingsResponse {
   subscriptions?: string[]
   free_proxy_sources?: FreeProxySource[]
   free_proxy_max_nodes?: number
+  free_proxy_download_proxy?: string
   free_proxy_filter?: FreeProxyFilter
   free_proxy_cache?: FreeProxyCache
   [key: string]: unknown
