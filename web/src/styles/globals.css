@@ -2613,6 +2613,10 @@ html[data-theme="light"] .logbox {
   grid-column: 1 / -1;
 }
 
+.chart-panel.map-panel {
+  min-height: 480px;
+}
+
 .chart-title {
   display: flex;
   align-items: baseline;
