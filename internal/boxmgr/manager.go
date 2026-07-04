@@ -76,6 +76,7 @@ type Manager struct {
 
 	baseCtx            context.Context
 	healthCheckStarted bool
+	freeGeoIPCancel    context.CancelFunc
 }
 
 // New creates a BoxManager with the given config.
@@ -177,6 +178,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	if cfg.AndroidProxy.Enabled {
 		m.startAndroidProxyRouters(ctx, cfg)
 	}
+
+	m.startFreeProxyGeoIPScan(cfg)
 
 	return nil
 }
@@ -333,6 +336,8 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 		m.mu.Unlock()
 	}
 
+	m.startFreeProxyGeoIPScan(newCfg)
+
 	return nil
 }
 
@@ -396,6 +401,10 @@ func (m *Manager) Close() error {
 		}
 	}
 	m.androidRouters = nil
+	if m.freeGeoIPCancel != nil {
+		m.freeGeoIPCancel()
+		m.freeGeoIPCancel = nil
+	}
 	pool.ResetSharedStateStore()
 	m.baseCtx = nil
 	return err
@@ -413,6 +422,86 @@ func (m *Manager) MonitorServer() *monitor.Server {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.monitorServer
+}
+
+// startFreeProxyGeoIPScan 在后台异步对免费代理节点做 GeoIP 地区识别。
+// 启动和重载后调用一次；reload 时会取消上一轮未完成的扫描。
+func (m *Manager) startFreeProxyGeoIPScan(cfg *config.Config) {
+	dbPath := cfg.GeoIP.DatabasePath
+	if dbPath == "" {
+		return
+	}
+
+	// 取消上一轮扫描（reload 场景）
+	m.mu.Lock()
+	if m.freeGeoIPCancel != nil {
+		m.freeGeoIPCancel()
+	}
+	baseCtx := m.baseCtx
+	ctx, cancel := context.WithCancel(baseCtx)
+	m.freeGeoIPCancel = cancel
+	m.mu.Unlock()
+
+	// 从 monitor 快照中提取免费代理节点的 tag→uri 映射
+	// 需要等 monitor 注册完成，直接从 Snapshot 获取
+	monMgr := m.MonitorManager()
+	if monMgr == nil {
+		cancel()
+		return
+	}
+
+	// 快照免费代理节点
+	type freeNode struct{ tag, uri string }
+	var nodes []freeNode
+	for _, snap := range monMgr.Snapshot() {
+		if snap.Source == string(config.NodeSourceFreeProxy) && snap.URI != "" {
+			nodes = append(nodes, freeNode{tag: snap.Tag, uri: snap.URI})
+		}
+	}
+
+	if len(nodes) == 0 {
+		cancel()
+		return
+	}
+
+	logger := m.logger
+
+	go func() {
+		defer cancel()
+		lkp, err := geoip.OpenExisting(dbPath)
+		if err != nil {
+			logger.Warnf("free-proxy geoip scan: open db: %v", err)
+			return
+		}
+		defer lkp.Close()
+
+		const workers = 12
+		jobs := make(chan freeNode, len(nodes))
+		for _, n := range nodes {
+			jobs <- n
+		}
+		close(jobs)
+
+		var wg sync.WaitGroup
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for n := range jobs {
+					if ctx.Err() != nil {
+						return
+					}
+					info := lkp.LookupURI(n.uri)
+					if info.Code == "" || info.Code == "other" {
+						continue
+					}
+					_ = monMgr.UpdateRegion(n.tag, info.Code, info.Country)
+				}
+			}()
+		}
+		wg.Wait()
+		logger.Infof("free-proxy geoip scan done: %d nodes", len(nodes))
+	}()
 }
 
 // startGeoIPRouter starts the GeoIP region-routing HTTP proxy server.
