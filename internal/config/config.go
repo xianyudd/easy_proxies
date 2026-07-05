@@ -27,29 +27,29 @@ import (
 
 // Config describes the high level settings for the proxy pool server.
 type Config struct {
-	Mode                  string                    `yaml:"mode"`
-	Listener              ListenerConfig            `yaml:"listener"`
-	MultiPort             MultiPortConfig           `yaml:"multi_port"`
-	AndroidProxy          AndroidProxyConfig        `yaml:"android_proxy"`
-	Pool                  PoolConfig                `yaml:"pool"`
-	Management            ManagementConfig          `yaml:"management"`
-	SubscriptionRefresh   SubscriptionRefreshConfig `yaml:"subscription_refresh"`
-	QualityCheck          QualityCheckConfig        `yaml:"quality_check"`
-	GeoIP                 GeoIPConfig               `yaml:"geoip"`
-	Log                   LogConfig                 `yaml:"log"`
-	Nodes                 []NodeConfig              `yaml:"nodes"`
-	FreeProxySources      []nodesource.SourceConfig `yaml:"free_proxy_sources"`
-	FreeProxyMaxNodes     int                       `yaml:"free_proxy_max_nodes"`
-	FreeProxyFilter       nodesource.FilterConfig   `yaml:"free_proxy_filter"`
-	FreeProxyCache        FreeProxyCacheConfig      `yaml:"free_proxy_cache"`
-	ManualRegionOverrides map[string]string         `yaml:"manual_region_overrides"`
-	NodesFile             string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
-	Subscriptions         []string                  `yaml:"subscriptions"` // 订阅链接列表
-	ExternalIP            string                    `yaml:"external_ip"`   // 外部 IP 地址，用于导出时替换 0.0.0.0
-	LogLevel              string                    `yaml:"log_level"`
-	SkipCertVerify        bool                      `yaml:"skip_cert_verify"` // 全局跳过 SSL 证书验证
-	UpstreamProxy         string                    `yaml:"upstream_proxy"`   // Optional SOCKS/HTTP proxy used as sing-box outbound detour
-	FreeProxyDownloadProxy string                   `yaml:"free_proxy_download_proxy"` // HTTP/SOCKS5 proxy for downloading free proxy sources; falls back to HTTPS_PROXY env
+	Mode                   string                    `yaml:"mode"`
+	Listener               ListenerConfig            `yaml:"listener"`
+	MultiPort              MultiPortConfig           `yaml:"multi_port"`
+	AndroidProxy           AndroidProxyConfig        `yaml:"android_proxy"`
+	Pool                   PoolConfig                `yaml:"pool"`
+	Management             ManagementConfig          `yaml:"management"`
+	SubscriptionRefresh    SubscriptionRefreshConfig `yaml:"subscription_refresh"`
+	QualityCheck           QualityCheckConfig        `yaml:"quality_check"`
+	GeoIP                  GeoIPConfig               `yaml:"geoip"`
+	Log                    LogConfig                 `yaml:"log"`
+	Nodes                  []NodeConfig              `yaml:"nodes"`
+	FreeProxySources       []nodesource.SourceConfig `yaml:"free_proxy_sources"`
+	FreeProxyMaxNodes      int                       `yaml:"free_proxy_max_nodes"`
+	FreeProxyFilter        nodesource.FilterConfig   `yaml:"free_proxy_filter"`
+	FreeProxyCache         FreeProxyCacheConfig      `yaml:"free_proxy_cache"`
+	ManualRegionOverrides  map[string]string         `yaml:"manual_region_overrides"`
+	NodesFile              string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
+	Subscriptions          []string                  `yaml:"subscriptions"` // 订阅链接列表
+	ExternalIP             string                    `yaml:"external_ip"`   // 外部 IP 地址，用于导出时替换 0.0.0.0
+	LogLevel               string                    `yaml:"log_level"`
+	SkipCertVerify         bool                      `yaml:"skip_cert_verify"`          // 全局跳过 SSL 证书验证
+	UpstreamProxy          string                    `yaml:"upstream_proxy"`            // Optional SOCKS/HTTP proxy used as sing-box outbound detour
+	FreeProxyDownloadProxy string                    `yaml:"free_proxy_download_proxy"` // HTTP/SOCKS5 proxy for downloading free proxy sources; falls back to HTTPS_PROXY env
 
 	filePath string `yaml:"-"` // 配置文件路径，用于保存
 }
@@ -699,36 +699,30 @@ func (c *Config) normalize() error {
 			log.Printf("✅ Loaded %d nodes from subscription", len(nodes))
 			subNodes = append(subNodes, nodes...)
 		}
-		// Mark subscription nodes and write to nodes.txt
-		for idx := range subNodes {
-			subNodes[idx].Source = NodeSourceSubscription
+
+		nodesFilePath := c.NodesFile
+		if nodesFilePath == "" {
+			nodesFilePath = filepath.Join(filepath.Dir(c.filePath), "nodes.txt")
+			c.NodesFile = nodesFilePath
 		}
-		if len(subNodes) > 0 {
-			// Determine nodes.txt path
-			nodesFilePath := c.NodesFile
-			if nodesFilePath == "" {
-				nodesFilePath = filepath.Join(filepath.Dir(c.filePath), "nodes.txt")
-				c.NodesFile = nodesFilePath
-			}
-			// Write subscription nodes to nodes.txt
+
+		cachedNodes, _ := loadNodesFromFile(nodesFilePath)
+		if len(cachedNodes) > len(subNodes) {
+			// ponytail: aggregate cache is enough; use per-subscription cache only if stale nodes become a real problem.
+			log.Printf("⚠️  Subscription fetch returned %d nodes, keeping %d cached nodes from %s", len(subNodes), len(cachedNodes), nodesFilePath)
+			subNodes = cachedNodes
+		} else if len(subNodes) > 0 {
 			if err := writeNodesToFile(nodesFilePath, subNodes); err != nil {
 				log.Printf("⚠️ Failed to write nodes to %q: %v", nodesFilePath, err)
 			} else {
 				log.Printf("✅ Written %d subscription nodes to %s", len(subNodes), nodesFilePath)
 			}
 		}
-		c.Nodes = append(c.Nodes, subNodes...)
-		// Fallback: if all subscriptions failed, try loading cached nodes.txt
-		if len(subNodes) == 0 && c.NodesFile != "" {
-			cachedNodes, err := loadNodesFromFile(c.NodesFile)
-			if err == nil && len(cachedNodes) > 0 {
-				log.Printf("⚠️  All subscriptions failed, using %d cached nodes from %s", len(cachedNodes), c.NodesFile)
-				for idx := range cachedNodes {
-					cachedNodes[idx].Source = NodeSourceSubscription
-				}
-				c.Nodes = append(c.Nodes, cachedNodes...)
-			}
+
+		for idx := range subNodes {
+			subNodes[idx].Source = NodeSourceSubscription
 		}
+		c.Nodes = append(c.Nodes, subNodes...)
 	}
 
 	// Load nodes from configured free proxy sources after inline/file/subscription
