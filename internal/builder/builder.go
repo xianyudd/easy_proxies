@@ -647,6 +647,13 @@ func hysteriaTLSOptions(host string, query url.Values, skipCertVerify bool) *opt
 	if alpn := query.Get("alpn"); alpn != "" {
 		tlsOptions.ALPN = badoption.Listable[string](strings.Split(alpn, ","))
 	}
+	fp := query.Get("fp")
+	if fp == "" {
+		fp = query.Get("fingerprint")
+	}
+	if fp != "" {
+		tlsOptions.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fp}
+	}
 	return tlsOptions
 }
 
@@ -862,14 +869,26 @@ func buildAnyTLSOptions(u *url.URL, skipCertVerify bool) (option.AnyTLSOutboundO
 	} else if tlsOptions != nil {
 		opts.OutboundTLSOptionsContainer = option.OutboundTLSOptionsContainer{TLS: tlsOptions}
 	} else {
-		// AnyTLS defaults to TLS enabled
-		opts.OutboundTLSOptionsContainer = option.OutboundTLSOptionsContainer{
-			TLS: &option.OutboundTLSOptions{
-				Enabled:    true,
-				ServerName: server,
-				Insecure:   skipCertVerify,
-			},
+		// AnyTLS defaults to TLS enabled.
+		tlsOptions := &option.OutboundTLSOptions{
+			Enabled:    true,
+			ServerName: server,
+			Insecure:   skipCertVerify,
 		}
+		if sni := query.Get("sni"); sni != "" {
+			tlsOptions.ServerName = sni
+		}
+		insecure := query.Get("allowInsecure")
+		if insecure == "" {
+			insecure = query.Get("insecure")
+		}
+		if insecure != "" {
+			tlsOptions.Insecure = insecure == "1" || strings.EqualFold(insecure, "true")
+		}
+		if fp := query.Get("fp"); fp != "" {
+			tlsOptions.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fp}
+		}
+		opts.OutboundTLSOptionsContainer = option.OutboundTLSOptionsContainer{TLS: tlsOptions}
 	}
 
 	return opts, nil

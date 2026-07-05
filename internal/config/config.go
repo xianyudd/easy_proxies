@@ -1421,7 +1421,15 @@ func buildVLESSURI(p clashProxy) string {
 		}
 		if p.ServerName != "" {
 			params.Set("sni", p.ServerName)
+		} else if p.SNI != "" {
+			params.Set("sni", p.SNI)
 		}
+	}
+	if p.SkipCertVerify {
+		params.Set("allowInsecure", "1")
+	}
+	if len(p.ALPN) > 0 {
+		params.Set("alpn", strings.Join(p.ALPN, ","))
 	}
 	if p.WSOpts != nil {
 		if p.WSOpts.Path != "" {
@@ -1511,6 +1519,12 @@ func buildHysteria2URI(p clashProxy) string {
 	}
 	if p.SkipCertVerify {
 		params.Set("insecure", "1")
+	}
+	if p.ClientFingerprint != "" {
+		params.Set("fp", p.ClientFingerprint)
+	}
+	if len(p.ALPN) > 0 {
+		params.Set("alpn", strings.Join(p.ALPN, ","))
 	}
 	if p.Obfs != "" {
 		params.Set("obfs", p.Obfs)
