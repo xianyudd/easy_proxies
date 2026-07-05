@@ -617,8 +617,12 @@ func buildHysteria2Options(u *url.URL, skipCertVerify bool) (option.Hysteria2Out
 	}
 	if up := query.Get("upMbps"); up != "" {
 		opts.UpMbps = atoiDefault(up)
+	} else if up := query.Get("up"); up != "" {
+		opts.UpMbps = atoiDefault(up)
 	}
 	if down := query.Get("downMbps"); down != "" {
+		opts.DownMbps = atoiDefault(down)
+	} else if down := query.Get("down"); down != "" {
 		opts.DownMbps = atoiDefault(down)
 	}
 	if obfs := query.Get("obfs"); obfs != "" {
@@ -887,6 +891,9 @@ func buildAnyTLSOptions(u *url.URL, skipCertVerify bool) (option.AnyTLSOutboundO
 		}
 		if fp := query.Get("fp"); fp != "" {
 			tlsOptions.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fp}
+		}
+		if alpn := query.Get("alpn"); alpn != "" {
+			tlsOptions.ALPN = badoption.Listable[string](strings.Split(alpn, ","))
 		}
 		opts.OutboundTLSOptionsContainer = option.OutboundTLSOptionsContainer{TLS: tlsOptions}
 	}

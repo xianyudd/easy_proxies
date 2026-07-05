@@ -1284,8 +1284,11 @@ type clashProxy struct {
 	GrpcOpts          *clashGrpcOptions      `yaml:"grpc-opts"`
 	RealityOpts       *clashRealityOptions   `yaml:"reality-opts"`
 	ClientFingerprint string                 `yaml:"client-fingerprint"`
+	Fingerprint       string                 `yaml:"fingerprint"`
 	Obfs              string                 `yaml:"obfs"`
 	ObfsPassword      string                 `yaml:"obfs-password"`
+	Up                int                    `yaml:"up"`
+	Down              int                    `yaml:"down"`
 	Plugin            string                 `yaml:"plugin"`
 	PluginOpts        map[string]interface{} `yaml:"plugin-opts"`
 	// TUIC-specific fields
@@ -1306,6 +1309,13 @@ type clashGrpcOptions struct {
 type clashRealityOptions struct {
 	PublicKey string `yaml:"public-key"`
 	ShortID   string `yaml:"short-id"`
+}
+
+func clashClientFingerprint(p clashProxy) string {
+	if fp := strings.TrimSpace(p.ClientFingerprint); fp != "" {
+		return fp
+	}
+	return strings.TrimSpace(p.Fingerprint)
 }
 
 // parseClashYAML parses Clash YAML format and converts to NodeConfig
@@ -1375,8 +1385,8 @@ func buildVMessURI(p clashProxy) string {
 			params.Set("host", host)
 		}
 	}
-	if p.ClientFingerprint != "" {
-		params.Set("fp", p.ClientFingerprint)
+	if fingerprint := clashClientFingerprint(p); fingerprint != "" {
+		params.Set("fp", fingerprint)
 	}
 
 	query := ""
@@ -1436,8 +1446,8 @@ func buildVLESSURI(p clashProxy) string {
 	if p.GrpcOpts != nil && p.GrpcOpts.GrpcServiceName != "" {
 		params.Set("serviceName", p.GrpcOpts.GrpcServiceName)
 	}
-	if p.ClientFingerprint != "" {
-		params.Set("fp", p.ClientFingerprint)
+	if fingerprint := clashClientFingerprint(p); fingerprint != "" {
+		params.Set("fp", fingerprint)
 	}
 
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s", p.UUID, p.Server, int(p.Port), params.Encode(), url.QueryEscape(p.Name))
@@ -1464,8 +1474,8 @@ func buildTrojanURI(p clashProxy) string {
 			params.Set("host", host)
 		}
 	}
-	if p.ClientFingerprint != "" {
-		params.Set("fp", p.ClientFingerprint)
+	if fingerprint := clashClientFingerprint(p); fingerprint != "" {
+		params.Set("fp", fingerprint)
 	}
 
 	query := ""
@@ -1486,8 +1496,11 @@ func buildAnyTLSURI(p clashProxy) string {
 	if p.SkipCertVerify {
 		params.Set("allowInsecure", "1")
 	}
-	if p.ClientFingerprint != "" {
-		params.Set("fp", p.ClientFingerprint)
+	if fingerprint := clashClientFingerprint(p); fingerprint != "" {
+		params.Set("fp", fingerprint)
+	}
+	if len(p.ALPN) > 0 {
+		params.Set("alpn", strings.Join(p.ALPN, ","))
 	}
 
 	query := ""
@@ -1514,11 +1527,17 @@ func buildHysteria2URI(p clashProxy) string {
 	if p.SkipCertVerify {
 		params.Set("insecure", "1")
 	}
-	if p.ClientFingerprint != "" {
-		params.Set("fp", p.ClientFingerprint)
+	if fingerprint := clashClientFingerprint(p); fingerprint != "" {
+		params.Set("fp", fingerprint)
 	}
 	if len(p.ALPN) > 0 {
 		params.Set("alpn", strings.Join(p.ALPN, ","))
+	}
+	if p.Up > 0 {
+		params.Set("upMbps", strconv.Itoa(p.Up))
+	}
+	if p.Down > 0 {
+		params.Set("downMbps", strconv.Itoa(p.Down))
 	}
 	if p.Obfs != "" {
 		params.Set("obfs", p.Obfs)

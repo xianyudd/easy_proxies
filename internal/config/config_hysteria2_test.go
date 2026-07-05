@@ -197,3 +197,59 @@ func TestParseClashYAML_Hysteria2PortHoppingAndObfs(t *testing.T) {
 		t.Fatalf("expected insecure=1, got %q", query.Get("insecure"))
 	}
 }
+
+func TestParseClashYAMLPreservesFingerprintBandwidthAndAnyTLSALPN(t *testing.T) {
+	content := `proxies:
+  - name: "hy2-fields"
+    type: "hysteria2"
+    server: hy2.example.com
+    port: 1443
+    password: "secret"
+    fingerprint: "chrome"
+    sni: "www.example.com"
+    skip-cert-verify: true
+    up: 3000
+    down: 4000
+  - name: "anytls-fields"
+    type: "anytls"
+    server: any.example.com
+    port: 1663
+    password: "secret"
+    client-fingerprint: "chrome"
+    alpn: [h2, http/1.1]
+    sni: "any.example.com"
+    skip-cert-verify: true
+`
+
+	nodes, err := parseClashYAML(content)
+	if err != nil {
+		t.Fatalf("parse clash yaml failed: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+
+	hy2, err := url.Parse(nodes[0].URI)
+	if err != nil {
+		t.Fatalf("parse hy2 uri failed: %v", err)
+	}
+	hy2Query := hy2.Query()
+	if hy2Query.Get("fp") != "chrome" {
+		t.Fatalf("expected hy2 fp=chrome, got %q", hy2Query.Get("fp"))
+	}
+	if hy2Query.Get("upMbps") != "3000" || hy2Query.Get("downMbps") != "4000" {
+		t.Fatalf("expected hy2 bandwidth up/down preserved, got up=%q down=%q", hy2Query.Get("upMbps"), hy2Query.Get("downMbps"))
+	}
+
+	anyTLS, err := url.Parse(nodes[1].URI)
+	if err != nil {
+		t.Fatalf("parse anytls uri failed: %v", err)
+	}
+	anyQuery := anyTLS.Query()
+	if anyQuery.Get("fp") != "chrome" {
+		t.Fatalf("expected anytls fp=chrome, got %q", anyQuery.Get("fp"))
+	}
+	if anyQuery.Get("alpn") != "h2,http/1.1" {
+		t.Fatalf("expected anytls alpn preserved, got %q", anyQuery.Get("alpn"))
+	}
+}
