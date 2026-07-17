@@ -2,18 +2,21 @@ package freepromote
 
 import (
 	"testing"
+	"time"
 
 	"easy_proxies/internal/config"
 )
 
 func TestSelectCandidatesFiltersAndOrders(t *testing.T) {
 	cfg := config.FreeProxyPromoteConfig{
-		Enabled:         true,
-		BatchSize:       2,
-		MaxPromoted:     10,
-		MaxLatencyMS:    500,
-		MinSuccessCount: 1,
-		NamePrefix:      "free-promoted-",
+		Enabled:             true,
+		BatchSize:           2,
+		MaxPromoted:         10,
+		MaxLatencyMS:        500,
+		MinSuccessCount:     1,
+		MaxFailureCount:     -1,
+		RecentSuccessWithin: -1,
+		NamePrefix:          "free-promoted-",
 	}
 	nodes := []config.NodeConfig{
 		{Name: "free-promoted-aaaa", URI: "http://1.1.1.1:80", Source: config.NodeSourceFile},
@@ -41,7 +44,7 @@ func TestSelectCandidatesFiltersAndOrders(t *testing.T) {
 
 func TestSelectCandidatesRespectsMaxPromoted(t *testing.T) {
 	cfg := config.FreeProxyPromoteConfig{
-		Enabled: true, BatchSize: 5, MaxPromoted: 2, MaxLatencyMS: 1000, MinSuccessCount: 1, NamePrefix: "free-promoted-",
+		Enabled: true, BatchSize: 5, MaxPromoted: 2, MaxLatencyMS: 1000, MinSuccessCount: 1, MaxFailureCount: -1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
 	}
 	nodes := []config.NodeConfig{
 		{Name: "free-promoted-1", URI: "http://9.9.9.9:80", Source: config.NodeSourceFile},
@@ -58,7 +61,7 @@ func TestSelectCandidatesRespectsMaxPromoted(t *testing.T) {
 
 func TestSelectCandidatesDedupAlreadyNonFree(t *testing.T) {
 	cfg := config.FreeProxyPromoteConfig{
-		Enabled: true, BatchSize: 5, MaxPromoted: 10, MaxLatencyMS: 1000, MinSuccessCount: 1, NamePrefix: "free-promoted-",
+		Enabled: true, BatchSize: 5, MaxPromoted: 10, MaxLatencyMS: 1000, MinSuccessCount: 1, MaxFailureCount: -1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
 	}
 	nodes := []config.NodeConfig{
 		{Name: "manual", URI: "http://1.1.1.1:80", Source: config.NodeSourceInline},
@@ -69,6 +72,24 @@ func TestSelectCandidatesDedupAlreadyNonFree(t *testing.T) {
 	}
 	got := SelectCandidates(snaps, nodes, cfg)
 	if len(got) != 1 || got[0].URI != "http://2.2.2.2:80" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestSelectCandidatesFiltersFailureAndRecentSuccess(t *testing.T) {
+	now := time.Now()
+	cfg := config.FreeProxyPromoteConfig{
+		Enabled: true, BatchSize: 5, MaxPromoted: 10, MaxLatencyMS: 1000, MinSuccessCount: 1,
+		MaxFailureCount: 1, RecentSuccessWithin: 30 * time.Minute, NamePrefix: "free-promoted-",
+	}
+	snaps := []Snapshot{
+		{Name: "good", URI: "http://1.1.1.1:80", Source: "free_proxy", Available: true, InitialCheckDone: true, SuccessCount: 3, FailureCount: 1, LastLatencyMs: 10, LastSuccess: now.Add(-5 * time.Minute)},
+		{Name: "failed", URI: "http://2.2.2.2:80", Source: "free_proxy", Available: true, InitialCheckDone: true, SuccessCount: 3, FailureCount: 2, LastLatencyMs: 20, LastSuccess: now.Add(-5 * time.Minute)},
+		{Name: "stale", URI: "http://3.3.3.3:80", Source: "free_proxy", Available: true, InitialCheckDone: true, SuccessCount: 3, FailureCount: 0, LastLatencyMs: 30, LastSuccess: now.Add(-2 * time.Hour)},
+		{Name: "empty", URI: "http://4.4.4.4:80", Source: "free_proxy", Available: true, InitialCheckDone: true, SuccessCount: 3, FailureCount: 0, LastLatencyMs: 40},
+	}
+	got := SelectCandidates(snaps, nil, cfg)
+	if len(got) != 1 || got[0].Name != "good" {
 		t.Fatalf("got %#v", got)
 	}
 }

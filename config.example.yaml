@@ -202,6 +202,10 @@ geoip:
 #   max_promoted: 20               # 同时保留的提升节点上限
 #   max_latency_ms: 800            # 运行时延迟上限
 #   min_success_count: 1           # 最少成功探测次数
+#   max_failure_count: 1           # 候选允许的最大失败次数；设为 -1 关闭
+#   require_recent_success_within: 30m # 候选必须在该时间内成功过；设为 -1 关闭
+#   failed_cooldown: 6h            # 提升/复测失败后同一 URI 的冷却时间
+#   post_validate: true            # 即使不强制 CF 分数，也验证提升后的独立端口
 #   require_cloudflare: true       # 提升后是否强制 CF 复测
 #   min_cloudflare_score: 60       # CF 分数门槛
 #   demote_on_fail: true           # 复测失败自动降级删除

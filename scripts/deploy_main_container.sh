@@ -96,6 +96,7 @@ def as_int(v, default):
 enabled = as_bool(block.get('enabled', 'false'))
 max_latency = as_int(block.get('max_latency_ms', 800), 800)
 min_success = as_int(block.get('min_success_count', 1), 1)
+max_failure = as_int(block.get('max_failure_count', 1), 1)
 prefix = block.get('name_prefix') or 'free-promoted-'
 
 nodes = json.load(open(nodes_path, encoding='utf-8'))
@@ -115,18 +116,29 @@ for n in nodes:
         continue
     if int(n.get('success_count') or 0) < min_success:
         continue
+    if max_failure >= 0 and int(n.get('failure_count') or 0) > max_failure:
+        continue
     latency = int(n.get('last_latency_ms') or 0)
     if max_latency > 0 and latency > 0 and latency > max_latency:
         continue
     eligible.append(n)
 
-print(f"promote validation: enabled={str(enabled).lower()} eligible_free={len(eligible)} promoted={len(promoted)} prefix={prefix}")
+promoted_available = [n for n in promoted if n.get('available') and not n.get('blacklisted')]
+promoted_blacklisted = [n for n in promoted if n.get('blacklisted')]
+promoted_with_port = [n for n in promoted if int(n.get('port') or 0) > 0]
+print(
+    f"promote validation: enabled={str(enabled).lower()} eligible_free={len(eligible)} "
+    f"promoted_total={len(promoted)} promoted_available={len(promoted_available)} "
+    f"promoted_blacklisted={len(promoted_blacklisted)} promoted_with_port={len(promoted_with_port)} prefix={prefix}"
+)
 for n in eligible[:5]:
-    print(f"eligible: {n.get('name')} latency={n.get('last_latency_ms')} success={n.get('success_count')} uri={n.get('uri')}")
+    print(f"eligible: {n.get('name')} latency={n.get('last_latency_ms')} success={n.get('success_count')} failures={n.get('failure_count')} uri={n.get('uri')}")
 if not enabled and eligible:
     sys.exit(10)
 if enabled and eligible and not promoted:
     sys.exit(11)
+if enabled and promoted and not promoted_available:
+    sys.exit(12)
 PY
 )
   rc=$?
@@ -141,6 +153,9 @@ PY
   elif [[ "$rc" == "11" ]]; then
     [[ "$PROMOTE_VALIDATE_STRICT" == "1" ]] && die "promote enabled but no promoted nodes found"
     log "WARN: promote enabled but no promoted nodes found"
+  elif [[ "$rc" == "12" ]]; then
+    [[ "$PROMOTE_VALIDATE_STRICT" == "1" ]] && die "promote nodes exist but none are available"
+    log "WARN: promote nodes exist but none are available"
   elif [[ "$rc" != "0" ]]; then
     log "WARN: promote validation inconclusive (exit=$rc)"
   fi
@@ -149,9 +164,41 @@ PY
 need() { command -v "$1" >/dev/null 2>&1 || die "missing command: $1"; }
 need podman
 need go
-need systemctl
 need curl
 need python3
+
+unit_exists() {
+  command -v systemctl >/dev/null 2>&1 && systemctl --user cat "$UNIT" >/dev/null 2>&1
+}
+
+restart_runtime() {
+  if unit_exists; then
+    log "restart: systemctl --user restart $UNIT"
+    systemctl --user restart "$UNIT"
+    return
+  fi
+  if podman container exists "$CONTAINER"; then
+    log "restart: podman restart $CONTAINER (unit $UNIT not found)"
+    podman restart "$CONTAINER" >/dev/null
+    return
+  fi
+  die "neither unit $UNIT nor container $CONTAINER exists"
+}
+
+runtime_active() {
+  if unit_exists; then
+    systemctl --user is-active --quiet "$UNIT"
+    return
+  fi
+  [[ "$(podman inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || true)" == "true" ]]
+}
+
+runtime_status() {
+  if unit_exists; then
+    systemctl --user --no-pager --full status "$UNIT" | sed -n '1,15p' || true
+  fi
+  podman ps -a --filter "name=^${CONTAINER}$" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' || true
+}
 
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 commit="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -202,15 +249,13 @@ if [[ "$SKIP_RESTART" == "1" ]]; then
   exit 0
 fi
 
-log "restart: systemctl --user restart $UNIT"
-systemctl --user restart "$UNIT"
+restart_runtime
 
-# Wait until unit active and HTTP responds.
+# Wait until runtime active and HTTP responds.
 deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SEC ))
 ok=0
 while (( $(date +%s) < deadline )); do
-  if systemctl --user is-active --quiet "$UNIT" \
-    && curl -fsS --max-time 3 -o /dev/null "$HEALTH_URL" 2>/dev/null; then
+  if runtime_active && curl -fsS --max-time 3 -o /dev/null "$HEALTH_URL" 2>/dev/null; then
     ok=1
     break
   fi
@@ -221,15 +266,13 @@ if [[ "$ok" != "1" ]]; then
   log "health FAILED after ${HEALTH_TIMEOUT_SEC}s; rolling back to $PREV"
   if podman image exists "$PREV"; then
     podman tag "$PREV" "$IMAGE"
-    systemctl --user restart "$UNIT" || true
+    restart_runtime || true
   fi
-  systemctl --user --no-pager --full status "$UNIT" | tail -40 || true
-  podman ps -a --filter "name=^${CONTAINER}$" --format '{{.Names}} {{.Status}}' || true
+  runtime_status
   die "deploy rolled back (or rollback image missing)"
 fi
 
 log "health OK: $HEALTH_URL"
 validate_promote
-systemctl --user --no-pager --full status "$UNIT" | sed -n '1,15p' || true
-podman ps --filter "name=^${CONTAINER}$" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+runtime_status
 log "deploy done commit=$commit"

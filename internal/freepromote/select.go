@@ -3,6 +3,7 @@ package freepromote
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"easy_proxies/internal/config"
 )
@@ -12,7 +13,11 @@ type Candidate struct {
 	Name          string
 	URI           string
 	SuccessCount  int64
+	FailureCount  int
 	LastLatencyMs int64
+	LastSuccess   time.Time
+	LastFailure   time.Time
+	LastError     string
 	Region        string
 	Country       string
 }
@@ -27,7 +32,11 @@ type Snapshot struct {
 	InitialCheckDone bool
 	Blacklisted      bool
 	SuccessCount     int64
+	FailureCount     int
 	LastLatencyMs    int64
+	LastSuccess      time.Time
+	LastFailure      time.Time
+	LastError        string
 	Region           string
 	Country          string
 }
@@ -103,6 +112,14 @@ func SelectCandidates(snaps []Snapshot, nodes []config.NodeConfig, cfg config.Fr
 		if snap.SuccessCount < cfg.MinSuccessCount {
 			continue
 		}
+		if cfg.MaxFailureCount >= 0 && snap.FailureCount > cfg.MaxFailureCount {
+			continue
+		}
+		if cfg.RecentSuccessWithin > 0 {
+			if snap.LastSuccess.IsZero() || time.Since(snap.LastSuccess) > cfg.RecentSuccessWithin {
+				continue
+			}
+		}
 		if cfg.MaxLatencyMS > 0 && snap.LastLatencyMs > 0 && snap.LastLatencyMs > cfg.MaxLatencyMS {
 			continue
 		}
@@ -123,7 +140,11 @@ func SelectCandidates(snaps []Snapshot, nodes []config.NodeConfig, cfg config.Fr
 			Name:          name,
 			URI:           uri,
 			SuccessCount:  snap.SuccessCount,
+			FailureCount:  snap.FailureCount,
 			LastLatencyMs: snap.LastLatencyMs,
+			LastSuccess:   snap.LastSuccess,
+			LastFailure:   snap.LastFailure,
+			LastError:     strings.TrimSpace(snap.LastError),
 			Region:        strings.TrimSpace(snap.Region),
 			Country:       strings.TrimSpace(snap.Country),
 		})

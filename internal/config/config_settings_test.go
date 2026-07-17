@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadParsesUpstreamProxyBypassProtocols(t *testing.T) {
@@ -164,7 +165,6 @@ func TestManualRegionOverridesCanBeRemoved(t *testing.T) {
 	}
 }
 
-
 func TestFreeProxyPromoteNormalizedDefaults(t *testing.T) {
 	cfg := FreeProxyPromoteConfig{Enabled: true}.Normalized()
 	if cfg.Interval != DefaultFreeProxyPromoteInterval {
@@ -178,6 +178,18 @@ func TestFreeProxyPromoteNormalizedDefaults(t *testing.T) {
 	}
 	if cfg.NamePrefix != DefaultFreeProxyPromoteNamePrefix {
 		t.Fatalf("prefix=%q", cfg.NamePrefix)
+	}
+	if cfg.MaxFailureCount != DefaultFreeProxyPromoteMaxFailureCount {
+		t.Fatalf("max failure=%d", cfg.MaxFailureCount)
+	}
+	if cfg.RecentSuccessWithin != DefaultFreeProxyPromoteRecentSuccessWithin {
+		t.Fatalf("recent success=%v", cfg.RecentSuccessWithin)
+	}
+	if cfg.FailedCooldown != DefaultFreeProxyPromoteFailedCooldown {
+		t.Fatalf("failed cooldown=%v", cfg.FailedCooldown)
+	}
+	if !cfg.PostValidateValue() {
+		t.Fatal("post validate default true")
 	}
 	if !cfg.DemoteOnFailValue() {
 		t.Fatal("demote default true")
@@ -205,6 +217,11 @@ nodes:
 	cfg.FreeProxyPromote.Enabled = true
 	cfg.FreeProxyPromote.BatchSize = 3
 	cfg.FreeProxyPromote.MaxPromoted = 7
+	cfg.FreeProxyPromote.MaxFailureCount = 2
+	cfg.FreeProxyPromote.RecentSuccessWithin = 15 * time.Minute
+	cfg.FreeProxyPromote.FailedCooldown = 2 * time.Hour
+	postValidate := false
+	cfg.FreeProxyPromote.PostValidate = &postValidate
 	cfg.FreeProxyPromote.RequireCloudflare = true
 	if err := cfg.SaveSettings(); err != nil {
 		t.Fatal(err)
@@ -215,5 +232,11 @@ nodes:
 	}
 	if !reloaded.FreeProxyPromote.Enabled || reloaded.FreeProxyPromote.BatchSize != 3 || reloaded.FreeProxyPromote.MaxPromoted != 7 {
 		t.Fatalf("promote=%#v", reloaded.FreeProxyPromote)
+	}
+	if reloaded.FreeProxyPromote.MaxFailureCount != 2 || reloaded.FreeProxyPromote.RecentSuccessWithin != 15*time.Minute || reloaded.FreeProxyPromote.FailedCooldown != 2*time.Hour {
+		t.Fatalf("promote stability=%#v", reloaded.FreeProxyPromote)
+	}
+	if reloaded.FreeProxyPromote.PostValidateValue() {
+		t.Fatalf("post_validate should persist false: %#v", reloaded.FreeProxyPromote)
 	}
 }

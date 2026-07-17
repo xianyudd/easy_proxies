@@ -113,7 +113,7 @@ func TestRunOncePromotesAndKeepsOnQualityPass(t *testing.T) {
 		func() config.FreeProxyPromoteConfig {
 			return config.FreeProxyPromoteConfig{
 				Enabled: true, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
-				RequireCloudflare: true, MinCloudflareScore: 60, DemoteOnFail: &demote, NamePrefix: "free-promoted-",
+				RequireCloudflare: true, MinCloudflareScore: 60, DemoteOnFail: &demote, MaxFailureCount: -1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
 			}
 		},
 		nodes, snaps, q,
@@ -162,7 +162,7 @@ func TestRunOnceDemotesOnQualityFail(t *testing.T) {
 		func() config.FreeProxyPromoteConfig {
 			return config.FreeProxyPromoteConfig{
 				Enabled: true, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
-				RequireCloudflare: true, MinCloudflareScore: 60, DemoteOnFail: &demote, NamePrefix: "free-promoted-",
+				RequireCloudflare: true, MinCloudflareScore: 60, DemoteOnFail: &demote, MaxFailureCount: -1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
 			}
 		},
 		nodes, snaps, q,
@@ -194,7 +194,7 @@ func TestRunOnceFillsRegionFromCFLoc(t *testing.T) {
 		func() config.FreeProxyPromoteConfig {
 			return config.FreeProxyPromoteConfig{
 				Enabled: true, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
-				RequireCloudflare: true, MinCloudflareScore: 60, DemoteOnFail: &demote, NamePrefix: "free-promoted-",
+				RequireCloudflare: true, MinCloudflareScore: 60, DemoteOnFail: &demote, MaxFailureCount: -1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
 			}
 		},
 		nodes, snaps, q,
@@ -235,7 +235,7 @@ func TestRunOnceInheritsFreeRegionWithoutQuality(t *testing.T) {
 		func() config.FreeProxyPromoteConfig {
 			return config.FreeProxyPromoteConfig{
 				Enabled: true, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
-				RequireCloudflare: false, DemoteOnFail: &demote, NamePrefix: "free-promoted-",
+				RequireCloudflare: false, DemoteOnFail: &demote, MaxFailureCount: -1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
 			}
 		},
 		nodes, snaps, nil,
@@ -261,7 +261,7 @@ func TestStartStaysAliveAndPromotesAfterConfigEnabled(t *testing.T) {
 	var cfgMu sync.Mutex
 	cfg := config.FreeProxyPromoteConfig{
 		Enabled: false, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
-		RequireCloudflare: false, NamePrefix: "free-promoted-",
+		RequireCloudflare: false, MaxFailureCount: -1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
 	}
 	nodes := &fakeNodes{nodes: []config.NodeConfig{
 		{Name: "free-a", URI: "http://10.0.0.5:8080", Source: config.NodeSourceFreeProxy},
@@ -305,7 +305,7 @@ func TestStartIsIdempotentWhileWaitingDisabled(t *testing.T) {
 	var cfgMu sync.Mutex
 	cfg := config.FreeProxyPromoteConfig{
 		Enabled: false, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
-		RequireCloudflare: false, NamePrefix: "free-promoted-",
+		RequireCloudflare: false, MaxFailureCount: -1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
 	}
 	nodes := &fakeNodes{nodes: []config.NodeConfig{
 		{Name: "free-a", URI: "http://10.0.0.6:8080", Source: config.NodeSourceFreeProxy},
@@ -339,6 +339,109 @@ func TestStartIsIdempotentWhileWaitingDisabled(t *testing.T) {
 	eventually(t, 500*time.Millisecond, func() bool {
 		return nodes.reloads == 1
 	})
+}
+
+func TestRunOncePostValidateDemotesWithoutCloudflareRequirement(t *testing.T) {
+	nodes := &fakeNodes{nodes: []config.NodeConfig{
+		{Name: "free-a", URI: "http://10.0.0.7:8080", Source: config.NodeSourceFreeProxy},
+	}}
+	snaps := fakeSnaps{items: []Snapshot{
+		{Name: "free-a", URI: "http://10.0.0.7:8080", Source: "free_proxy", Available: true, InitialCheckDone: true, SuccessCount: 3, LastLatencyMs: 100},
+	}}
+	q := &fakeQuality{ok: false, err: "bad proxy"}
+	demote := true
+	svc := NewService(
+		func() config.FreeProxyPromoteConfig {
+			return config.FreeProxyPromoteConfig{
+				Enabled: true, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
+				RequireCloudflare: false, DemoteOnFail: &demote, MaxFailureCount: -1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
+			}
+		},
+		nodes, snaps, q,
+		func() ListenAuth { return ListenAuth{Host: "127.0.0.1"} },
+		nil,
+	)
+	svc.settleWait = 0
+	if err := svc.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := nodes.ListConfigNodes(context.Background())
+	for _, n := range list {
+		if n.Source != config.NodeSourceFreeProxy {
+			t.Fatalf("expected post-validate demotion, still have %#v", n)
+		}
+	}
+	if nodes.reloads != 2 {
+		t.Fatalf("reloads=%d want promote+batch-demote", nodes.reloads)
+	}
+}
+
+func TestRunOnceSkipsCooledDownCandidate(t *testing.T) {
+	nodes := &fakeNodes{nodes: []config.NodeConfig{
+		{Name: "free-a", URI: "http://10.0.0.8:8080", Source: config.NodeSourceFreeProxy},
+	}}
+	snaps := fakeSnaps{items: []Snapshot{
+		{Name: "free-a", URI: "http://10.0.0.8:8080", Source: "free_proxy", Available: true, InitialCheckDone: true, SuccessCount: 3, LastLatencyMs: 100},
+	}}
+	demote := true
+	svc := NewService(
+		func() config.FreeProxyPromoteConfig {
+			return config.FreeProxyPromoteConfig{
+				Enabled: true, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
+				RequireCloudflare: false, DemoteOnFail: &demote, MaxFailureCount: -1, RecentSuccessWithin: -1, FailedCooldown: time.Hour, NamePrefix: "free-promoted-",
+			}
+		},
+		nodes, snaps, &fakeQuality{ok: false, err: "bad proxy"},
+		func() ListenAuth { return ListenAuth{Host: "127.0.0.1"} },
+		nil,
+	)
+	svc.settleWait = 0
+	if err := svc.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if nodes.reloads != 2 {
+		t.Fatalf("reloads=%d want second run skipped by cooldown", nodes.reloads)
+	}
+}
+
+func TestRunOnceDemotesStalePromotedBeforeSelecting(t *testing.T) {
+	promoted := PromotedNodeName("free-promoted-", "http://10.0.0.9:8080")
+	nodes := &fakeNodes{nodes: []config.NodeConfig{
+		{Name: promoted, URI: "http://10.0.0.9:8080#" + promoted, Source: config.NodeSourceFile},
+		{Name: "free-b", URI: "http://10.0.0.10:8080", Source: config.NodeSourceFreeProxy},
+	}}
+	snaps := fakeSnaps{items: []Snapshot{
+		{Name: promoted, URI: "http://10.0.0.9:8080#" + promoted, Source: "nodes_file", Available: false, InitialCheckDone: true, FailureCount: 3},
+		{Name: "free-b", URI: "http://10.0.0.10:8080", Source: "free_proxy", Available: true, InitialCheckDone: true, SuccessCount: 3, LastLatencyMs: 100, Region: "jp", Country: "Japan"},
+	}}
+	demote := true
+	svc := NewService(
+		func() config.FreeProxyPromoteConfig {
+			return config.FreeProxyPromoteConfig{
+				Enabled: true, BatchSize: 1, MaxPromoted: 1, MaxLatencyMS: 800, MinSuccessCount: 1,
+				RequireCloudflare: false, DemoteOnFail: &demote, MaxFailureCount: 1, RecentSuccessWithin: -1, NamePrefix: "free-promoted-",
+			}
+		},
+		nodes, snaps, nil,
+		func() ListenAuth { return ListenAuth{Host: "127.0.0.1"} },
+		nil,
+	)
+	svc.settleWait = 0
+	if err := svc.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := nodes.ListConfigNodes(context.Background())
+	if CountPromoted(list, "free-promoted-") != 1 {
+		t.Fatalf("promoted count=%d list=%#v", CountPromoted(list, "free-promoted-"), list)
+	}
+	for _, n := range list {
+		if n.Name == promoted {
+			t.Fatalf("stale promoted still present: %#v", list)
+		}
+	}
 }
 
 func eventually(t *testing.T, timeout time.Duration, ok func() bool) {

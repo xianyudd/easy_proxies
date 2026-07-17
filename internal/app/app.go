@@ -214,7 +214,11 @@ func (s freepromoteSnapshotSource) ListSnapshots() []freepromote.Snapshot {
 			InitialCheckDone: snap.InitialCheckDone,
 			Blacklisted:      snap.Blacklisted,
 			SuccessCount:     snap.SuccessCount,
+			FailureCount:     snap.FailureCount,
 			LastLatencyMs:    snap.LastLatencyMs,
+			LastSuccess:      snap.LastSuccess,
+			LastFailure:      snap.LastFailure,
+			LastError:        snap.LastError,
 			Region:           snap.Region,
 			Country:          snap.Country,
 		})

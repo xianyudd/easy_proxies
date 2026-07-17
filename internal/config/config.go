@@ -201,31 +201,38 @@ func (f FreeProxyCacheConfig) Normalized(configPath string, hasSources bool) Fre
 
 // Free-proxy promote defaults.
 const (
-	DefaultFreeProxyPromoteInterval     = time.Hour
-	MinFreeProxyPromoteInterval         = 30 * time.Second
-	DefaultFreeProxyPromoteBatchSize    = 2
-	MaxFreeProxyPromoteBatchSize        = 20
-	DefaultFreeProxyPromoteMaxPromoted  = 20
-	MaxFreeProxyPromoteMaxPromoted      = 200
-	DefaultFreeProxyPromoteMaxLatencyMS = 800
-	DefaultFreeProxyPromoteMinSuccess   = int64(1)
-	DefaultFreeProxyPromoteMinCFScore   = 60
-	DefaultFreeProxyPromoteNamePrefix   = "free-promoted-"
+	DefaultFreeProxyPromoteInterval            = time.Hour
+	MinFreeProxyPromoteInterval                = 30 * time.Second
+	DefaultFreeProxyPromoteBatchSize           = 2
+	MaxFreeProxyPromoteBatchSize               = 20
+	DefaultFreeProxyPromoteMaxPromoted         = 20
+	MaxFreeProxyPromoteMaxPromoted             = 200
+	DefaultFreeProxyPromoteMaxLatencyMS        = 800
+	DefaultFreeProxyPromoteMinSuccess          = int64(1)
+	DefaultFreeProxyPromoteMinCFScore          = 60
+	DefaultFreeProxyPromoteNamePrefix          = "free-promoted-"
+	DefaultFreeProxyPromoteMaxFailureCount     = 1
+	DefaultFreeProxyPromoteRecentSuccessWithin = 30 * time.Minute
+	DefaultFreeProxyPromoteFailedCooldown      = 6 * time.Hour
 )
 
 // FreeProxyPromoteConfig controls automatic promotion of healthy free_proxy
 // nodes into dedicated multi-port listeners.
 type FreeProxyPromoteConfig struct {
-	Enabled            bool          `yaml:"enabled" json:"enabled"`
-	Interval           time.Duration `yaml:"interval" json:"interval"`
-	BatchSize          int           `yaml:"batch_size" json:"batch_size"`
-	MaxPromoted        int           `yaml:"max_promoted" json:"max_promoted"`
-	MaxLatencyMS       int64         `yaml:"max_latency_ms" json:"max_latency_ms"`
-	MinSuccessCount    int64         `yaml:"min_success_count" json:"min_success_count"`
-	RequireCloudflare  bool          `yaml:"require_cloudflare" json:"require_cloudflare"`
-	MinCloudflareScore int           `yaml:"min_cloudflare_score" json:"min_cloudflare_score"`
-	DemoteOnFail       *bool         `yaml:"demote_on_fail" json:"demote_on_fail"`
-	NamePrefix         string        `yaml:"name_prefix" json:"name_prefix"`
+	Enabled             bool          `yaml:"enabled" json:"enabled"`
+	Interval            time.Duration `yaml:"interval" json:"interval"`
+	BatchSize           int           `yaml:"batch_size" json:"batch_size"`
+	MaxPromoted         int           `yaml:"max_promoted" json:"max_promoted"`
+	MaxLatencyMS        int64         `yaml:"max_latency_ms" json:"max_latency_ms"`
+	MinSuccessCount     int64         `yaml:"min_success_count" json:"min_success_count"`
+	MaxFailureCount     int           `yaml:"max_failure_count" json:"max_failure_count"`
+	RecentSuccessWithin time.Duration `yaml:"require_recent_success_within" json:"require_recent_success_within"`
+	FailedCooldown      time.Duration `yaml:"failed_cooldown" json:"failed_cooldown"`
+	PostValidate        *bool         `yaml:"post_validate" json:"post_validate"`
+	RequireCloudflare   bool          `yaml:"require_cloudflare" json:"require_cloudflare"`
+	MinCloudflareScore  int           `yaml:"min_cloudflare_score" json:"min_cloudflare_score"`
+	DemoteOnFail        *bool         `yaml:"demote_on_fail" json:"demote_on_fail"`
+	NamePrefix          string        `yaml:"name_prefix" json:"name_prefix"`
 }
 
 // DemoteOnFailValue returns whether failed promoted nodes should be removed.
@@ -235,6 +242,16 @@ func (f FreeProxyPromoteConfig) DemoteOnFailValue() bool {
 		return true
 	}
 	return *f.DemoteOnFail
+}
+
+// PostValidateValue returns whether promoted listeners should get a basic
+// post-reload validation even when Cloudflare score is not required.
+// Defaults to true when unset.
+func (f FreeProxyPromoteConfig) PostValidateValue() bool {
+	if f.PostValidate == nil {
+		return true
+	}
+	return *f.PostValidate
 }
 
 // Normalized applies defaults and clamps for free-proxy promotion.
@@ -265,6 +282,15 @@ func (f FreeProxyPromoteConfig) Normalized() FreeProxyPromoteConfig {
 	} else if f.MinSuccessCount == 0 {
 		f.MinSuccessCount = DefaultFreeProxyPromoteMinSuccess
 	}
+	if f.MaxFailureCount == 0 {
+		f.MaxFailureCount = DefaultFreeProxyPromoteMaxFailureCount
+	}
+	if f.RecentSuccessWithin == 0 {
+		f.RecentSuccessWithin = DefaultFreeProxyPromoteRecentSuccessWithin
+	}
+	if f.FailedCooldown == 0 {
+		f.FailedCooldown = DefaultFreeProxyPromoteFailedCooldown
+	}
 	if f.MinCloudflareScore < 0 {
 		f.MinCloudflareScore = 0
 	} else if f.MinCloudflareScore == 0 {
@@ -277,6 +303,10 @@ func (f FreeProxyPromoteConfig) Normalized() FreeProxyPromoteConfig {
 	if f.DemoteOnFail == nil {
 		v := true
 		f.DemoteOnFail = &v
+	}
+	if f.PostValidate == nil {
+		v := true
+		f.PostValidate = &v
 	}
 	return f
 }

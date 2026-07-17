@@ -112,6 +112,7 @@ type Service struct {
 	disabledPoll time.Duration
 	mu           sync.Mutex
 	running      bool
+	failedUntil  map[string]time.Time
 }
 
 // NewService constructs a free-proxy promote service.
@@ -143,6 +144,7 @@ func NewService(
 		settleWait:   5 * time.Second,
 		startupWait:  15 * time.Second,
 		disabledPoll: defaultDisabledPollInterval,
+		failedUntil:  make(map[string]time.Time),
 	}
 }
 
@@ -167,6 +169,9 @@ func (s *Service) Start(ctx context.Context) {
 
 func (s *Service) loop(ctx context.Context) {
 	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Printf("loop panic: %v", r)
+		}
 		s.mu.Lock()
 		s.running = false
 		s.mu.Unlock()
@@ -195,7 +200,7 @@ func (s *Service) loop(ctx context.Context) {
 				cfg.Interval, cfg.BatchSize, cfg.MaxPromoted, cfg.RequireCloudflare)
 			enabled = true
 		}
-		if err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
+		if err := s.runOnceSafe(ctx); err != nil && ctx.Err() == nil {
 			s.logger.Printf("cycle error: %v", err)
 		}
 		if !sleepContext(ctx, cfg.Interval) {
@@ -209,6 +214,15 @@ func (s *Service) disabledPollInterval() time.Duration {
 		return defaultDisabledPollInterval
 	}
 	return s.disabledPoll
+}
+
+func (s *Service) runOnceSafe(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return s.RunOnce(ctx)
 }
 
 func maxDuration(a, b time.Duration) time.Duration {
@@ -240,8 +254,8 @@ func sleepContext(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// RunOnce executes a single promote cycle (select → promote → reload → quality → demote).
-func (s *Service) RunOnce(ctx context.Context) error {
+// RunOnce executes a single promote cycle (select → prune → promote → reload → quality → demote).
+func (s *Service) RunOnce(ctx context.Context) (retErr error) {
 	if s == nil || s.nodes == nil || s.snaps == nil {
 		return nil
 	}
@@ -250,21 +264,88 @@ func (s *Service) RunOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	started := s.now()
 	cfg := s.cfg().Normalized()
 	if !cfg.Enabled {
 		return nil
 	}
 
+	var (
+		active                bool
+		initialStats          promotedStats
+		finalStats            promotedStats
+		selectedCount         int
+		candidateCount        int
+		cooldownSkipped       int
+		createdCount          int
+		staleDemotedCount     int
+		failedDemotedCount    int
+		rollbackPromotedCount int
+	)
+	defer func() {
+		if !active {
+			return
+		}
+		status := "ok"
+		if retErr != nil {
+			status = "error"
+		}
+		duration := s.now().Sub(started)
+		missing := cfg.MaxPromoted - finalStats.Total
+		if missing < 0 {
+			missing = 0
+		}
+		s.logger.Printf("cycle summary status=%s duration=%s promoted_before=%d promoted_total=%d promoted_available=%d promoted_with_port=%d promoted_blacklisted=%d target=%d missing=%d candidates_selected=%d candidates_after_cooldown=%d cooldown_skipped=%d created=%d stale_demoted=%d failed_demoted=%d rollback=%d",
+			status, duration, initialStats.Total, finalStats.Total, finalStats.Available, finalStats.WithPort, finalStats.Blacklisted,
+			cfg.MaxPromoted, missing, selectedCount, candidateCount, cooldownSkipped, createdCount, staleDemotedCount, failedDemotedCount, rollbackPromotedCount)
+		if cfg.MaxPromoted > 0 && finalStats.Total < cfg.MaxPromoted {
+			s.logger.Printf("cycle warn promoted_shortfall current=%d target=%d missing=%d candidates_after_cooldown=%d created=%d failed_demoted=%d rollback=%d",
+				finalStats.Total, cfg.MaxPromoted, missing, candidateCount, createdCount, failedDemotedCount, rollbackPromotedCount)
+		}
+	}()
+
 	nodes, err := s.nodes.ListConfigNodes(ctx)
 	if err != nil {
 		return fmt.Errorf("list config nodes: %w", err)
 	}
-	candidates := SelectCandidates(s.snaps.ListSnapshots(), nodes, cfg)
+	snaps := s.snaps.ListSnapshots()
+	initialStats = promotedStatsFor(snaps, nodes, cfg.NamePrefix)
+	finalStats = initialStats
+	active = true
+	if cfg.DemoteOnFailValue() {
+		staleNames, staleURIs := stalePromoted(snaps, nodes, cfg)
+		if len(staleNames) > 0 {
+			s.logger.Printf("reload before action=stale-demote promoted_total=%d promoted_available=%d promoted_with_port=%d promoted_blacklisted=%d demote_count=%d",
+				finalStats.Total, finalStats.Available, finalStats.WithPort, finalStats.Blacklisted, len(staleNames))
+			for _, uri := range staleURIs {
+				s.markFailed(uri, cfg)
+			}
+			if err := s.demoteBatch(ctx, staleNames); err != nil {
+				s.logger.Printf("demote stale promoted nodes failed: %v", err)
+			} else {
+				staleDemotedCount = len(staleNames)
+				s.logger.Printf("demoted %d stale promoted node(s)", len(staleNames))
+				nodes, err = s.nodes.ListConfigNodes(ctx)
+				if err != nil {
+					return fmt.Errorf("list config nodes after stale demote: %w", err)
+				}
+				finalStats = promotedStatsFor(snaps, nodes, cfg.NamePrefix)
+				s.logger.Printf("reload after action=stale-demote promoted_total=%d promoted_available=%d promoted_with_port=%d promoted_blacklisted=%d delta_total=%d",
+					finalStats.Total, finalStats.Available, finalStats.WithPort, finalStats.Blacklisted, finalStats.Total-initialStats.Total)
+			}
+		}
+	}
+
+	selected := SelectCandidates(snaps, nodes, cfg)
+	selectedCount = len(selected)
+	candidates := selected
+	candidates, cooldownSkipped = s.filterCooldownWithStats(candidates)
+	candidateCount = len(candidates)
 	if len(candidates) == 0 {
 		return nil
 	}
 
-	s.logger.Printf("promoting %d candidate(s)", len(candidates))
+	s.logger.Printf("promoting candidates_selected=%d candidates_after_cooldown=%d cooldown_skipped=%d", selectedCount, candidateCount, cooldownSkipped)
 	promotedNames := make([]string, 0, len(candidates))
 	candidateByName := make(map[string]Candidate, len(candidates))
 	for _, cand := range candidates {
@@ -279,6 +360,7 @@ func (s *Service) RunOnce(ctx context.Context) error {
 			URI:  uri,
 		})
 		if err != nil {
+			s.markFailed(cand.URI, cfg)
 			s.logger.Printf("create %s failed: %v", name, err)
 			continue
 		}
@@ -290,6 +372,7 @@ func (s *Service) RunOnce(ctx context.Context) error {
 		}
 		promotedNames = append(promotedNames, created.Name)
 		candidateByName[created.Name] = cand
+		createdCount++
 		s.logger.Printf("created promoted node %s (from free %s, latency=%dms success=%d)",
 			created.Name, cand.Name, cand.LastLatencyMs, cand.SuccessCount)
 	}
@@ -297,7 +380,28 @@ func (s *Service) RunOnce(ctx context.Context) error {
 		return nil
 	}
 
+	preReloadNodes, err := s.nodes.ListConfigNodes(ctx)
+	if err != nil {
+		return fmt.Errorf("list nodes before promote reload: %w", err)
+	}
+	preReloadStats := promotedStatsFor(snaps, preReloadNodes, cfg.NamePrefix)
+	s.logger.Printf("reload before action=promote promoted_total=%d promoted_available=%d promoted_with_port=%d promoted_blacklisted=%d created=%d delta_total=%d",
+		preReloadStats.Total, preReloadStats.Available, preReloadStats.WithPort, preReloadStats.Blacklisted, createdCount, preReloadStats.Total-finalStats.Total)
+
 	if err := s.nodes.TriggerReload(ctx); err != nil {
+		for _, name := range promotedNames {
+			if cand, ok := candidateByName[name]; ok {
+				s.markFailed(cand.URI, cfg)
+			}
+		}
+		if delErr := s.deletePromoted(ctx, promotedNames); delErr != nil {
+			s.logger.Printf("rollback promoted nodes after reload failure failed: %v", delErr)
+		}
+		rollbackPromotedCount = len(promotedNames)
+		nodesAfterRollback, listErr := s.nodes.ListConfigNodes(ctx)
+		if listErr == nil {
+			finalStats = promotedStatsFor(snaps, nodesAfterRollback, cfg.NamePrefix)
+		}
 		return fmt.Errorf("reload after promote: %w", err)
 	}
 
@@ -320,6 +424,10 @@ func (s *Service) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list nodes after reload: %w", err)
 	}
+	finalStats = promotedStatsFor(snaps, nodes, cfg.NamePrefix)
+	s.logger.Printf("reload after action=promote promoted_total=%d promoted_available=%d promoted_with_port=%d promoted_blacklisted=%d delta_total=%d delta_with_port=%d",
+		finalStats.Total, finalStats.Available, finalStats.WithPort, finalStats.Blacklisted,
+		finalStats.Total-preReloadStats.Total, finalStats.WithPort-preReloadStats.WithPort)
 	byName := make(map[string]config.NodeConfig, len(nodes))
 	for _, n := range nodes {
 		byName[n.Name] = n
@@ -331,6 +439,8 @@ func (s *Service) RunOnce(ctx context.Context) error {
 		host = "127.0.0.1"
 	}
 
+	demoteNames := make([]string, 0)
+	demoteURIs := make([]string, 0)
 	for _, name := range promotedNames {
 		node, ok := byName[name]
 		if !ok {
@@ -352,28 +462,33 @@ func (s *Service) RunOnce(ctx context.Context) error {
 			proxyURL := buildSocksURL(host, node.Port, user, pass)
 			qr = s.quality.Check(ctx, proxyURL, name)
 			haveQR = !qr.Skipped
-			if cfg.RequireCloudflare && haveQR {
-				if node.Port == 0 {
-					// unreachable due to check above
-				} else if !qr.OK || qr.Score < cfg.MinCloudflareScore {
-					s.logger.Printf("quality fail %s score=%d err=%s", name, qr.Score, qr.Error)
-					if cfg.DemoteOnFailValue() {
-						if err := s.demote(ctx, name); err != nil {
-							s.logger.Printf("demote %s failed: %v", name, err)
-						} else {
-							s.logger.Printf("demoted %s", name)
+			if haveQR {
+				if cfg.RequireCloudflare {
+					if !qr.OK || qr.Score < cfg.MinCloudflareScore {
+						s.logger.Printf("quality fail %s score=%d err=%s", name, qr.Score, qr.Error)
+						if cfg.DemoteOnFailValue() {
+							demoteNames = append(demoteNames, name)
+							demoteURIs = append(demoteURIs, cand.URI)
 						}
+						continue
+					}
+					s.logger.Printf("quality ok %s score=%d port=%d exit=%s loc=%s", name, qr.Score, node.Port, qr.ExitIP, qr.CFLoc)
+				} else if cfg.PostValidateValue() && !qr.OK {
+					s.logger.Printf("post-validate fail %s err=%s", name, qr.Error)
+					if cfg.DemoteOnFailValue() {
+						demoteNames = append(demoteNames, name)
+						demoteURIs = append(demoteURIs, cand.URI)
 					}
 					continue
+				} else if !cfg.RequireCloudflare {
+					s.logger.Printf("promoted node %s port=%d (cf gate off)", name, node.Port)
 				}
-				s.logger.Printf("quality ok %s score=%d port=%d exit=%s loc=%s", name, qr.Score, node.Port, qr.ExitIP, qr.CFLoc)
-			} else if !cfg.RequireCloudflare {
-				s.logger.Printf("promoted node %s port=%d (cf gate off)", name, node.Port)
 			}
 		} else if node.Port == 0 {
 			s.logger.Printf("promoted node %s has no port yet", name)
-			if cfg.RequireCloudflare && cfg.DemoteOnFailValue() {
-				_ = s.demote(ctx, name)
+			if cfg.DemoteOnFailValue() && (cfg.RequireCloudflare || cfg.PostValidateValue()) {
+				demoteNames = append(demoteNames, name)
+				demoteURIs = append(demoteURIs, cand.URI)
 			}
 			continue
 		} else if cfg.RequireCloudflare && s.quality == nil {
@@ -410,6 +525,27 @@ func (s *Service) RunOnce(ctx context.Context) error {
 		if err := s.nodes.PersistRegionOverride(node.URI, region); err != nil {
 			s.logger.Printf("persist region override %s: %v", name, err)
 		}
+	}
+	if len(demoteNames) > 0 {
+		for _, uri := range demoteURIs {
+			s.markFailed(uri, cfg)
+		}
+		preDemoteStats := finalStats
+		s.logger.Printf("reload before action=failed-demote promoted_total=%d promoted_available=%d promoted_with_port=%d promoted_blacklisted=%d demote_count=%d",
+			preDemoteStats.Total, preDemoteStats.Available, preDemoteStats.WithPort, preDemoteStats.Blacklisted, len(demoteNames))
+		if err := s.demoteBatch(ctx, demoteNames); err != nil {
+			return fmt.Errorf("demote failed promoted nodes: %w", err)
+		}
+		failedDemotedCount = len(demoteNames)
+		s.logger.Printf("demoted %d failed promoted node(s)", len(demoteNames))
+		nodes, err = s.nodes.ListConfigNodes(ctx)
+		if err != nil {
+			return fmt.Errorf("list nodes after failed demote: %w", err)
+		}
+		finalStats = promotedStatsFor(snaps, nodes, cfg.NamePrefix)
+		s.logger.Printf("reload after action=failed-demote promoted_total=%d promoted_available=%d promoted_with_port=%d promoted_blacklisted=%d delta_total=%d delta_with_port=%d",
+			finalStats.Total, finalStats.Available, finalStats.WithPort, finalStats.Blacklisted,
+			finalStats.Total-preDemoteStats.Total, finalStats.WithPort-preDemoteStats.WithPort)
 	}
 	return nil
 }
@@ -458,11 +594,154 @@ func SetExitIPRegionLookup(fn func(ip string) geoip.RegionInfo) {
 	lookupExitIPRegion = fn
 }
 
-func (s *Service) demote(ctx context.Context, name string) error {
-	if err := s.nodes.DeleteNode(ctx, name); err != nil {
+func (s *Service) markFailed(uri string, cfg config.FreeProxyPromoteConfig) {
+	key := canonicalURI(uri)
+	if key == "" || cfg.FailedCooldown <= 0 {
+		return
+	}
+	s.mu.Lock()
+	if s.failedUntil == nil {
+		s.failedUntil = make(map[string]time.Time)
+	}
+	s.failedUntil[key] = s.now().Add(cfg.FailedCooldown)
+	s.mu.Unlock()
+}
+
+type promotedStats struct {
+	Total       int
+	Available   int
+	WithPort    int
+	Blacklisted int
+}
+
+func promotedStatsFor(snaps []Snapshot, nodes []config.NodeConfig, prefix string) promotedStats {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return promotedStats{}
+	}
+	snapByName := make(map[string]Snapshot, len(snaps))
+	for _, snap := range snaps {
+		if strings.HasPrefix(snap.Name, prefix) {
+			snapByName[snap.Name] = snap
+		}
+	}
+	var out promotedStats
+	for _, node := range nodes {
+		if !strings.HasPrefix(node.Name, prefix) {
+			continue
+		}
+		out.Total++
+		if node.Port > 0 {
+			out.WithPort++
+		}
+		if snap, ok := snapByName[node.Name]; ok {
+			if snap.Blacklisted {
+				out.Blacklisted++
+			}
+			if snap.Available && !snap.Blacklisted {
+				out.Available++
+			}
+		}
+	}
+	return out
+}
+
+func (s *Service) filterCooldown(candidates []Candidate) []Candidate {
+	out, _ := s.filterCooldownWithStats(candidates)
+	return out
+}
+
+func (s *Service) filterCooldownWithStats(candidates []Candidate) ([]Candidate, int) {
+	if len(candidates) == 0 {
+		return candidates, 0
+	}
+	now := s.now()
+	out := candidates[:0]
+	skipped := 0
+	s.mu.Lock()
+	for _, cand := range candidates {
+		key := canonicalURI(cand.URI)
+		until, ok := s.failedUntil[key]
+		if ok && now.Before(until) {
+			skipped++
+			s.logger.Printf("skip cooled-down candidate %s until %s", cand.Name, until.Format(time.RFC3339))
+			continue
+		}
+		if ok && !now.Before(until) {
+			delete(s.failedUntil, key)
+		}
+		out = append(out, cand)
+	}
+	s.mu.Unlock()
+	return out, skipped
+}
+
+func stalePromoted(snaps []Snapshot, nodes []config.NodeConfig, cfg config.FreeProxyPromoteConfig) ([]string, []string) {
+	uriByName := make(map[string]string, len(nodes))
+	for _, node := range nodes {
+		if strings.HasPrefix(node.Name, cfg.NamePrefix) {
+			uriByName[node.Name] = node.URI
+		}
+	}
+	if len(uriByName) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0)
+	uris := make([]string, 0)
+	for _, snap := range snaps {
+		if !strings.HasPrefix(snap.Name, cfg.NamePrefix) {
+			continue
+		}
+		if _, ok := uriByName[snap.Name]; !ok {
+			continue
+		}
+		bad := snap.Blacklisted || (snap.InitialCheckDone && !snap.Available)
+		if cfg.MaxFailureCount >= 0 && snap.FailureCount > cfg.MaxFailureCount {
+			bad = true
+		}
+		if !bad {
+			continue
+		}
+		names = append(names, snap.Name)
+		uris = append(uris, uriByName[snap.Name])
+	}
+	return names, uris
+}
+
+func (s *Service) deletePromoted(ctx context.Context, names []string) error {
+	var first error
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if err := s.nodes.DeleteNode(ctx, name); err != nil {
+			s.logger.Printf("delete promoted %s failed: %v", name, err)
+			if first == nil {
+				first = err
+			}
+		}
+	}
+	return first
+}
+
+func (s *Service) demoteBatch(ctx context.Context, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	if err := s.deletePromoted(ctx, names); err != nil {
 		return err
 	}
 	return s.nodes.TriggerReload(ctx)
+}
+
+func (s *Service) demote(ctx context.Context, name string) error {
+	return s.demoteBatch(ctx, []string{name})
 }
 
 func findFreeProxyName(nodes []config.NodeConfig, uri string) string {

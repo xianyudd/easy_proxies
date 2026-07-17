@@ -199,18 +199,19 @@ func (f FilterConfig) effectiveWorkers(candidateCount int) int {
 
 func (f FilterConfig) effectiveTimeout(candidateCount, workers int) time.Duration {
 	f = f.Normalized()
-	// Skip adaptive tuning: when user set max_candidates, when candidates
-	// fit inside one batch, or when candidates vastly outnumber workers
-	// (adaptive formula would yield an unreasonably short timeout).
-	if f.MaxCandidates > 0 || candidateCount <= workers || workers <= 0 || f.Timeout <= MinAdaptiveFilterTimeout {
-		return f.Timeout
-	}
-	if candidateCount > workers*4 {
+	// Skip adaptive tuning when user set max_candidates or candidates fit inside
+	// one worker batch. Full-source scans may both shrink overly large timeouts
+	// and raise too-small timeouts to the adaptive minimum so huge lists do not
+	// immediately fail slow-but-usable proxies.
+	if f.MaxCandidates > 0 || candidateCount <= workers || workers <= 0 {
 		return f.Timeout
 	}
 	target := time.Duration(float64(TargetFullScanBatchLatency) * float64(workers) / float64(candidateCount))
 	if target < MinAdaptiveFilterTimeout {
 		target = MinAdaptiveFilterTimeout
+	}
+	if f.Timeout < MinAdaptiveFilterTimeout {
+		return target
 	}
 	if target > f.Timeout {
 		return f.Timeout
