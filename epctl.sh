@@ -67,6 +67,7 @@ Service:
   service:start | start                 Start active profile in background
   service:stop | stop                   Stop only active profile process
   service:restart | restart             Restart active profile
+  container:deploy [--skip-test|--full] Build/test and replace Quadlet main container image
   service:status | status               Show process, WebUI, ports, nodes
   service:build                         Build local binary for active profile
 
@@ -1157,6 +1158,7 @@ case "$cmd" in
   service:start|start) start_service ;;
   service:stop|stop) stop_service ;;
   service:restart|restart) restart_service ;;
+  container:deploy) shift; "$ROOT_DIR/scripts/deploy_main_container.sh" "$@" ;;
   service:status|status) status_service ;;
   service:build|build) build_service ;;
   isolated:config|service:isolated:config) EP_PROFILE=isolated; write_isolated_config ;;
