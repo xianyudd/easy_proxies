@@ -88,6 +88,8 @@ Logs:
 Proxy:
   proxy:test | test [region]            Test region proxy port, default jp
   proxy:regions | regions               Show configured/default region ports
+  hy2:routes [gateway]                   Print Windows route commands for Hy2 hosts, default gateway 192.168.8.1
+  proxy:routes [gateway] [protocols]     Print Windows route commands for comma-separated protocols, default hysteria2,hy2,anytls
 
 IP Reputation:
   reputation:check <region> [count]     Check IP reputation via WebUI API
@@ -1037,6 +1039,67 @@ reputation_check() {
   webui_api GET "/api/reputation/check?region=${region}&mode=multi-port&count=${count}"
 }
 
+proxy_routes() {
+  local gateway="${1:-192.168.8.1}" protocols="${2:-hysteria2,hy2,anytls}" json json_file
+  json="$(webui_api_optional GET "/api/nodes?availability=all&page_size=5000" || true)"
+  if [ -z "$json" ]; then
+    echo "[ERROR] WebUI nodes API unavailable; set WEBUI_TOKEN or WEBUI_PASSWORD if authentication is enabled." >&2
+    exit 1
+  fi
+  json_file="$(mktemp -t epctl-proxy-routes-nodes.XXXXXX)"
+  printf '%s' "$json" >"$json_file"
+  python3 - "$gateway" "$json_file" "$protocols" <<'PY'
+import json
+import socket
+import sys
+from urllib.parse import urlparse
+
+gateway = sys.argv[1]
+json_file = sys.argv[2]
+protocols = {item.strip().lower() for item in sys.argv[3].split(",") if item.strip()}
+with open(json_file, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+nodes = data.get("nodes") or []
+hosts = []
+seen_hosts = set()
+for node in nodes:
+    uri = str(node.get("uri") or "")
+    parsed = urlparse(uri)
+    if parsed.scheme.lower() not in protocols:
+        continue
+    host = parsed.hostname
+    if not host or host in seen_hosts:
+        continue
+    seen_hosts.add(host)
+    hosts.append((host, parsed.scheme.lower()))
+
+if not hosts:
+    print(f"# No hosts found for protocols: {', '.join(sorted(protocols))}")
+    sys.exit(0)
+
+print("# Run the following in an elevated Windows PowerShell/CMD if direct traffic still enters Mihomo TUN.")
+print("# Commands are printed only; epctl does not modify system routes.")
+for host, scheme in hosts:
+    try:
+        infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError as exc:
+        print(f"# {scheme} {host}: DNS lookup failed: {exc}")
+        continue
+    ips = sorted({info[4][0] for info in infos})
+    if not ips:
+        print(f"# {scheme} {host}: no IPv4 addresses found")
+        continue
+    print(f"# {scheme} {host}")
+    for ip in ips:
+        print(f"route -p add {ip} mask 255.255.255.255 {gateway} metric 1")
+PY
+  rm -f "$json_file"
+}
+
+hy2_routes() {
+  proxy_routes "${1:-192.168.8.1}" "hysteria2,hy2"
+}
+
 reputation_cache() { webui_api GET "/api/reputation/cache"; }
 
 cf_check() {
@@ -1109,6 +1172,8 @@ case "$cmd" in
   logs:follow|logs-follow) tail -f "$LOG_FILE" ;;
   proxy:test|test) test_region "${2:-jp}" ;;
   proxy:regions|regions) show_regions ;;
+  proxy:routes) proxy_routes "${2:-192.168.8.1}" "${3:-hysteria2,hy2,anytls}" ;;
+  hy2:routes) hy2_routes "${2:-192.168.8.1}" ;;
   reputation:check) reputation_check "${2:-}" "${3:-10}" ;;
   reputation:cache) reputation_cache ;;
   cf:check) cf_check "${2:-}" "${3:-10}" ;;

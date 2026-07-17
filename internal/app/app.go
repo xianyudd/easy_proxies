@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"easy_proxies/internal/boxmgr"
+	"easy_proxies/internal/cloudflarecheck"
 	"easy_proxies/internal/config"
+	"easy_proxies/internal/freepromote"
+	"easy_proxies/internal/geoip"
 	"easy_proxies/internal/monitor"
 	"easy_proxies/internal/subscription"
 )
@@ -61,6 +64,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 
 	startFreeProxyCacheRefresh(ctx, cfg, boxMgr)
+	startFreeProxyPromote(ctx, cfg, boxMgr)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -152,4 +156,73 @@ func startFreeProxyCacheRefresh(ctx context.Context, cfg *config.Config, boxMgr 
 			}
 		}
 	}()
+}
+
+func startFreeProxyPromote(ctx context.Context, cfg *config.Config, boxMgr *boxmgr.Manager) {
+	if cfg == nil || boxMgr == nil {
+		return
+	}
+	promote := cfg.FreeProxyPromote.Normalized()
+	if !promote.Enabled {
+		return
+	}
+
+	snaps := freepromoteSnapshotSource{mgr: boxMgr}
+	// Always wire CF checker: used for exit-region fill; demote gate still honors require_cloudflare.
+	quality := freepromote.QualityChecker(freepromote.CloudflareChecker{Checker: cloudflarecheck.NewChecker(
+		cloudflarecheck.WithTimeout(cfg.QualityCheck.Normalized().CloudflareTimeout),
+		cloudflarecheck.WithMaxConcurrency(1),
+	)})
+	if db := cfg.GeoIP.DatabasePath; db != "" {
+		freepromote.SetExitIPRegionLookup(func(ip string) geoip.RegionInfo {
+			lkp, err := geoip.OpenExisting(db)
+			if err != nil {
+				return geoip.RegionInfo{}
+			}
+			defer lkp.Close()
+			return lkp.LookupIP(ip)
+		})
+	}
+	svc := freepromote.NewService(
+		func() config.FreeProxyPromoteConfig {
+			return boxMgr.FreeProxyPromoteSettings()
+		},
+		boxMgr,
+		snaps,
+		quality,
+		func() freepromote.ListenAuth {
+			host, user, pass := boxMgr.MultiPortListenAuth()
+			return freepromote.ListenAuth{Host: host, Username: user, Password: pass}
+		},
+		nil,
+	)
+	svc.Start(ctx)
+}
+
+type freepromoteSnapshotSource struct {
+	mgr *boxmgr.Manager
+}
+
+func (s freepromoteSnapshotSource) ListSnapshots() []freepromote.Snapshot {
+	if s.mgr == nil || s.mgr.MonitorManager() == nil {
+		return nil
+	}
+	raw := s.mgr.MonitorManager().Snapshot()
+	out := make([]freepromote.Snapshot, 0, len(raw))
+	for _, snap := range raw {
+		out = append(out, freepromote.Snapshot{
+			Name:             snap.Name,
+			URI:              snap.URI,
+			Source:           snap.Source,
+			Port:             snap.Port,
+			Available:        snap.Available,
+			InitialCheckDone: snap.InitialCheckDone,
+			Blacklisted:      snap.Blacklisted,
+			SuccessCount:     snap.SuccessCount,
+			LastLatencyMs:    snap.LastLatencyMs,
+			Region:           snap.Region,
+			Country:          snap.Country,
+		})
+	}
+	return out
 }

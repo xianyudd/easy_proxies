@@ -97,7 +97,7 @@ func Build(cfg *config.Config) (option.Options, error) {
 			failedNodes = append(failedNodes, node.Name)
 			continue
 		}
-		if upstreamProxy != "" {
+		if upstreamProxy != "" && !shouldBypassUpstreamProxy(node.URI, cfg.UpstreamProxyBypass) {
 			applyOutboundDetour(&outbound, upstreamProxyTag)
 		}
 		memberTags = append(memberTags, tag)
@@ -465,6 +465,32 @@ func applyOutboundDetour(outbound *option.Outbound, detour string) {
 		dialerOptions.Detour = detour
 		wrapper.ReplaceDialerOptions(dialerOptions)
 	}
+}
+
+func shouldBypassUpstreamProxy(rawURI string, bypass config.UpstreamProxyBypassConfig) bool {
+	scheme := nodeScheme(rawURI)
+	if scheme == "" {
+		return false
+	}
+	for _, protocol := range bypass.Protocols {
+		if strings.EqualFold(strings.TrimSpace(protocol), scheme) {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeScheme(rawURI string) string {
+	parsed, err := url.Parse(rawURI)
+	if err == nil && parsed.Scheme != "" {
+		return strings.ToLower(parsed.Scheme)
+	}
+	for _, prefix := range []string{"hysteria2://", "hy2://"} {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(rawURI)), prefix) {
+			return strings.TrimSuffix(prefix, "://")
+		}
+	}
+	return ""
 }
 
 func buildNodeOutbound(tag, rawURI string, skipCertVerify bool) (option.Outbound, error) {

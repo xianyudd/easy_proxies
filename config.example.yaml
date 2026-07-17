@@ -37,6 +37,14 @@ skip_cert_verify: false
 # 示例：upstream_proxy: socks5://127.0.0.1:7890
 upstream_proxy: ""
 
+# 可选：让指定协议绕过 upstream_proxy。常用于 Hy2 UDP 不适合再套一层 SOCKS/HTTP 上游代理的场景。
+upstream_proxy_bypass:
+  protocols: []
+  # protocols:
+  #   - hysteria2
+  #   - hy2
+  #   - anytls
+
 # 外部 IP 地址，用于导出配置时替换 0.0.0.0（可选）
 # external_ip: "your.public.ip"
 
@@ -182,6 +190,23 @@ geoip:
 #     max_bytes: 2097152
 
 # ───────────────────────────────────────────────────────────────
+
+# ───────────────────────────────────────────────────────────────
+# 免费代理自动提升为独立端口（默认关闭，不影响现有运行）
+# 将 free_proxy 中健康且通过质量门禁的节点提升为 multi-port 可分配端口
+# ───────────────────────────────────────────────────────────────
+# free_proxy_promote:
+#   enabled: false                 # 总开关，默认关闭
+#   interval: 1h                   # 提升周期；最小 30s
+#   batch_size: 2                  # 每次最多提升几个（一点点）
+#   max_promoted: 20               # 同时保留的提升节点上限
+#   max_latency_ms: 800            # 运行时延迟上限
+#   min_success_count: 1           # 最少成功探测次数
+#   require_cloudflare: true       # 提升后是否强制 CF 复测
+#   min_cloudflare_score: 60       # CF 分数门槛
+#   demote_on_fail: true           # 复测失败自动降级删除
+#   name_prefix: "free-promoted-"  # 自动提升节点名前缀（用于识别/清理）
+
 # 方式 4: 直接在配置文件中配置节点
 # ───────────────────────────────────────────────────────────────
 nodes:

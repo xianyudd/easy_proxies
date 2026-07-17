@@ -42,6 +42,7 @@ type Config struct {
 	FreeProxyMaxNodes      int                       `yaml:"free_proxy_max_nodes"`
 	FreeProxyFilter        nodesource.FilterConfig   `yaml:"free_proxy_filter"`
 	FreeProxyCache         FreeProxyCacheConfig      `yaml:"free_proxy_cache"`
+	FreeProxyPromote       FreeProxyPromoteConfig    `yaml:"free_proxy_promote"`
 	ManualRegionOverrides  map[string]string         `yaml:"manual_region_overrides"`
 	NodesFile              string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
 	Subscriptions          []string                  `yaml:"subscriptions"` // 订阅链接列表
@@ -49,9 +50,15 @@ type Config struct {
 	LogLevel               string                    `yaml:"log_level"`
 	SkipCertVerify         bool                      `yaml:"skip_cert_verify"`          // 全局跳过 SSL 证书验证
 	UpstreamProxy          string                    `yaml:"upstream_proxy"`            // Optional SOCKS/HTTP proxy used as sing-box outbound detour
+	UpstreamProxyBypass    UpstreamProxyBypassConfig `yaml:"upstream_proxy_bypass"`     // Protocols that should bypass upstream_proxy detour
 	FreeProxyDownloadProxy string                    `yaml:"free_proxy_download_proxy"` // HTTP/SOCKS5 proxy for downloading free proxy sources; falls back to HTTPS_PROXY env
 
 	filePath string `yaml:"-"` // 配置文件路径，用于保存
+}
+
+// UpstreamProxyBypassConfig controls which node types should dial directly even when upstream_proxy is set.
+type UpstreamProxyBypassConfig struct {
+	Protocols []string `yaml:"protocols" json:"protocols"`
 }
 
 // LogConfig controls log output and rotation.
@@ -192,6 +199,88 @@ func (f FreeProxyCacheConfig) Normalized(configPath string, hasSources bool) Fre
 	return f
 }
 
+// Free-proxy promote defaults.
+const (
+	DefaultFreeProxyPromoteInterval     = time.Hour
+	MinFreeProxyPromoteInterval         = 30 * time.Second
+	DefaultFreeProxyPromoteBatchSize    = 2
+	MaxFreeProxyPromoteBatchSize        = 20
+	DefaultFreeProxyPromoteMaxPromoted  = 20
+	MaxFreeProxyPromoteMaxPromoted      = 200
+	DefaultFreeProxyPromoteMaxLatencyMS = 800
+	DefaultFreeProxyPromoteMinSuccess   = int64(1)
+	DefaultFreeProxyPromoteMinCFScore   = 60
+	DefaultFreeProxyPromoteNamePrefix   = "free-promoted-"
+)
+
+// FreeProxyPromoteConfig controls automatic promotion of healthy free_proxy
+// nodes into dedicated multi-port listeners.
+type FreeProxyPromoteConfig struct {
+	Enabled            bool          `yaml:"enabled" json:"enabled"`
+	Interval           time.Duration `yaml:"interval" json:"interval"`
+	BatchSize          int           `yaml:"batch_size" json:"batch_size"`
+	MaxPromoted        int           `yaml:"max_promoted" json:"max_promoted"`
+	MaxLatencyMS       int64         `yaml:"max_latency_ms" json:"max_latency_ms"`
+	MinSuccessCount    int64         `yaml:"min_success_count" json:"min_success_count"`
+	RequireCloudflare  bool          `yaml:"require_cloudflare" json:"require_cloudflare"`
+	MinCloudflareScore int           `yaml:"min_cloudflare_score" json:"min_cloudflare_score"`
+	DemoteOnFail       *bool         `yaml:"demote_on_fail" json:"demote_on_fail"`
+	NamePrefix         string        `yaml:"name_prefix" json:"name_prefix"`
+}
+
+// DemoteOnFailValue returns whether failed promoted nodes should be removed.
+// Defaults to true when unset.
+func (f FreeProxyPromoteConfig) DemoteOnFailValue() bool {
+	if f.DemoteOnFail == nil {
+		return true
+	}
+	return *f.DemoteOnFail
+}
+
+// Normalized applies defaults and clamps for free-proxy promotion.
+func (f FreeProxyPromoteConfig) Normalized() FreeProxyPromoteConfig {
+	if f.Interval <= 0 {
+		f.Interval = DefaultFreeProxyPromoteInterval
+	}
+	if f.Interval < MinFreeProxyPromoteInterval {
+		f.Interval = MinFreeProxyPromoteInterval
+	}
+	if f.BatchSize <= 0 {
+		f.BatchSize = DefaultFreeProxyPromoteBatchSize
+	}
+	if f.BatchSize > MaxFreeProxyPromoteBatchSize {
+		f.BatchSize = MaxFreeProxyPromoteBatchSize
+	}
+	if f.MaxPromoted <= 0 {
+		f.MaxPromoted = DefaultFreeProxyPromoteMaxPromoted
+	}
+	if f.MaxPromoted > MaxFreeProxyPromoteMaxPromoted {
+		f.MaxPromoted = MaxFreeProxyPromoteMaxPromoted
+	}
+	if f.MaxLatencyMS <= 0 {
+		f.MaxLatencyMS = DefaultFreeProxyPromoteMaxLatencyMS
+	}
+	if f.MinSuccessCount < 0 {
+		f.MinSuccessCount = 0
+	} else if f.MinSuccessCount == 0 {
+		f.MinSuccessCount = DefaultFreeProxyPromoteMinSuccess
+	}
+	if f.MinCloudflareScore < 0 {
+		f.MinCloudflareScore = 0
+	} else if f.MinCloudflareScore == 0 {
+		f.MinCloudflareScore = DefaultFreeProxyPromoteMinCFScore
+	}
+	f.NamePrefix = strings.TrimSpace(f.NamePrefix)
+	if f.NamePrefix == "" {
+		f.NamePrefix = DefaultFreeProxyPromoteNamePrefix
+	}
+	if f.DemoteOnFail == nil {
+		v := true
+		f.DemoteOnFail = &v
+	}
+	return f
+}
+
 // QualityCheckConfig controls scheduled node quality checks.
 type QualityCheckConfig struct {
 	Enabled               bool          `yaml:"enabled"`                // 是否启用节点质量定时检测
@@ -265,7 +354,7 @@ type NodeConfig struct {
 // NodeKey returns a unique identifier for the node based on its URI.
 // This is used to preserve port assignments across reloads.
 func (n *NodeConfig) NodeKey() string {
-	return n.URI
+	return canonicalNodeURI(n.URI)
 }
 
 // Load reads YAML config from disk and applies defaults/validation.
@@ -483,6 +572,10 @@ func (c *Config) appendFreeProxyNodeCandidatesWithSeen(sourceNodes []nodesource.
 }
 
 func canonicalNodeURI(uri string) string {
+	uri = strings.TrimSpace(uri)
+	if i := strings.Index(uri, "#"); i >= 0 {
+		uri = uri[:i]
+	}
 	return strings.ToLower(strings.TrimSpace(uri))
 }
 
@@ -660,6 +753,7 @@ func (c *Config) normalize() error {
 	}
 	c.FreeProxyFilter = c.FreeProxyFilter.Normalized()
 	c.FreeProxyCache = c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
+	c.FreeProxyPromote = c.FreeProxyPromote.Normalized()
 	// Drop previously materialized runtime-only free proxy nodes before
 	// recomposing sources. This makes repeated normalize/reload calls idempotent.
 	baseNodes := c.Nodes[:0]
@@ -888,6 +982,7 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	}
 	c.FreeProxyFilter = c.FreeProxyFilter.Normalized()
 	c.FreeProxyCache = c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
+	c.FreeProxyPromote = c.FreeProxyPromote.Normalized()
 
 	// Drop previously materialized runtime-only free proxy nodes before
 	// recomposing sources. This makes repeated reload calls idempotent.
@@ -1633,11 +1728,28 @@ func (c *Config) SetFilePath(path string) {
 	}
 }
 
+// formatNodesFileLine persists a node as URI, embedding name in the fragment when missing.
+// This keeps human-readable / promote names across restarts for nodes_file storage.
+func formatNodesFileLine(node NodeConfig) string {
+	uri := strings.TrimSpace(node.URI)
+	if uri == "" {
+		return ""
+	}
+	name := strings.TrimSpace(node.Name)
+	if name == "" {
+		return uri
+	}
+	if ExtractNodeName(uri) != "" {
+		return uri
+	}
+	return uri + "#" + url.QueryEscape(name)
+}
+
 // writeNodesToFile writes nodes to a file (one URI per line) with file locking.
 func writeNodesToFile(path string, nodes []NodeConfig) error {
 	var lines []string
 	for _, node := range nodes {
-		lines = append(lines, node.URI)
+		lines = append(lines, formatNodesFileLine(node))
 	}
 	content := strings.Join(lines, "\n")
 	if len(lines) > 0 {
@@ -1754,6 +1866,8 @@ func (c *Config) SaveSettings() error {
 	saveCfg.ExternalIP = c.ExternalIP
 	saveCfg.Management.ProbeTarget = c.Management.ProbeTarget
 	saveCfg.SkipCertVerify = c.SkipCertVerify
+	saveCfg.UpstreamProxy = c.UpstreamProxy
+	saveCfg.UpstreamProxyBypass = c.UpstreamProxyBypass
 	saveCfg.Log = c.Log
 	saveCfg.Subscriptions = c.Subscriptions
 	saveCfg.SubscriptionRefresh = c.SubscriptionRefresh
@@ -1762,6 +1876,7 @@ func (c *Config) SaveSettings() error {
 	saveCfg.FreeProxyMaxNodes = c.FreeProxyMaxNodes
 	saveCfg.FreeProxyFilter = c.FreeProxyFilter
 	saveCfg.FreeProxyCache = c.FreeProxyCache
+	saveCfg.FreeProxyPromote = c.FreeProxyPromote
 	saveCfg.ManualRegionOverrides = c.ManualRegionOverrides
 	saveCfg.GeoIP = c.GeoIP
 	saveCfg.Mode = c.Mode

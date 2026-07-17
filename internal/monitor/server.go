@@ -685,40 +685,42 @@ func coreReloadSignature(cfg *config.Config) string {
 		return ""
 	}
 	type signature struct {
-		Mode              string
-		Listener          config.ListenerConfig
-		MultiPort         config.MultiPortConfig
-		AndroidProxy      config.AndroidProxyConfig
-		Pool              config.PoolConfig
-		GeoIP             config.GeoIPConfig
-		Nodes             []config.NodeConfig
-		FreeProxySources  []nodesource.SourceConfig
-		FreeProxyMaxNodes int
-		FreeProxyFilter   nodesource.FilterConfig
-		FreeProxyCache    config.FreeProxyCacheConfig
-		NodesFile         string
-		SkipCertVerify    bool
-		UpstreamProxy     string
-		ClashAPIListen    string
-		LogLevel          string
+		Mode                string
+		Listener            config.ListenerConfig
+		MultiPort           config.MultiPortConfig
+		AndroidProxy        config.AndroidProxyConfig
+		Pool                config.PoolConfig
+		GeoIP               config.GeoIPConfig
+		Nodes               []config.NodeConfig
+		FreeProxySources    []nodesource.SourceConfig
+		FreeProxyMaxNodes   int
+		FreeProxyFilter     nodesource.FilterConfig
+		FreeProxyCache      config.FreeProxyCacheConfig
+		NodesFile           string
+		SkipCertVerify      bool
+		UpstreamProxy       string
+		UpstreamProxyBypass config.UpstreamProxyBypassConfig
+		ClashAPIListen      string
+		LogLevel            string
 	}
 	sig := signature{
-		Mode:              cfg.Mode,
-		Listener:          cfg.Listener,
-		MultiPort:         cfg.MultiPort,
-		AndroidProxy:      cfg.AndroidProxy,
-		Pool:              cfg.Pool,
-		GeoIP:             cfg.GeoIP,
-		Nodes:             cloneConfigNodes(cfg.Nodes),
-		FreeProxySources:  copySourceConfigs(cfg.FreeProxySources),
-		FreeProxyMaxNodes: cfg.FreeProxyMaxNodes,
-		FreeProxyFilter:   cfg.FreeProxyFilter,
-		FreeProxyCache:    cfg.FreeProxyCache,
-		NodesFile:         cfg.NodesFile,
-		SkipCertVerify:    cfg.SkipCertVerify,
-		UpstreamProxy:     cfg.UpstreamProxy,
-		ClashAPIListen:    cfg.Management.ClashAPIListen,
-		LogLevel:          cfg.LogLevel,
+		Mode:                cfg.Mode,
+		Listener:            cfg.Listener,
+		MultiPort:           cfg.MultiPort,
+		AndroidProxy:        cfg.AndroidProxy,
+		Pool:                cfg.Pool,
+		GeoIP:               cfg.GeoIP,
+		Nodes:               cloneConfigNodes(cfg.Nodes),
+		FreeProxySources:    copySourceConfigs(cfg.FreeProxySources),
+		FreeProxyMaxNodes:   cfg.FreeProxyMaxNodes,
+		FreeProxyFilter:     cfg.FreeProxyFilter,
+		FreeProxyCache:      cfg.FreeProxyCache,
+		NodesFile:           cfg.NodesFile,
+		SkipCertVerify:      cfg.SkipCertVerify,
+		UpstreamProxy:       cfg.UpstreamProxy,
+		UpstreamProxyBypass: cfg.UpstreamProxyBypass,
+		ClashAPIListen:      cfg.Management.ClashAPIListen,
+		LogLevel:            cfg.LogLevel,
 	}
 	data, _ := json.Marshal(sig)
 	return string(data)
@@ -3717,9 +3719,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"cloudflare_timeout":     config.DefaultCloudflareTimeout.String(),
 				"cloudflare_concurrency": config.DefaultCloudflareConcurrency,
 			},
-			"free_proxy_sources":         []any{},
-			"free_proxy_max_nodes":        0,
-			"free_proxy_download_proxy":   "",
+			"free_proxy_sources":        []any{},
+			"free_proxy_max_nodes":      0,
+			"free_proxy_download_proxy": "",
 			"free_proxy_filter": map[string]any{
 				"enabled":        false,
 				"min_tier":       "simple_web",
@@ -3888,11 +3890,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				Enabled  bool   `json:"enabled"`
 				Interval string `json:"interval"`
 			} `json:"subscription_refresh,omitempty"`
-			FreeProxySources  []nodesourceSourceConfigRequest `json:"free_proxy_sources"`
-			FreeProxyMaxNodes *int                            `json:"free_proxy_max_nodes"`
-			FreeProxyDownloadProxy *string                    `json:"free_proxy_download_proxy"`
-			FreeProxyFilter   *freeProxyFilterRequest         `json:"free_proxy_filter"`
-			FreeProxyCache    *freeProxyCacheRequest          `json:"free_proxy_cache"`
+			FreeProxySources       []nodesourceSourceConfigRequest `json:"free_proxy_sources"`
+			FreeProxyMaxNodes      *int                            `json:"free_proxy_max_nodes"`
+			FreeProxyDownloadProxy *string                         `json:"free_proxy_download_proxy"`
+			FreeProxyFilter        *freeProxyFilterRequest         `json:"free_proxy_filter"`
+			FreeProxyCache         *freeProxyCacheRequest          `json:"free_proxy_cache"`
 		}
 		body, err := readJSONBodyMap(r, &req)
 		if err != nil {

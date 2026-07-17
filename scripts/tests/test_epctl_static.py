@@ -133,6 +133,20 @@ def test_pid_profile_matching_parses_config_argument_forms():
     assert 'arg_matches_path "$cfg_arg" "$CONFIG_FILE"' in text
 
 
+def test_hy2_routes_command_prints_windows_route_suggestions_without_applying():
+    text = read_source()
+    assert 'hy2:routes [gateway]                   Print Windows route commands for Hy2 hosts' in text
+    assert 'proxy:routes [gateway] [protocols]     Print Windows route commands for comma-separated protocols' in text
+    assert 'proxy_routes()' in text
+    assert 'hy2_routes()' in text
+    assert 'webui_api_optional GET "/api/nodes?availability=all&page_size=5000"' in text
+    assert 'parsed.scheme.lower() not in protocols' in text
+    assert 'route -p add {ip} mask 255.255.255.255 {gateway} metric 1' in text
+    assert 'epctl does not modify system routes' in text
+    assert 'proxy:routes) proxy_routes "${2:-192.168.8.1}" "${3:-hysteria2,hy2,anytls}" ;;' in text
+    assert 'hy2:routes) hy2_routes "${2:-192.168.8.1}" ;;' in text
+
+
 if __name__ == "__main__":
     test_isolated_startup_does_not_require_available_nodes_by_default()
     test_readiness_warning_reports_node_availability_separately()
@@ -148,3 +162,4 @@ if __name__ == "__main__":
     test_start_failure_removes_stale_pid_file()
     test_restart_builds_temp_binary_before_stop_and_swap()
     test_pid_profile_matching_parses_config_argument_forms()
+    test_hy2_routes_command_prints_windows_route_suggestions_without_applying()

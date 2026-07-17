@@ -410,6 +410,60 @@ func (m *Manager) Close() error {
 	return err
 }
 
+// UpdateNodeRegion writes runtime region metadata for a node (monitor only).
+func (m *Manager) UpdateNodeRegion(ctx context.Context, name, region, country string) error {
+	_ = ctx
+	if m == nil {
+		return errConfigUnavailable
+	}
+	mon := m.MonitorManager()
+	if mon == nil {
+		return fmt.Errorf("monitor unavailable")
+	}
+	return mon.UpdateRegion(name, region, country)
+}
+
+// PersistRegionOverride stores a durable URI region override and saves settings.
+func (m *Manager) PersistRegionOverride(uri, region string) error {
+	if m == nil {
+		return errConfigUnavailable
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cfg == nil {
+		return errConfigUnavailable
+	}
+	m.cfg.SetRegionOverride(uri, region)
+	if err := m.cfg.SaveSettings(); err != nil {
+		return fmt.Errorf("save region override: %w", err)
+	}
+	return nil
+}
+
+// FreeProxyPromoteSettings returns the current free-proxy promote settings.
+func (m *Manager) FreeProxyPromoteSettings() config.FreeProxyPromoteConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.cfg == nil {
+		return config.FreeProxyPromoteConfig{}
+	}
+	return m.cfg.FreeProxyPromote
+}
+
+// MultiPortListenAuth returns multi-port listen host and default credentials.
+func (m *Manager) MultiPortListenAuth() (host, username, password string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.cfg == nil {
+		return "127.0.0.1", "", ""
+	}
+	host = m.cfg.MultiPort.Address
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return host, m.cfg.MultiPort.Username, m.cfg.MultiPort.Password
+}
+
 // MonitorManager returns the shared monitor manager.
 func (m *Manager) MonitorManager() *monitor.Manager {
 	m.mu.RLock()
@@ -1272,8 +1326,8 @@ func (m *Manager) prepareNodeLocked(node config.NodeConfig, currentName string) 
 		}
 	}
 
-	// Handle multi-port mode specifics
-	if m.cfg.Mode == "multi-port" {
+	// Handle multi-port / hybrid mode: assign dedicated listener ports.
+	if m.cfg.Mode == "multi-port" || m.cfg.Mode == "hybrid" {
 		if node.Port == 0 {
 			node.Port = m.nextAvailablePortLocked()
 		} else if m.portInUseLocked(node.Port, currentName) {

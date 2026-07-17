@@ -4,6 +4,8 @@ import (
 	"net/url"
 	"testing"
 
+	"easy_proxies/internal/config"
+
 	"github.com/sagernet/sing-box/option"
 )
 
@@ -46,4 +48,75 @@ func TestBuildHysteria2Options_PortsFromQuery(t *testing.T) {
 	if opts.ServerPorts[0] != "10000:20000" || opts.ServerPorts[1] != "30000" {
 		t.Fatalf("unexpected server ports: %v", opts.ServerPorts)
 	}
+}
+
+func TestBuild_UpstreamProxyBypassProtocolsSkipsHy2DetourOnly(t *testing.T) {
+	opts, err := Build(&config.Config{
+		Mode:                "pool",
+		Listener:            config.ListenerConfig{Address: "127.0.0.1", Port: 2323},
+		Pool:                config.PoolConfig{Mode: "sequential"},
+		Management:          config.ManagementConfig{ClashAPIListen: "127.0.0.1:9090"},
+		LogLevel:            "info",
+		UpstreamProxy:       "socks5://127.0.0.1:7890",
+		UpstreamProxyBypass: config.UpstreamProxyBypassConfig{Protocols: []string{"hysteria2", "hy2"}},
+		Nodes: []config.NodeConfig{
+			{Name: "hy2", URI: "hysteria2://secret@example.com:10000-20000?sni=hy2.example.com"},
+			{Name: "vless", URI: "vless://00000000-0000-0000-0000-000000000000@example.org:443?security=tls&sni=example.org"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	hy2Outbound := findOutbound(t, opts.Outbounds, "hy2")
+	if got := outboundDetour(t, hy2Outbound); got != "" {
+		t.Fatalf("hy2 detour = %q, want empty", got)
+	}
+
+	vlessOutbound := findOutbound(t, opts.Outbounds, "vless")
+	if got := outboundDetour(t, vlessOutbound); got != "__upstream_proxy" {
+		t.Fatalf("vless detour = %q, want __upstream_proxy", got)
+	}
+}
+
+func TestBuild_UpstreamProxyAppliesToHy2WhenBypassUnset(t *testing.T) {
+	opts, err := Build(&config.Config{
+		Mode:          "pool",
+		Listener:      config.ListenerConfig{Address: "127.0.0.1", Port: 2323},
+		Pool:          config.PoolConfig{Mode: "sequential"},
+		Management:    config.ManagementConfig{ClashAPIListen: "127.0.0.1:9090"},
+		LogLevel:      "info",
+		UpstreamProxy: "socks5://127.0.0.1:7890",
+		Nodes: []config.NodeConfig{
+			{Name: "hy2", URI: "hysteria2://secret@example.com:10000-20000?sni=hy2.example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	hy2Outbound := findOutbound(t, opts.Outbounds, "hy2")
+	if got := outboundDetour(t, hy2Outbound); got != "__upstream_proxy" {
+		t.Fatalf("hy2 detour = %q, want __upstream_proxy", got)
+	}
+}
+
+func findOutbound(t *testing.T, outbounds []option.Outbound, tag string) option.Outbound {
+	t.Helper()
+	for _, outbound := range outbounds {
+		if outbound.Tag == tag {
+			return outbound
+		}
+	}
+	t.Fatalf("outbound %q not found", tag)
+	return option.Outbound{}
+}
+
+func outboundDetour(t *testing.T, outbound option.Outbound) string {
+	t.Helper()
+	wrapper, ok := outbound.Options.(option.DialerOptionsWrapper)
+	if !ok {
+		t.Fatalf("outbound %q options %T do not expose dialer options", outbound.Tag, outbound.Options)
+	}
+	return wrapper.TakeDialerOptions().Detour
 }

@@ -175,6 +175,56 @@ def test_preflight_rejects_unknown_owner_without_pid():
     assert "unknown-no-pid" in result.stderr
 
 
+def test_proxy_routes_prints_unique_ipv4_route_commands_from_selected_protocols():
+    script = f'''
+set -euo pipefail
+tmp="$(mktemp -d)"
+EPCTL_LIB_ONLY=1
+source {shell_quote(str(EPCTL))}
+webui_api_optional() {{
+  cat "$tmp/nodes.json"
+}}
+cat >"$tmp/nodes.json" <<'JSON'
+{{"nodes":[
+  {{"uri":"hysteria2://secret@127.0.0.1:443#hy2"}},
+  {{"uri":"hy2://secret@127.0.0.1:8443#hy2-duplicate-host"}},
+  {{"uri":"anytls://secret@127.0.0.2:9443#anytls"}},
+  {{"uri":"vless://00000000-0000-0000-0000-000000000000@example.com:443"}}
+]}}
+JSON
+proxy_routes 10.0.0.1 hysteria2,hy2,anytls
+'''
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr
+    assert "epctl does not modify system routes" in result.stdout
+    assert "# hysteria2 127.0.0.1" in result.stdout
+    assert "# anytls 127.0.0.2" in result.stdout
+    assert "route -p add 127.0.0.1 mask 255.255.255.255 10.0.0.1 metric 1" in result.stdout
+    assert "route -p add 127.0.0.2 mask 255.255.255.255 10.0.0.1 metric 1" in result.stdout
+    assert "example.com" not in result.stdout
+
+
+def test_hy2_routes_remains_limited_to_hy2_protocols():
+    script = f'''
+set -euo pipefail
+tmp="$(mktemp -d)"
+EPCTL_LIB_ONLY=1
+source {shell_quote(str(EPCTL))}
+webui_api_optional() {{ cat "$tmp/nodes.json"; }}
+cat >"$tmp/nodes.json" <<'JSON'
+{{"nodes":[
+  {{"uri":"hysteria2://secret@127.0.0.1:443#hy2"}},
+  {{"uri":"anytls://secret@127.0.0.2:9443#anytls"}}
+]}}
+JSON
+hy2_routes 10.0.0.1
+'''
+    result = run_bash(script)
+    assert result.returncode == 0, result.stderr
+    assert "127.0.0.1" in result.stdout
+    assert "127.0.0.2" not in result.stdout
+
+
 def test_start_service_failure_removes_stale_pid_file():
     script = f"""
 set -euo pipefail
