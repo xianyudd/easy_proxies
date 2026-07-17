@@ -25,7 +25,7 @@ PREV="${PREV:-localhost/easy-proxies:main-prev}"
 UNIT="${UNIT:-easy_proxies_main.service}"
 CONTAINER="${CONTAINER:-easy_proxies_main}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:9091/}"
-HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-60}"
+HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-240}"
 PROMOTE_VALIDATE_STRICT="${PROMOTE_VALIDATE_STRICT:-0}"
 BUILD_TAGS="${BUILD_TAGS:-with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api}"
 
