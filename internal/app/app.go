@@ -162,11 +162,6 @@ func startFreeProxyPromote(ctx context.Context, cfg *config.Config, boxMgr *boxm
 	if cfg == nil || boxMgr == nil {
 		return
 	}
-	promote := cfg.FreeProxyPromote.Normalized()
-	if !promote.Enabled {
-		return
-	}
-
 	snaps := freepromoteSnapshotSource{mgr: boxMgr}
 	// Always wire CF checker: used for exit-region fill; demote gate still honors require_cloudflare.
 	quality := freepromote.QualityChecker(freepromote.CloudflareChecker{Checker: cloudflarecheck.NewChecker(

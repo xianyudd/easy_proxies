@@ -96,19 +96,22 @@ type ListenAuth struct {
 	Password string
 }
 
+const defaultDisabledPollInterval = 30 * time.Second
+
 // Service periodically promotes healthy free_proxy nodes to dedicated ports.
 type Service struct {
-	cfg         func() config.FreeProxyPromoteConfig
-	nodes       NodeManager
-	snaps       SnapshotSource
-	quality     QualityChecker
-	listen      func() ListenAuth
-	logger      *log.Logger
-	now         func() time.Time
-	settleWait  time.Duration
-	startupWait time.Duration
-	mu          sync.Mutex
-	running     bool
+	cfg          func() config.FreeProxyPromoteConfig
+	nodes        NodeManager
+	snaps        SnapshotSource
+	quality      QualityChecker
+	listen       func() ListenAuth
+	logger       *log.Logger
+	now          func() time.Time
+	settleWait   time.Duration
+	startupWait  time.Duration
+	disabledPoll time.Duration
+	mu           sync.Mutex
+	running      bool
 }
 
 // NewService constructs a free-proxy promote service.
@@ -130,26 +133,26 @@ func NewService(
 		listen = func() ListenAuth { return ListenAuth{Host: "127.0.0.1"} }
 	}
 	return &Service{
-		cfg:         cfg,
-		nodes:       nodes,
-		snaps:       snaps,
-		quality:     quality,
-		listen:      listen,
-		logger:      logger,
-		now:         time.Now,
-		settleWait:  5 * time.Second,
-		startupWait: 15 * time.Second,
+		cfg:          cfg,
+		nodes:        nodes,
+		snaps:        snaps,
+		quality:      quality,
+		listen:       listen,
+		logger:       logger,
+		now:          time.Now,
+		settleWait:   5 * time.Second,
+		startupWait:  15 * time.Second,
+		disabledPoll: defaultDisabledPollInterval,
 	}
 }
 
-// Start launches the background promote loop. No-op when disabled.
+// Start launches the background promote loop. It stays alive while disabled so runtime settings can enable it.
 func (s *Service) Start(ctx context.Context) {
 	if s == nil || s.nodes == nil || s.snaps == nil {
 		return
 	}
-	cfg := s.cfg().Normalized()
-	if !cfg.Enabled {
-		return
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	s.mu.Lock()
 	if s.running {
@@ -159,42 +162,81 @@ func (s *Service) Start(ctx context.Context) {
 	s.running = true
 	s.mu.Unlock()
 
-	s.logger.Printf("enabled: interval=%s batch=%d max=%d cf=%v",
-		cfg.Interval, cfg.BatchSize, cfg.MaxPromoted, cfg.RequireCloudflare)
-
 	go s.loop(ctx)
 }
 
 func (s *Service) loop(ctx context.Context) {
+	defer func() {
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+	}()
+
 	// Small startup delay so health probes can finish first.
-	wait := s.startupWait
-	if wait < 0 {
-		wait = 0
-	}
-	startup := time.NewTimer(wait)
-	defer startup.Stop()
-	select {
-	case <-ctx.Done():
+	if !sleepContext(ctx, maxDuration(s.startupWait, 0)) {
 		return
-	case <-startup.C:
 	}
 
+	enabled := false
 	for {
 		cfg := s.cfg().Normalized()
 		if !cfg.Enabled {
-			s.logger.Printf("disabled, stopping loop")
-			return
+			if enabled {
+				s.logger.Printf("disabled, pausing loop")
+				enabled = false
+			}
+			if !sleepContext(ctx, s.disabledPollInterval()) {
+				return
+			}
+			continue
+		}
+		if !enabled {
+			s.logger.Printf("enabled: interval=%s batch=%d max=%d cf=%v",
+				cfg.Interval, cfg.BatchSize, cfg.MaxPromoted, cfg.RequireCloudflare)
+			enabled = true
 		}
 		if err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
 			s.logger.Printf("cycle error: %v", err)
 		}
-		timer := time.NewTimer(cfg.Interval)
+		if !sleepContext(ctx, cfg.Interval) {
+			return
+		}
+	}
+}
+
+func (s *Service) disabledPollInterval() time.Duration {
+	if s == nil || s.disabledPoll <= 0 {
+		return defaultDisabledPollInterval
+	}
+	return s.disabledPoll
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d <= 0 {
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
+			return false
+		default:
+			return true
 		}
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

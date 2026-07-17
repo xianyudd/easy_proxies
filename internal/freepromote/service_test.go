@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"easy_proxies/internal/config"
 )
@@ -253,6 +254,104 @@ func TestRunOnceInheritsFreeRegionWithoutQuality(t *testing.T) {
 		if v != "jp|Japan" {
 			t.Fatalf("region=%q", v)
 		}
+	}
+}
+
+func TestStartStaysAliveAndPromotesAfterConfigEnabled(t *testing.T) {
+	var cfgMu sync.Mutex
+	cfg := config.FreeProxyPromoteConfig{
+		Enabled: false, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
+		RequireCloudflare: false, NamePrefix: "free-promoted-",
+	}
+	nodes := &fakeNodes{nodes: []config.NodeConfig{
+		{Name: "free-a", URI: "http://10.0.0.5:8080", Source: config.NodeSourceFreeProxy},
+	}}
+	snaps := fakeSnaps{items: []Snapshot{
+		{Name: "free-a", URI: "http://10.0.0.5:8080", Source: "free_proxy", Available: true, InitialCheckDone: true, SuccessCount: 3, LastLatencyMs: 100, Region: "jp", Country: "Japan"},
+	}}
+	svc := NewService(
+		func() config.FreeProxyPromoteConfig {
+			cfgMu.Lock()
+			defer cfgMu.Unlock()
+			return cfg
+		},
+		nodes, snaps, nil,
+		func() ListenAuth { return ListenAuth{Host: "127.0.0.1"} },
+		nil,
+	)
+	svc.startupWait = 0
+	svc.settleWait = 0
+	svc.disabledPoll = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc.Start(ctx)
+	time.Sleep(25 * time.Millisecond)
+	if nodes.reloads != 0 {
+		t.Fatalf("reload while disabled=%d", nodes.reloads)
+	}
+
+	cfgMu.Lock()
+	cfg.Enabled = true
+	cfgMu.Unlock()
+
+	eventually(t, 500*time.Millisecond, func() bool {
+		list, _ := nodes.ListConfigNodes(context.Background())
+		return nodes.reloads == 1 && CountPromoted(list, "free-promoted-") == 1
+	})
+}
+
+func TestStartIsIdempotentWhileWaitingDisabled(t *testing.T) {
+	var cfgMu sync.Mutex
+	cfg := config.FreeProxyPromoteConfig{
+		Enabled: false, BatchSize: 1, MaxPromoted: 5, MaxLatencyMS: 800, MinSuccessCount: 1,
+		RequireCloudflare: false, NamePrefix: "free-promoted-",
+	}
+	nodes := &fakeNodes{nodes: []config.NodeConfig{
+		{Name: "free-a", URI: "http://10.0.0.6:8080", Source: config.NodeSourceFreeProxy},
+	}}
+	snaps := fakeSnaps{items: []Snapshot{
+		{Name: "free-a", URI: "http://10.0.0.6:8080", Source: "free_proxy", Available: true, InitialCheckDone: true, SuccessCount: 3, LastLatencyMs: 100},
+	}}
+	svc := NewService(
+		func() config.FreeProxyPromoteConfig {
+			cfgMu.Lock()
+			defer cfgMu.Unlock()
+			return cfg
+		},
+		nodes, snaps, nil,
+		func() ListenAuth { return ListenAuth{Host: "127.0.0.1"} },
+		nil,
+	)
+	svc.startupWait = 0
+	svc.settleWait = 0
+	svc.disabledPoll = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc.Start(ctx)
+	svc.Start(ctx)
+
+	cfgMu.Lock()
+	cfg.Enabled = true
+	cfgMu.Unlock()
+
+	eventually(t, 500*time.Millisecond, func() bool {
+		return nodes.reloads == 1
+	})
+}
+
+func eventually(t *testing.T, timeout time.Duration, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if ok() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ok() {
+		t.Fatal("condition not met before timeout")
 	}
 }
 

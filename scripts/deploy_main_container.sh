@@ -26,6 +26,7 @@ UNIT="${UNIT:-easy_proxies_main.service}"
 CONTAINER="${CONTAINER:-easy_proxies_main}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:9091/}"
 HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-60}"
+PROMOTE_VALIDATE_STRICT="${PROMOTE_VALIDATE_STRICT:-0}"
 BUILD_TAGS="${BUILD_TAGS:-with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api}"
 
 SKIP_TEST=0
@@ -50,11 +51,107 @@ done
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+validate_promote() {
+  local base nodes_json cfg_file summary rc
+  base="${HEALTH_URL%/}"
+  nodes_json="$WORK/nodes.json"
+  cfg_file="$WORK/promote-config.yaml"
+
+  if ! curl -fsS --max-time 5 "$base/api/nodes?availability=all&page_size=5000" -o "$nodes_json"; then
+    log "WARN: promote validation skipped: nodes API unavailable"
+    return 0
+  fi
+  podman exec "$CONTAINER" sh -c 'cat /app/config.yaml 2>/dev/null || true' >"$cfg_file" || true
+
+  set +e
+  summary=$(python3 - "$cfg_file" "$nodes_json" <<'PY'
+import json, re, sys
+
+cfg_path, nodes_path = sys.argv[1], sys.argv[2]
+text = open(cfg_path, encoding='utf-8', errors='ignore').read()
+block = {}
+in_block = False
+for raw in text.splitlines():
+    line = raw.split('#', 1)[0].rstrip()
+    if not line.strip():
+        continue
+    if re.match(r'^free_proxy_promote\s*:', line):
+        in_block = True
+        continue
+    if in_block and re.match(r'^\S', line):
+        break
+    if in_block:
+        m = re.match(r'^\s+([A-Za-z0-9_]+)\s*:\s*(.*?)\s*$', line)
+        if m:
+            block[m.group(1)] = m.group(2).strip().strip('"\'')
+
+def as_bool(v):
+    return str(v).strip().lower() in ('1', 'true', 'yes', 'on')
+def as_int(v, default):
+    try:
+        return int(str(v).strip())
+    except Exception:
+        return default
+
+enabled = as_bool(block.get('enabled', 'false'))
+max_latency = as_int(block.get('max_latency_ms', 800), 800)
+min_success = as_int(block.get('min_success_count', 1), 1)
+prefix = block.get('name_prefix') or 'free-promoted-'
+
+nodes = json.load(open(nodes_path, encoding='utf-8'))
+if isinstance(nodes, dict):
+    nodes = nodes.get('nodes') or nodes.get('data') or nodes.get('items') or []
+
+eligible = []
+promoted = []
+for n in nodes:
+    name = str(n.get('name') or '')
+    source = str(n.get('source') or '')
+    if name.startswith(prefix):
+        promoted.append(n)
+    if source != 'free_proxy':
+        continue
+    if n.get('blacklisted') or not n.get('available') or not n.get('initial_check_done'):
+        continue
+    if int(n.get('success_count') or 0) < min_success:
+        continue
+    latency = int(n.get('last_latency_ms') or 0)
+    if max_latency > 0 and latency > 0 and latency > max_latency:
+        continue
+    eligible.append(n)
+
+print(f"promote validation: enabled={str(enabled).lower()} eligible_free={len(eligible)} promoted={len(promoted)} prefix={prefix}")
+for n in eligible[:5]:
+    print(f"eligible: {n.get('name')} latency={n.get('last_latency_ms')} success={n.get('success_count')} uri={n.get('uri')}")
+if not enabled and eligible:
+    sys.exit(10)
+if enabled and eligible and not promoted:
+    sys.exit(11)
+PY
+)
+  rc=$?
+  set -e
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && log "$line"
+  done <<<"$summary"
+  if [[ "$rc" == "10" ]]; then
+    [[ "$PROMOTE_VALIDATE_STRICT" == "1" ]] && die "promote disabled but eligible free_proxy nodes exist"
+    log "WARN: promote disabled but eligible free_proxy nodes exist"
+  elif [[ "$rc" == "11" ]]; then
+    [[ "$PROMOTE_VALIDATE_STRICT" == "1" ]] && die "promote enabled but no promoted nodes found"
+    log "WARN: promote enabled but no promoted nodes found"
+  elif [[ "$rc" != "0" ]]; then
+    log "WARN: promote validation inconclusive (exit=$rc)"
+  fi
+}
+
 need() { command -v "$1" >/dev/null 2>&1 || die "missing command: $1"; }
 need podman
 need go
 need systemctl
 need curl
+need python3
 
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 commit="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -132,6 +229,7 @@ if [[ "$ok" != "1" ]]; then
 fi
 
 log "health OK: $HEALTH_URL"
+validate_promote
 systemctl --user --no-pager --full status "$UNIT" | sed -n '1,15p' || true
 podman ps --filter "name=^${CONTAINER}$" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
 log "deploy done commit=$commit"
