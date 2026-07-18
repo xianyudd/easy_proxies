@@ -23,8 +23,8 @@ import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { useToast } from '../components/ui/Toast'
 import { copyToClipboard } from '../lib/clipboard'
 
-/** One-time secret modal auto-closes (Stripe/GitHub-style temporary reveal). */
-const SECRET_MODAL_SECONDS = 45
+/** One-time secret modal auto-closes quickly; copy pauses the timer. */
+const SECRET_MODAL_SECONDS = 12
 
 function maskKey(key?: string, hint?: string) {
   if (hint) return hint
