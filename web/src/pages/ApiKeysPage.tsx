@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Dropdown, Input, Modal, Select, Switch } from 'antd'
+import { Dropdown, Input, Modal, Progress, Select, Switch } from 'antd'
 import type { MenuProps } from 'antd'
 import {
   Copy,
@@ -13,8 +13,8 @@ import {
   RefreshCw,
   RotateCcw,
   Shield,
+  ShieldCheck,
   Trash2,
-  X,
 } from 'lucide-react'
 import { createApiKey, deleteApiKey, getSettings, listApiKeys, updateApiKey, type ApiKeyMeta } from '../api/settings'
 import { Button } from '../components/ui/Button'
@@ -23,12 +23,15 @@ import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { useToast } from '../components/ui/Toast'
 import { copyToClipboard } from '../lib/clipboard'
 
+/** One-time secret modal auto-closes (Stripe/GitHub-style temporary reveal). */
+const SECRET_MODAL_SECONDS = 45
+
 function maskKey(key?: string, hint?: string) {
   if (hint) return hint
   const value = String(key || '')
-  if (!value) return '••••••••'
-  if (value.length <= 12) return '•'.repeat(value.length)
-  return `${value.slice(0, 8)}${'•'.repeat(8)}${value.slice(-4)}`
+  if (!value) return '••••••••••••'
+  if (value.length <= 12) return '•'.repeat(Math.max(8, value.length))
+  return `${value.slice(0, 10)} ··· ${value.slice(-4)}`
 }
 
 export function ApiKeysPage() {
@@ -40,10 +43,13 @@ export function ApiKeysPage() {
   const [role, setRole] = useState<'read' | 'admin'>('read')
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [pendingSecret, setPendingSecret] = useState<ApiKeyMeta | null>(null)
+  const [secretCountdown, setSecretCountdown] = useState(0)
+  const [secretPaused, setSecretPaused] = useState(false)
   const [busy, setBusy] = useState(false)
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [highlightName, setHighlightName] = useState<string | null>(null)
+  const secretTimerRef = useRef<number | undefined>(undefined)
 
   const passwordSet = Boolean((settings.data?.management as Record<string, unknown> | undefined)?.password_set)
   const keys = useMemo(() => {
@@ -55,6 +61,7 @@ export function ApiKeysPage() {
     total: keys.length,
     admin: keys.filter(k => k.role === 'admin').length,
     enabled: keys.filter(k => k.enabled !== false).length,
+    disabled: keys.filter(k => k.enabled === false).length,
   }), [keys])
 
   const refresh = () => {
@@ -65,13 +72,59 @@ export function ApiKeysPage() {
   const flashRow = (name?: string) => {
     if (!name) return
     setHighlightName(name)
-    window.setTimeout(() => setHighlightName(cur => (cur === name ? null : cur)), 2400)
+    window.setTimeout(() => setHighlightName(cur => (cur === name ? null : cur)), 2800)
   }
+
+  const clearSecretTimer = () => {
+    if (secretTimerRef.current !== undefined) {
+      window.clearInterval(secretTimerRef.current)
+      secretTimerRef.current = undefined
+    }
+  }
+
+  const closeSecretModal = () => {
+    clearSecretTimer()
+    setPendingSecret(null)
+    setSecretCountdown(0)
+    setSecretPaused(false)
+  }
+
+  const openSecretModal = (ak: ApiKeyMeta | null | undefined) => {
+    if (!ak?.key) return
+    clearSecretTimer()
+    setPendingSecret(ak)
+    setSecretCountdown(SECRET_MODAL_SECONDS)
+    setSecretPaused(false)
+    if (ak.name) {
+      setRevealed(prev => ({ ...prev, [String(ak.name)]: false }))
+      flashRow(String(ak.name))
+    }
+  }
+
+  useEffect(() => {
+    if (!pendingSecret?.key || secretPaused) {
+      clearSecretTimer()
+      return
+    }
+    clearSecretTimer()
+    secretTimerRef.current = window.setInterval(() => {
+      setSecretCountdown((left) => {
+        if (left <= 1) {
+          clearSecretTimer()
+          setPendingSecret(null)
+          setSecretPaused(false)
+          return 0
+        }
+        return left - 1
+      })
+    }, 1000)
+    return clearSecretTimer
+  }, [pendingSecret?.key, pendingSecret?.name, secretPaused])
 
   const createMut = useMutation({
     mutationFn: async () => {
       if (!passwordSet) {
-        throw new Error('请先在「系统设置 → 管理与日志」设置管理密码（可查看/复制），再生成 API Key')
+        throw new Error('请先在「系统设置 → 管理与日志」设置管理密码，再生成 API Key')
       }
       return createApiKey({
         name: nameDraft.trim() || undefined,
@@ -82,14 +135,9 @@ export function ApiKeysPage() {
     onMutate: () => setBusy(true),
     onSettled: () => setBusy(false),
     onSuccess: (res) => {
-      const ak = res.api_key || null
-      setPendingSecret(ak)
       setNameDraft('')
-      if (ak?.name) {
-        setRevealed(prev => ({ ...prev, [String(ak.name)]: true }))
-        flashRow(String(ak.name))
-      }
-      toast(res.message || 'API Key 已生成', 'ok')
+      openSecretModal(res.api_key)
+      toast('密钥已生成，请在弹窗中复制', 'ok')
       refresh()
     },
     onError: (e) => toast(e instanceof Error ? e.message : '生成失败', 'error'),
@@ -101,12 +149,8 @@ export function ApiKeysPage() {
     onSuccess: (res, vars) => {
       const ak = res.api_key
       if (ak?.rotated && ak.key) {
-        setPendingSecret(ak)
-        if (ak.name) {
-          setRevealed(prev => ({ ...prev, [String(ak.name)]: true }))
-          flashRow(String(ak.name))
-        }
-        toast('密钥已轮换，请立即复制新 Key（旧 Key 立即失效）', 'ok')
+        openSecretModal(ak)
+        toast('密钥已轮换，请复制新 Key', 'ok')
       } else {
         toast(res.message || '已更新', 'ok')
         flashRow(String(ak?.name || vars.body.name || vars.name))
@@ -129,7 +173,7 @@ export function ApiKeysPage() {
   const deleteMut = useMutation({
     mutationFn: (name: string) => deleteApiKey(name),
     onSuccess: (_res, name) => {
-      if (pendingSecret?.name === name) setPendingSecret(null)
+      if (pendingSecret?.name === name) closeSecretModal()
       setRevealed(prev => {
         const next = { ...prev }
         delete next[name]
@@ -146,26 +190,34 @@ export function ApiKeysPage() {
     await copyToClipboard(value, toast, `${label}已复制`)
   }
 
+  const copySecret = async () => {
+    if (!pendingSecret?.key) return
+    setSecretPaused(true)
+    await copyValue(String(pendingSecret.key), 'API Key')
+  }
+
   const acting = busy || createMut.isPending || updateMut.isPending || deleteMut.isPending
 
   const confirmRotate = (name: string) => {
     Modal.confirm({
-      title: `轮换「${name}」的密钥？`,
-      content: '旧 Key 将立即失效。新 Key 只会显示一次，请立刻复制保存。',
+      title: `轮换「${name}」？`,
+      content: '旧 Key 立即失效。新密钥只会在弹窗中显示一次。',
       okText: '确认轮换',
       okType: 'danger',
       cancelText: '取消',
+      centered: true,
       onOk: () => updateMut.mutateAsync({ name, body: { rotate: true } }),
     })
   }
 
   const confirmDelete = (name: string) => {
     Modal.confirm({
-      title: `删除 API Key「${name}」？`,
-      content: '调用方将立即失效，此操作不可恢复。',
+      title: `删除「${name}」？`,
+      content: '调用方将立即失效，且无法恢复。',
       okText: '删除',
       okType: 'danger',
       cancelText: '取消',
+      centered: true,
       onOk: () => deleteMut.mutateAsync(name),
     })
   }
@@ -224,41 +276,66 @@ export function ApiKeysPage() {
     ]
   }
 
+  const secretProgress = secretCountdown > 0
+    ? Math.round((secretCountdown / SECRET_MODAL_SECONDS) * 100)
+    : 0
+
   return (
     <div className="page api-keys-page">
-      <div className="page-header">
-        <div>
+      <section className="api-keys-hero">
+        <div className="api-keys-hero-copy">
           <div className="eyebrow">Access Control</div>
-          <h1>API Key 管理</h1>
-          <p>商业化凭证中心：一键签发、遮挡复制、权限与启停、轮换吊销。默认 read，可升为 admin。</p>
+          <h1>API Key</h1>
+          <p>
+            为脚本与外部服务签发访问凭证。默认 <strong>read</strong> 只读拉代理；
+            <strong> admin</strong> 拥有完整管理权限。密钥明文仅在创建/轮换时显示一次。
+          </p>
+          <div className="api-keys-hero-pills">
+            <span>X-API-Key</span>
+            <span>read / admin</span>
+            <span>即时吊销</span>
+          </div>
         </div>
-        <div className="toolbar">
-          <Button onClick={() => { void keysQuery.refetch(); void settings.refetch() }} disabled={keysQuery.isFetching}>
-            <RefreshCw size={15} />刷新
-          </Button>
+        <div className="api-keys-hero-stats">
+          <div>
+            <span>全部</span>
+            <strong>{stats.total}</strong>
+          </div>
+          <div>
+            <span>启用</span>
+            <strong>{stats.enabled}</strong>
+          </div>
+          <div>
+            <span>Admin</span>
+            <strong>{stats.admin}</strong>
+          </div>
+          <div>
+            <span>禁用</span>
+            <strong>{stats.disabled}</strong>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div className="extractor-flow" aria-label="API Key 使用流程">
+      <div className="extractor-flow api-keys-flow" aria-label="使用流程">
         <div className="extractor-flow-step">
           <span>1</span>
           <div>
             <strong>签发</strong>
-            <p>生成 read/admin Key</p>
+            <p>生成 read 或 admin</p>
           </div>
         </div>
         <div className="extractor-flow-step">
           <span>2</span>
           <div>
             <strong>复制使用</strong>
-            <p>请求头 X-API-Key</p>
+            <p>Header: X-API-Key</p>
           </div>
         </div>
         <div className="extractor-flow-step">
           <span>3</span>
           <div>
             <strong>轮换 / 吊销</strong>
-            <p>泄露时立即失效旧 Key</p>
+            <p>泄露时立即失效</p>
           </div>
         </div>
       </div>
@@ -271,95 +348,88 @@ export function ApiKeysPage() {
         />
       )}
 
-      <div className="settings-status-grid quality-cache-grid api-key-stats" style={{ marginBottom: 16 }}>
-        <div className="status-card"><KeyRound size={16} /><span>全部</span><strong>{stats.total}</strong></div>
-        <div className="status-card"><KeyRound size={16} /><span>启用中</span><strong>{stats.enabled}</strong></div>
-        <div className="status-card"><Shield size={16} /><span>admin</span><strong>{stats.admin}</strong></div>
-      </div>
-
-      {pendingSecret?.key && (
-        <div className="settings-alert modern-settings-alert api-key-pending-secret" role="status">
-          <div className="api-key-pending-head">
-            <strong>{pendingSecret.rotated ? '轮换后的新 Key（请立即复制）' : '新建 Key 明文（请立即复制）'}</strong>
-            <Button onClick={() => setPendingSecret(null)} title="关闭">
-              <X size={14} />
-            </Button>
-          </div>
-          <div className="mono api-key-pending-value">{pendingSecret.key}</div>
-          <div className="toolbar">
-            <Button variant="primary" onClick={() => void copyValue(String(pendingSecret.key), 'API Key')}>
-              <Copy size={14} />复制 Key
-            </Button>
-            <span className="settings-helper-text">
-              {pendingSecret.name} · {pendingSecret.role || 'read'} · 关闭后列表默认遮挡显示
-            </span>
-          </div>
-        </div>
-      )}
-
-      <div className="workspace-grid api-keys-workspace">
-        <section className="panel">
+      <div className="api-keys-workspace">
+        <section className="panel api-keys-issue-panel">
           <div className="panel-header">
             <div>
-              <div className="panel-title">签发新 Key</div>
-              <div className="panel-subtitle">自动生成密钥，无需手填。需先设置管理密码。</div>
+              <div className="panel-title">签发凭证</div>
+              <div className="panel-subtitle">自动生成安全密钥，无需手填。</div>
             </div>
-          </div>
-          <div className="field settings-form-item">
-            <label>名称（可选）</label>
-            <Input
-              className="settings-input"
-              placeholder="例如 mobile-app / ops-ci"
-              value={nameDraft}
-              onChange={e => setNameDraft(e.target.value)}
-              maxLength={64}
-            />
-          </div>
-          <div className="field settings-form-item" style={{ marginTop: 12 }}>
-            <label>角色</label>
-            <Select
-              className="settings-input"
-              value={role}
-              onChange={v => setRole(v as 'read' | 'admin')}
-              options={[
-                { value: 'read', label: 'read · 只读（推荐对外）' },
-                { value: 'admin', label: 'admin · 完整管理' },
-              ]}
-              style={{ width: '100%' }}
-            />
-          </div>
-          <div className="settings-inline-note" style={{ marginTop: 12 }}>
-            <Badge tone={passwordSet ? 'good' : 'warn'}>{passwordSet ? '管理密码已设置' : '请先设置管理密码'}</Badge>
-            <span>请求头：<code>X-API-Key: epk_…</code></span>
-          </div>
-          <div className="toolbar" style={{ marginTop: 16 }}>
-            <Button variant="primary" disabled={acting || !passwordSet} onClick={() => createMut.mutate()}>
-              <Plus size={15} />{createMut.isPending ? '生成中…' : '一键生成 API Key'}
+            <Button onClick={() => { void keysQuery.refetch(); void settings.refetch() }} disabled={keysQuery.isFetching}>
+              <RefreshCw size={15} />
             </Button>
+          </div>
+
+          <div className="api-keys-issue-form">
+            <div className="field">
+              <label>名称</label>
+              <Input
+                size="large"
+                placeholder="可选，如 mobile-app"
+                value={nameDraft}
+                onChange={e => setNameDraft(e.target.value)}
+                maxLength={64}
+                allowClear
+              />
+            </div>
+            <div className="field">
+              <label>权限角色</label>
+              <Select
+                size="large"
+                value={role}
+                onChange={v => setRole(v as 'read' | 'admin')}
+                style={{ width: '100%' }}
+                options={[
+                  { value: 'read', label: 'read · 只读（推荐对外）' },
+                  { value: 'admin', label: 'admin · 完整管理' },
+                ]}
+              />
+            </div>
+
+            <div className={`api-keys-auth-chip ${passwordSet ? 'is-ok' : 'is-warn'}`}>
+              {passwordSet ? <ShieldCheck size={15} /> : <Shield size={15} />}
+              <div>
+                <strong>{passwordSet ? '管理密码已就绪' : '需要管理密码'}</strong>
+                <span>{passwordSet ? '可安全签发 API Key' : '请先到系统设置中配置'}</span>
+              </div>
+            </div>
+
+            <Button
+              variant="primary"
+              size="large"
+              className="api-keys-issue-btn"
+              disabled={acting || !passwordSet}
+              onClick={() => createMut.mutate()}
+            >
+              <Plus size={16} />
+              {createMut.isPending ? '生成中…' : '一键生成 API Key'}
+            </Button>
+
+            <div className="api-keys-issue-hint mono">
+              curl -H &apos;X-API-Key: epk_…&apos; http://host:9091/api/extractor?...
+            </div>
           </div>
         </section>
 
-        <section className="panel">
+        <section className="panel api-keys-list-panel">
           <div className="panel-header">
             <div>
-              <div className="panel-title">已签发凭证</div>
-              <div className="panel-subtitle">主操作：复制 / 启停。更多：显示、重命名、轮换、删除。</div>
+              <div className="panel-title">凭证列表</div>
+              <div className="panel-subtitle">
+                主操作：复制 / 启停。更多：显示、重命名、轮换、删除。
+              </div>
             </div>
+            <Badge tone={keys.length ? 'info' : 'neutral'}>{keys.length} keys</Badge>
           </div>
 
           {!keys.length ? (
-            <div className="empty-state compact-empty">
+            <div className="api-keys-empty">
+              <div className="api-keys-empty-icon"><KeyRound size={28} /></div>
               <strong>还没有 API Key</strong>
-              <span>在左侧点「一键生成 API Key」，即可获得可复制的访问凭证。</span>
+              <p>在左侧生成第一把密钥。创建后会弹出可复制的明文窗口，{SECRET_MODAL_SECONDS}s 后自动关闭。</p>
             </div>
           ) : (
-            <div className="api-key-table">
-              <div className="api-key-table-head">
-                <span>名称 / 角色</span>
-                <span>密钥</span>
-                <span>状态</span>
-                <span>操作</span>
-              </div>
+            <div className="api-key-list">
               {keys.map(row => {
                 const name = String(row.name || '')
                 const full = String(row.key || '')
@@ -368,62 +438,111 @@ export function ApiKeysPage() {
                 const enabled = row.enabled !== false
                 const isAdmin = row.role === 'admin'
                 return (
-                  <div
-                    className={`api-key-table-row${highlightName === name ? ' is-highlight' : ''}${!enabled ? ' is-disabled' : ''}`}
+                  <article
                     key={name || full}
+                    className={`api-key-card${highlightName === name ? ' is-highlight' : ''}${!enabled ? ' is-disabled' : ''}`}
                   >
-                    <div className="api-key-meta">
-                      <strong title={name}>{name || '未命名'}</strong>
-                      <Select
-                        size="small"
-                        value={(isAdmin ? 'admin' : 'read') as 'read' | 'admin'}
-                        style={{ width: 108 }}
-                        disabled={acting}
-                        options={[
-                          { value: 'read', label: 'read' },
-                          { value: 'admin', label: 'admin' },
-                        ]}
-                        onChange={(v) => {
-                          if (v === row.role) return
-                          updateMut.mutate({ name, body: { role: v as 'read' | 'admin' } })
-                        }}
-                      />
+                    <div className="api-key-card-main">
+                      <div className="api-key-card-title">
+                        <strong title={name}>{name || '未命名'}</strong>
+                        <Select
+                          size="small"
+                          value={(isAdmin ? 'admin' : 'read') as 'read' | 'admin'}
+                          className="api-key-role-select"
+                          disabled={acting}
+                          options={[
+                            { value: 'read', label: 'read' },
+                            { value: 'admin', label: 'admin' },
+                          ]}
+                          onChange={(v) => {
+                            if (v === row.role) return
+                            updateMut.mutate({ name, body: { role: v as 'read' | 'admin' } })
+                          }}
+                        />
+                      </div>
+                      <div className="api-key-card-secret mono" title={show ? full : '已遮挡'}>
+                        {display || '••••••••••••'}
+                      </div>
                     </div>
-                    <div className="api-key-secret mono" title={show ? full : '已遮挡'}>{display || '••••••••'}</div>
-                    <div className="api-key-status">
-                      <Switch
-                        size="small"
-                        checked={enabled}
-                        disabled={acting}
-                        onChange={(checked) => updateMut.mutate({ name, body: { enabled: checked } })}
-                      />
-                      <span className="settings-helper-text">{enabled ? '启用' : '禁用'}</span>
-                    </div>
-                    <div className="api-key-actions toolbar">
-                      <Button onClick={() => void copyValue(full, 'API Key')} disabled={!full} title="复制完整 Key">
-                        <Copy size={14} />复制
-                      </Button>
-                      <Dropdown menu={{ items: rowMenu(row) }} trigger={['click']} placement="bottomRight">
-                        <Button disabled={acting} title="更多操作">
-                          <MoreHorizontal size={14} />更多
+                    <div className="api-key-card-side">
+                      <div className="api-key-card-toggle">
+                        <Switch
+                          checked={enabled}
+                          disabled={acting}
+                          onChange={(checked) => updateMut.mutate({ name, body: { enabled: checked } })}
+                        />
+                        <span>{enabled ? '启用' : '禁用'}</span>
+                      </div>
+                      <div className="api-key-card-actions">
+                        <Button onClick={() => void copyValue(full, 'API Key')} disabled={!full}>
+                          <Copy size={14} />复制
                         </Button>
-                      </Dropdown>
+                        <Dropdown menu={{ items: rowMenu(row) }} trigger={['click']} placement="bottomRight">
+                          <Button disabled={acting}>
+                            <MoreHorizontal size={14} />
+                          </Button>
+                        </Dropdown>
+                      </div>
                     </div>
-                  </div>
+                  </article>
                 )
               })}
             </div>
           )}
-
-          <div className="settings-inline-note" style={{ marginTop: 16 }}>
-            <span>
-              <strong>read</strong>：nodes / extractor / 状态。
-              <strong> admin</strong>：完整管理。
-              禁用、轮换、删除均立即生效。
-            </span>
-          </div>
         </section>
       </div>
+
+      {/* One-time secret reveal — modal + countdown (not a toast) */}
+      <Modal
+        open={!!pendingSecret?.key}
+        title={null}
+        footer={null}
+        centered
+        width={520}
+        destroyOnHidden
+        maskClosable={false}
+        onCancel={closeSecretModal}
+        className="api-key-secret-modal"
+      >
+        <div className="api-key-secret-modal-body">
+          <div className="api-key-secret-modal-icon">
+            <KeyRound size={22} />
+          </div>
+          <h2>{pendingSecret?.rotated ? '新密钥已轮换' : 'API Key 已创建'}</h2>
+          <p className="api-key-secret-modal-desc">
+            明文仅此一次显示。关闭或倒计时结束后无法再次查看完整密钥，请立即复制保存。
+          </p>
+          <div className="api-key-secret-meta">
+            <Badge tone={pendingSecret?.role === 'admin' ? 'warn' : 'info'}>
+              {pendingSecret?.role || 'read'}
+            </Badge>
+            <span className="mono">{pendingSecret?.name}</span>
+          </div>
+          <div className="api-key-secret-box mono">{pendingSecret?.key}</div>
+          <div className="api-key-secret-actions">
+            <Button variant="primary" size="large" onClick={() => void copySecret()}>
+              <Copy size={16} />复制密钥
+            </Button>
+            <Button size="large" onClick={closeSecretModal}>
+              完成
+            </Button>
+          </div>
+          <div className="api-key-secret-timer">
+            <Progress
+              percent={secretProgress}
+              showInfo={false}
+              size="small"
+              strokeColor="var(--primary)"
+              trailColor="color-mix(in srgb, var(--border) 70%, transparent)"
+            />
+            <span>
+              {secretPaused
+                ? '已暂停自动关闭（可继续复制）'
+                : `${secretCountdown}s 后自动关闭`}
+            </span>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         title="重命名 API Key"
@@ -434,10 +553,12 @@ export function ApiKeysPage() {
         cancelText="取消"
         confirmLoading={updateMut.isPending}
         destroyOnHidden
+        centered
       >
-        <div className="field settings-form-item">
+        <div className="field" style={{ marginTop: 8 }}>
           <label>新名称</label>
           <Input
+            size="large"
             value={renameDraft}
             maxLength={64}
             onChange={e => setRenameDraft(e.target.value)}
