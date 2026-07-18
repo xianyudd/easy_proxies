@@ -44,7 +44,6 @@ export function ApiKeysPage() {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [pendingSecret, setPendingSecret] = useState<ApiKeyMeta | null>(null)
   const [secretCountdown, setSecretCountdown] = useState(0)
-  const [secretPaused, setSecretPaused] = useState(false)
   const [busy, setBusy] = useState(false)
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -192,8 +191,8 @@ export function ApiKeysPage() {
 
   const copySecret = async () => {
     if (!pendingSecret?.key) return
-    setSecretPaused(true)
     await copyValue(String(pendingSecret.key), 'API Key')
+    closeSecretModal()
   }
 
   const acting = busy || createMut.isPending || updateMut.isPending || deleteMut.isPending
