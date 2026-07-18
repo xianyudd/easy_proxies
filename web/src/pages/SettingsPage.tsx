@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Checkbox, Input, Select } from 'antd'
-import { AlertCircle, Clock3, Database, Plus, Save, Trash2, Wifi } from 'lucide-react'
-import { getFreeProxyRefreshStatus, getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig, startFreeProxyRefresh } from '../api/settings'
+import { AlertCircle, Clock3, Copy, Database, KeyRound, Plus, Save, Trash2, Wifi } from 'lucide-react'
+import { createApiKey, deleteApiKey, getFreeProxyRefreshStatus, getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig, startFreeProxyRefresh } from '../api/settings'
+import type { ApiKeyMeta } from '../api/settings'
 import { getCloudflareCache } from '../api/cloudflare'
 import { getReputationCache } from '../api/reputation'
 import { Button } from '../components/ui/Button'
@@ -123,6 +124,9 @@ export function SettingsPage() {
   const [subsDirty, setSubsDirty] = useState(false)
   const [managementPasswordDraft, setManagementPasswordDraft] = useState('')
   const [managementPasswordClear, setManagementPasswordClear] = useState(false)
+  const [apiKeyRole, setApiKeyRole] = useState<'read' | 'admin'>('read')
+  const [apiKeyNameDraft, setApiKeyNameDraft] = useState('')
+  const [lastCreatedApiKey, setLastCreatedApiKey] = useState<ApiKeyMeta | null>(null)
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const [subscriptionRefreshState, setSubscriptionRefreshState] = useState<'idle' | 'refreshing'>('idle')
   const [subscriptionRefreshObservedRunning, setSubscriptionRefreshObservedRunning] = useState(false)
@@ -239,6 +243,43 @@ export function SettingsPage() {
     void reloadStatus.refetch()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  const createKeyMut = useMutation({
+    mutationFn: () => createApiKey({
+      name: apiKeyNameDraft.trim() || undefined,
+      role: apiKeyRole,
+      enabled: true,
+    }),
+    onSuccess: (res) => {
+      setLastCreatedApiKey(res.api_key || null)
+      setApiKeyNameDraft('')
+      toast(res.message || 'API Key 已生成（明文仅显示一次）', 'ok')
+      refreshSettingsCache()
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : '生成 API Key 失败'
+      toast(msg, 'error')
+    },
+  })
+  const deleteKeyMut = useMutation({
+    mutationFn: (name: string) => deleteApiKey(name),
+    onSuccess: (_res, name) => {
+      if (lastCreatedApiKey?.name === name) setLastCreatedApiKey(null)
+      toast(`已删除 API Key：${name}`, 'ok')
+      refreshSettingsCache()
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : '删除失败'
+      toast(msg, 'error')
+    },
+  })
+  const copyApiKey = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      toast('已复制到剪贴板', 'ok')
+    } catch {
+      toast('复制失败，请手动选中复制', 'error')
+    }
+  }
   const save = useMutation({ mutationFn: saveSettings, onSuccess:(res)=>{
     setSettingsDirty(false)
     setSubsDirty(false)
@@ -616,7 +657,103 @@ export function SettingsPage() {
           <div className={sectionClass('quality-check')} id="quality-check"><div className="panel-header"><div><div className="panel-title">质量检测定时任务</div><div className="panel-subtitle">自动刷新 CF 评分和 IP 风险缓存。</div></div><div className="toolbar"><Button onClick={() => { void refreshQualityCache() }} disabled={qualityCacheLoading}>{qualityCacheLoading ? '刷新中...' : '刷新缓存状态'}</Button></div></div><div className="settings-status-grid quality-cache-grid"><div className="status-card"><Database size={16} /><span>CF 缓存</span><strong>{cfCacheUnavailable ? '加载失败' : cfRows.length}</strong></div><div className="status-card"><Database size={16} /><span>IP 风险缓存</span><strong>{repCacheUnavailable ? '加载失败' : repRows.length}</strong></div><div className="status-card"><Clock3 size={16} /><span>CF 最近检测</span><strong>{cfCacheUnavailable ? '-' : latestCheckedAt(cfRows)}</strong></div><div className="status-card"><Clock3 size={16} /><span>IP 最近检测</span><strong>{repCacheUnavailable ? '-' : latestCheckedAt(repRows)}</strong></div></div><div className="quality-toggle-row">{toggle('启用定时检测', boolValue(quality.enabled), v=>updateDraft({...draft, quality_check:{...quality,enabled:v}}))}{toggle('包含不可用节点', quality.include_unavailable !== false, v=>updateDraft({...draft, quality_check:{...quality,include_unavailable:v}}))}{toggle('优先重试失败节点', boolValue(quality.retry_failed), v=>updateDraft({...draft, quality_check:{...quality,retry_failed:v}}))}</div><div className="form-grid-3 compact-form-grid">{input('检测间隔', String(quality.interval || '24h'), v=>updateDraft({...draft, quality_check:{...quality,interval:v}}))}{input('地区范围', String(quality.region || 'all'), v=>updateDraft({...draft, quality_check:{...quality,region:v}}))}{input('检测数量（1-500）', String(quality.count || 500), v=>updateDraft({...draft, quality_check:{...quality,count:clampNumber(v, 500, 1, 500)}}), 'number')}{input('CF 超时', String(quality.cloudflare_timeout || '5s'), v=>updateDraft({...draft, quality_check:{...quality,cloudflare_timeout:v}}))}{input('CF 并发', String(quality.cloudflare_concurrency || 24), v=>updateDraft({...draft, quality_check:{...quality,cloudflare_concurrency:Number(v)||24}}), 'number')}</div><div className="settings-inline-note">建议间隔不要低于 1 小时；检测数量上限为 500；CF 超时越短扫描越快但失败率可能升高，并发建议 24-32。</div></div>
         </section>
 
-        <section className={sectionClass('management')} id="management"><div className="panel-header"><div><div className="panel-title">管理与日志</div><div className="panel-subtitle">控制面入口和日志滚动策略。</div></div></div><div className="form-grid-2 compact-form-grid">{input('管理 listen', String(mgmt.listen || ''), v=>updateDraft({...draft, management:{...mgmt,listen:v}}))}{input('新管理 password（留空保持不变）', managementPasswordDraft, updateManagementPasswordDraft, 'password')}{input('日志 output', String(log.output || ''), v=>updateDraft({...draft, log:{...log,output:v}}))}{input('日志 max size', String(log.max_size || ''), v=>updateDraft({...draft, log:{...log,max_size:Number(v)||0}}))}</div><div className="settings-inline-note">{toggle('清空管理密码', managementPasswordClear, updateManagementPasswordClear)}<span>{mgmt.password_set ? '当前已设置管理密码；密码不会从接口回显。' : '当前未设置管理密码。'}</span></div></section>
+        <section className={sectionClass('management')} id="management">
+          <div className="panel-header"><div><div className="panel-title">管理与日志</div><div className="panel-subtitle">控制面入口、API Key 与日志策略。</div></div></div>
+          <div className="form-grid-2 compact-form-grid">
+            {input('管理 listen', String(mgmt.listen || ''), v=>updateDraft({...draft, management:{...mgmt,listen:v}}))}
+            {input('新管理 password（留空保持不变）', managementPasswordDraft, updateManagementPasswordDraft, 'password')}
+            {input('日志 output', String(log.output || ''), v=>updateDraft({...draft, log:{...log,output:v}}))}
+            {input('日志 max size', String(log.max_size || ''), v=>updateDraft({...draft, log:{...log,max_size:Number(v)||0}}))}
+          </div>
+          <div className="settings-inline-note">
+            {toggle('清空管理密码', managementPasswordClear, updateManagementPasswordClear)}
+            <span>{mgmt.password_set ? '当前已设置管理密码；密码不会从接口回显。' : '当前未设置管理密码。启用 API Key 前必须先设置密码。'}</span>
+          </div>
+
+          <div className="panel-header" style={{marginTop: 16}}>
+            <div>
+              <div className="panel-title" style={{fontSize: 15}}><KeyRound size={15} style={{verticalAlign: '-2px', marginRight: 6}} />API Key</div>
+              <div className="panel-subtitle">一键生成，无需手填。默认 read；明文仅创建时显示一次。</div>
+            </div>
+          </div>
+          <div className="form-grid-2 compact-form-grid">
+            <div className="field settings-form-item">
+              <label>名称（可选）</label>
+              <Input className="settings-input" aria-label="API Key 名称" placeholder="留空则自动命名" value={apiKeyNameDraft} onChange={e=>setApiKeyNameDraft(e.target.value)} />
+            </div>
+            <div className="field settings-form-item">
+              <label>角色</label>
+              <Select
+                aria-label="API Key 角色"
+                className="settings-input"
+                value={apiKeyRole}
+                onChange={(v)=>setApiKeyRole(v as 'read' | 'admin')}
+                options={[
+                  { value: 'read', label: 'read（只读：拉代理/查状态）' },
+                  { value: 'admin', label: 'admin（完整管理）' },
+                ]}
+              />
+            </div>
+          </div>
+          <div className="toolbar" style={{marginTop: 8, marginBottom: 8}}>
+            <Button
+              variant="primary"
+              disabled={createKeyMut.isPending || (!mgmt.password_set && !managementPasswordDraft.trim()) || managementPasswordClear}
+              title={!mgmt.password_set && !managementPasswordDraft.trim() ? '请先设置并保存管理密码' : undefined}
+              onClick={() => {
+                if (!mgmt.password_set && !managementPasswordDraft.trim()) {
+                  toast('请先设置管理密码并保存，再生成 API Key', 'error')
+                  return
+                }
+                if (!mgmt.password_set && managementPasswordDraft.trim()) {
+                  toast('请先点击「保存更改」写入管理密码，再生成 API Key', 'error')
+                  return
+                }
+                createKeyMut.mutate()
+              }}
+            >
+              <KeyRound size={15} />{createKeyMut.isPending ? '生成中...' : '一键生成 API Key'}
+            </Button>
+          </div>
+          {lastCreatedApiKey?.key && (
+            <div className="settings-alert modern-settings-alert" role="status" style={{marginBottom: 12}}>
+              <strong>新 Key 明文（仅此一次）</strong>
+              <div className="mono" style={{wordBreak: 'break-all', margin: '8px 0'}}>{lastCreatedApiKey.key}</div>
+              <div className="toolbar">
+                <Button onClick={() => void copyApiKey(String(lastCreatedApiKey.key))}><Copy size={15} />复制</Button>
+                <span className="settings-helper-text">name={lastCreatedApiKey.name} · role={lastCreatedApiKey.role} · 请求头：X-API-Key: …</span>
+              </div>
+            </div>
+          )}
+          <div className="settings-inline-note" style={{flexDirection: 'column', alignItems: 'stretch', gap: 8}}>
+            {Array.isArray(mgmt.api_keys) && (mgmt.api_keys as ApiKeyMeta[]).length ? (
+              (mgmt.api_keys as ApiKeyMeta[]).map((k) => (
+                <div key={String(k.name)} className="subscription-item modern-subscription-item" style={{alignItems: 'center'}}>
+                  <div className="subscription-index">{k.role || 'read'}</div>
+                  <div style={{flex: 1, minWidth: 0}}>
+                    <strong>{k.name}</strong>
+                    <span className="settings-helper-text" style={{marginLeft: 8}}>
+                      {k.enabled === false ? '已禁用' : '已启用'} · {k.key_set ? 'key 已设置' : '无 key'}
+                    </span>
+                  </div>
+                  <Button
+                    variant="danger"
+                    disabled={deleteKeyMut.isPending}
+                    onClick={() => {
+                      if (!k.name) return
+                      if (!window.confirm(`删除 API Key「${k.name}」？调用方将立即失效。`)) return
+                      deleteKeyMut.mutate(String(k.name))
+                    }}
+                  >
+                    <Trash2 size={15} />删除
+                  </Button>
+                </div>
+              ))
+            ) : (
+              <span>暂无 API Key。生成后可用 <code>X-API-Key</code> 调用管理 API。</span>
+            )}
+          </div>
+        </section>
       </div>
     </div>
     {hasUnsavedChanges && <div className="settings-sticky-actions" role="region" aria-label="未保存设置操作条">

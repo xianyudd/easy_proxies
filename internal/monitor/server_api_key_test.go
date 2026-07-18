@@ -479,3 +479,112 @@ func TestClearPasswordRejectedWhenAPIKeysPresent(t *testing.T) {
 		t.Fatalf("runtime password should remain secret, got %q", srv.cfg.Password)
 	}
 }
+
+func TestCreateAPIKeyAutoGenerate(t *testing.T) {
+	keys := []config.APIKeyConfig{}
+	srv := newAPIKeyTestServer(t, keys, "secret")
+	dir := t.TempDir()
+	cfgPath := dir + "/config.yaml"
+	if err := os.WriteFile(cfgPath, []byte("mode: pool\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Management: config.ManagementConfig{Password: "secret", Listen: "127.0.0.1:0"}}
+	cfg.SetFilePath(cfgPath)
+	srv.SetConfig(cfg)
+
+	// login session
+	req := httptest.NewRequest(http.MethodPost, "/api/auth", strings.NewReader(`{"password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login %d %s", rec.Code, rec.Body.String())
+	}
+	var auth map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &auth)
+	token, _ := auth["token"].(string)
+
+	// create with empty body -> default read
+	req = httptest.NewRequest(http.MethodPost, "/api/management/api-keys", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create %d %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	ak, _ := created["api_key"].(map[string]any)
+	key, _ := ak["key"].(string)
+	role, _ := ak["role"].(string)
+	name, _ := ak["name"].(string)
+	if !strings.HasPrefix(key, "epk_") || len(key) < 20 {
+		t.Fatalf("bad key %q", key)
+	}
+	if role != "read" {
+		t.Fatalf("default role=%s", role)
+	}
+	if name == "" {
+		t.Fatal("empty name")
+	}
+
+	// use generated key
+	req = httptest.NewRequest(http.MethodGet, "/api/nodes?page=1&page_size=1", nil)
+	req.Header.Set("X-API-Key", key)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("use key %d %s", rec.Code, rec.Body.String())
+	}
+
+	// list redacted
+	req = httptest.NewRequest(http.MethodGet, "/api/management/api-keys", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), key) {
+		t.Fatalf("list leaked plaintext key")
+	}
+
+	// delete
+	req = httptest.NewRequest(http.MethodDelete, "/api/management/api-keys?name="+name, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete %d %s", rec.Code, rec.Body.String())
+	}
+
+	// key no longer works
+	req = httptest.NewRequest(http.MethodGet, "/api/nodes?page=1&page_size=1", nil)
+	req.Header.Set("X-API-Key", key)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("deleted key still works: %d", rec.Code)
+	}
+}
+
+func TestCreateAPIKeyRequiresPassword(t *testing.T) {
+	srv := newAPIKeyTestServer(t, nil, "")
+	dir := t.TempDir()
+	cfgPath := dir + "/config.yaml"
+	_ = os.WriteFile(cfgPath, []byte("mode: pool\n"), 0o644)
+	cfg := &config.Config{Management: config.ManagementConfig{Listen: "127.0.0.1:0"}}
+	cfg.SetFilePath(cfgPath)
+	srv.SetConfig(cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/management/api-keys", strings.NewReader(`{"role":"read"}`))
+	req.Header.Set("Content-Type", "application/json")
+	// open mode admin principal via middleware
+	rec := httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}

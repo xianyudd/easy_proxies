@@ -3,6 +3,27 @@ import type { FreeProxyRefreshStatus, ReloadStatus, SaveSettingsResponse, Settin
 
 export function getSettings() { return api.get<SettingsResponse>('/api/settings') }
 export function saveSettings(payload: SettingsResponse) { return api.put<SaveSettingsResponse>('/api/settings', payload) }
+
+export interface ApiKeyMeta {
+  name?: string
+  role?: string
+  enabled?: boolean
+  key_set?: boolean
+  key?: string // only present on create response (one-time)
+}
+
+export function listApiKeys() {
+  return api.get<{ api_keys?: ApiKeyMeta[] }>('/api/management/api-keys')
+}
+
+/** Server generates epk_… secret; plaintext returned once in response.api_key.key */
+export function createApiKey(payload: { name?: string; role?: 'read' | 'admin'; enabled?: boolean } = {}) {
+  return api.post<{ message?: string; api_key?: ApiKeyMeta }>('/api/management/api-keys', payload)
+}
+
+export function deleteApiKey(name: string) {
+  return api.delete<{ message?: string; name?: string }>(`/api/management/api-keys?name=${encodeURIComponent(name)}`)
+}
 export function reloadCore() { return api.post<{ message?: string; started?: boolean; reload_status?: ReloadStatus }>('/api/reload') }
 export function getReloadStatus() { return api.get<ReloadStatus>('/api/reload/status') }
 export function getFreeProxyRefreshStatus() { return api.get<FreeProxyRefreshStatus>('/api/free-proxy/refresh/status') }
