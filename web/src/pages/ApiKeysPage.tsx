@@ -85,7 +85,6 @@ export function ApiKeysPage() {
     clearSecretTimer()
     setPendingSecret(null)
     setSecretCountdown(0)
-    setSecretPaused(false)
   }
 
   const openSecretModal = (ak: ApiKeyMeta | null | undefined) => {
@@ -93,7 +92,6 @@ export function ApiKeysPage() {
     clearSecretTimer()
     setPendingSecret(ak)
     setSecretCountdown(SECRET_MODAL_SECONDS)
-    setSecretPaused(false)
     if (ak.name) {
       setRevealed(prev => ({ ...prev, [String(ak.name)]: false }))
       flashRow(String(ak.name))
@@ -101,7 +99,7 @@ export function ApiKeysPage() {
   }
 
   useEffect(() => {
-    if (!pendingSecret?.key || secretPaused) {
+    if (!pendingSecret?.key) {
       clearSecretTimer()
       return
     }
@@ -111,14 +109,13 @@ export function ApiKeysPage() {
         if (left <= 1) {
           clearSecretTimer()
           setPendingSecret(null)
-          setSecretPaused(false)
           return 0
         }
         return left - 1
       })
     }, 1000)
     return clearSecretTimer
-  }, [pendingSecret?.key, pendingSecret?.name, secretPaused])
+  }, [pendingSecret?.key, pendingSecret?.name])
 
   const createMut = useMutation({
     mutationFn: async () => {
@@ -534,11 +531,7 @@ export function ApiKeysPage() {
               strokeColor="var(--primary)"
               trailColor="color-mix(in srgb, var(--border) 70%, transparent)"
             />
-            <span>
-              {secretPaused
-                ? '已暂停自动关闭（可继续复制）'
-                : `${secretCountdown}s 后自动关闭`}
-            </span>
+            <span>{secretCountdown}s 后自动关闭</span>
           </div>
         </div>
       </Modal>
