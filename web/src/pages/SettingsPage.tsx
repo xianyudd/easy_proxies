@@ -127,6 +127,8 @@ export function SettingsPage() {
   const [apiKeyRole, setApiKeyRole] = useState<'read' | 'admin'>('read')
   const [apiKeyNameDraft, setApiKeyNameDraft] = useState('')
   const [lastCreatedApiKey, setLastCreatedApiKey] = useState<ApiKeyMeta | null>(null)
+  const [lastGeneratedPassword, setLastGeneratedPassword] = useState<string | null>(null)
+  const [apiKeyBusy, setApiKeyBusy] = useState(false)
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const [subscriptionRefreshState, setSubscriptionRefreshState] = useState<'idle' | 'refreshing'>('idle')
   const [subscriptionRefreshObservedRunning, setSubscriptionRefreshObservedRunning] = useState(false)
@@ -260,6 +262,57 @@ export function SettingsPage() {
       toast(msg, 'error')
     },
   })
+  const ensurePasswordThenCreateKey = async () => {
+    if (apiKeyBusy || createKeyMut.isPending || save.isPending) return
+    if (managementPasswordClear) {
+      toast('请先取消「清空管理密码」', 'error')
+      return
+    }
+    setApiKeyBusy(true)
+    try {
+      let generatedPassword: string | null = null
+      // No saved password yet → auto-generate + save, then create key.
+      if (!mgmt.password_set) {
+        const draftPass = managementPasswordDraft.trim()
+        generatedPassword = draftPass || `epw_${crypto.getRandomValues(new Uint8Array(16)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '')}`
+        const payload = buildSettingsSavePayload({
+          draft,
+          serverSettings: settings.data,
+          management: mgmt,
+          managementPasswordDraft: generatedPassword,
+          managementPasswordClear: false,
+          subscriptions: listValue(settings.data?.subscriptions).split('\n').map(s => s.trim()).filter(Boolean),
+        })
+        // Force password into payload even if draft helpers strip empty cases.
+        payload.management = {
+          ...(payload.management as Record<string, unknown> || {}),
+          password: generatedPassword,
+        }
+        await saveSettings(payload)
+        setManagementPasswordDraft('')
+        setManagementPasswordClear(false)
+        setSettingsDirty(false)
+        if (!draftPass) setLastGeneratedPassword(generatedPassword)
+        toast(draftPass ? '管理密码已保存，正在生成 API Key…' : '已自动生成管理密码并保存，正在生成 API Key…', 'ok')
+        await settings.refetch()
+      }
+      const res = await createApiKey({
+        name: apiKeyNameDraft.trim() || undefined,
+        role: apiKeyRole,
+        enabled: true,
+      })
+      setLastCreatedApiKey(res.api_key || null)
+      setApiKeyNameDraft('')
+      toast(res.message || 'API Key 已生成（明文仅显示一次）', 'ok')
+      refreshSettingsCache()
+      void settings.refetch()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '生成失败'
+      toast(msg, 'error')
+    } finally {
+      setApiKeyBusy(false)
+    }
+  }
   const deleteKeyMut = useMutation({
     mutationFn: (name: string) => deleteApiKey(name),
     onSuccess: (_res, name) => {
@@ -667,13 +720,17 @@ export function SettingsPage() {
           </div>
           <div className="settings-inline-note">
             {toggle('清空管理密码', managementPasswordClear, updateManagementPasswordClear)}
-            <span>{mgmt.password_set ? '当前已设置管理密码；密码不会从接口回显。' : '当前未设置管理密码。启用 API Key 前必须先设置密码。'}</span>
+            <span>
+              {mgmt.password_set
+                ? '当前已设置管理密码；密码不会从接口回显。'
+                : '当前未设置管理密码。点击「一键生成 API Key」会自动生成并保存管理密码（也可先手动填写密码再生成）。'}
+            </span>
           </div>
 
           <div className="panel-header" style={{marginTop: 16}}>
             <div>
               <div className="panel-title" style={{fontSize: 15}}><KeyRound size={15} style={{verticalAlign: '-2px', marginRight: 6}} />API Key</div>
-              <div className="panel-subtitle">一键生成，无需手填。默认 read；明文仅创建时显示一次。</div>
+              <div className="panel-subtitle">一键生成，无需手填。默认 read；明文仅创建时显示一次。无密码时会自动生成密码。</div>
             </div>
           </div>
           <div className="form-grid-2 compact-form-grid">
@@ -698,29 +755,28 @@ export function SettingsPage() {
           <div className="toolbar" style={{marginTop: 8, marginBottom: 8}}>
             <Button
               variant="primary"
-              disabled={createKeyMut.isPending || (!mgmt.password_set && !managementPasswordDraft.trim()) || managementPasswordClear}
-              title={!mgmt.password_set && !managementPasswordDraft.trim() ? '请先设置并保存管理密码' : undefined}
-              onClick={() => {
-                if (!mgmt.password_set && !managementPasswordDraft.trim()) {
-                  toast('请先设置管理密码并保存，再生成 API Key', 'error')
-                  return
-                }
-                if (!mgmt.password_set && managementPasswordDraft.trim()) {
-                  toast('请先点击「保存更改」写入管理密码，再生成 API Key', 'error')
-                  return
-                }
-                createKeyMut.mutate()
-              }}
+              disabled={apiKeyBusy || createKeyMut.isPending || save.isPending || managementPasswordClear}
+              title={managementPasswordClear ? '请先取消「清空管理密码」' : (!mgmt.password_set ? '将自动生成管理密码并创建 API Key' : '生成 API Key')}
+              onClick={() => { void ensurePasswordThenCreateKey() }}
             >
-              <KeyRound size={15} />{createKeyMut.isPending ? '生成中...' : '一键生成 API Key'}
+              <KeyRound size={15} />{apiKeyBusy || createKeyMut.isPending ? '生成中...' : '一键生成 API Key'}
             </Button>
           </div>
+          {lastGeneratedPassword && (
+            <div className="settings-alert modern-settings-alert" role="status" style={{marginBottom: 12}}>
+              <strong>已自动生成管理密码（请保存，界面不会再次回显）</strong>
+              <div className="mono" style={{wordBreak: 'break-all', margin: '8px 0'}}>{lastGeneratedPassword}</div>
+              <div className="toolbar">
+                <Button onClick={() => void copyApiKey(lastGeneratedPassword)}><Copy size={15} />复制密码</Button>
+              </div>
+            </div>
+          )}
           {lastCreatedApiKey?.key && (
             <div className="settings-alert modern-settings-alert" role="status" style={{marginBottom: 12}}>
               <strong>新 Key 明文（仅此一次）</strong>
               <div className="mono" style={{wordBreak: 'break-all', margin: '8px 0'}}>{lastCreatedApiKey.key}</div>
               <div className="toolbar">
-                <Button onClick={() => void copyApiKey(String(lastCreatedApiKey.key))}><Copy size={15} />复制</Button>
+                <Button onClick={() => void copyApiKey(String(lastCreatedApiKey.key))}><Copy size={15} />复制 Key</Button>
                 <span className="settings-helper-text">name={lastCreatedApiKey.name} · role={lastCreatedApiKey.role} · 请求头：X-API-Key: …</span>
               </div>
             </div>
@@ -750,7 +806,7 @@ export function SettingsPage() {
                 </div>
               ))
             ) : (
-              <span>暂无 API Key。生成后可用 <code>X-API-Key</code> 调用管理 API。</span>
+              <span>暂无 API Key。直接点「一键生成 API Key」即可，无需手填密钥。</span>
             )}
           </div>
         </section>
