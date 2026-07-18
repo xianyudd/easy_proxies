@@ -3475,8 +3475,32 @@ html[data-theme="light"] .logbox {
 
 
 /* ===== API Keys page ===== */
-.api-keys-page .workspace-grid {
+.api-keys-page .api-keys-workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
+}
+.api-keys-page .api-key-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.api-key-pending-secret {
+  margin-bottom: 16px;
+}
+.api-key-pending-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.api-key-pending-value {
+  word-break: break-all;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 70%, #000 8%);
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  font-size: 13px;
 }
 .api-key-table {
   display: grid;
@@ -3489,7 +3513,7 @@ html[data-theme="light"] .logbox {
 .api-key-table-head,
 .api-key-table-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1.1fr) minmax(180px, 1.6fr) 88px minmax(220px, auto);
+  grid-template-columns: minmax(160px, 1.2fr) minmax(160px, 1.5fr) 100px minmax(140px, auto);
   gap: 12px;
   align-items: center;
   padding: 12px 14px;
@@ -3505,18 +3529,30 @@ html[data-theme="light"] .logbox {
 }
 .api-key-table-row {
   border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  transition: background .18s ease;
 }
 .api-key-table-row:first-of-type {
   border-top: none;
+}
+.api-key-table-row.is-highlight {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent);
+}
+.api-key-table-row.is-disabled {
+  opacity: .72;
 }
 .api-key-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 .api-key-meta strong {
   font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 .api-key-secret {
   font-size: 12.5px;
@@ -3529,14 +3565,22 @@ html[data-theme="light"] .logbox {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.api-key-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .api-key-actions {
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
 }
 @media (max-width: 980px) {
-  .api-keys-page .workspace-grid {
-    grid-template-columns: 1fr !important;
+  .api-keys-page .api-keys-workspace {
+    grid-template-columns: 1fr;
+  }
+  .api-keys-page .api-key-stats {
+    grid-template-columns: 1fr;
   }
   .api-key-table-head { display: none; }
   .api-key-table-row {

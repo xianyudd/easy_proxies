@@ -70,3 +70,7 @@ web/tsconfig.tsbuildinfo
 # Frontend build output
 internal/monitor/assets/dist/
 sdk/typescript/dist/
+
+# runtime session store (local login)
+.sessions.json
+**/.sessions.json
