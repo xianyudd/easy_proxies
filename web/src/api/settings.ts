@@ -9,8 +9,9 @@ export interface ApiKeyMeta {
   role?: string
   enabled?: boolean
   key_set?: boolean
-  key?: string // available on admin list + create response for copy
-  hint?: string // masked display form
+  key?: string
+  hint?: string
+  rotated?: boolean
 }
 
 export function listApiKeys() {
@@ -24,6 +25,16 @@ export function createApiKey(payload: { name?: string; role?: 'read' | 'admin'; 
 
 export function deleteApiKey(name: string) {
   return api.delete<{ message?: string; name?: string }>(`/api/management/api-keys?name=${encodeURIComponent(name)}`)
+}
+
+export function updateApiKey(
+  name: string,
+  payload: { name?: string; role?: 'read' | 'admin'; enabled?: boolean; rotate?: boolean },
+) {
+  return api.patch<{ message?: string; api_key?: ApiKeyMeta }>(
+    `/api/management/api-keys?name=${encodeURIComponent(name)}`,
+    payload,
+  )
 }
 
 /** Local admin helper: reveal current management password (requires admin session). */

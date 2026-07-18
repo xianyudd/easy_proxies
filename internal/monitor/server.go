@@ -3920,29 +3920,18 @@ func formatExtractorEntry(entry extractorProxyEntry, format string, reveal bool)
 }
 
 
-// handleManagementAPIKeys creates or lists management API keys.
-//   GET  — list redacted keys (admin)
-//   POST — auto-generate a key (default role=read); plaintext returned once
+// handleManagementAPIKeys manages management API keys.
+//   GET    — list keys (admin; includes secret for mask+copy UI)
+//   POST   — create auto-generated key (default role=read)
+//   PATCH  — update one key: role / enabled / rename / rotate
+//   DELETE — revoke by name
 func (s *Server) handleManagementAPIKeys(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		// Admin-only route: return full keys so WebUI can mask+copy.
-		// Do not use this shape for read-scoped endpoints.
 		s.cfgMu.RLock()
 		keys := append([]config.APIKeyConfig(nil), s.cfg.APIKeys...)
 		s.cfgMu.RUnlock()
-		out := make([]map[string]any, 0, len(keys))
-		for _, k := range keys {
-			out = append(out, map[string]any{
-				"name":    k.Name,
-				"role":    k.Role,
-				"enabled": k.EnabledValue(),
-				"key":     k.Key,
-				"key_set": strings.TrimSpace(k.Key) != "",
-				"hint":    maskAPIKeyHint(k.Key),
-			})
-		}
-		writeJSON(w, map[string]any{"api_keys": out})
+		writeJSON(w, map[string]any{"api_keys": apiKeyPublicList(keys, true)})
 	case http.MethodPost:
 		var req struct {
 			Name    string `json:"name"`
@@ -3957,13 +3946,10 @@ func (s *Server) handleManagementAPIKeys(w http.ResponseWriter, r *http.Request)
 				return
 			}
 		}
-		role := strings.ToLower(strings.TrimSpace(req.Role))
-		if role == "" {
-			role = "read"
-		}
-		if role != "read" && role != "admin" {
+		role, err := normalizeAPIKeyRole(req.Role)
+		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": "role 只能是 read 或 admin", "code": "invalid_role"})
+			writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_role"})
 			return
 		}
 		name := strings.TrimSpace(req.Name)
@@ -3991,7 +3977,6 @@ func (s *Server) handleManagementAPIKeys(w http.ResponseWriter, r *http.Request)
 			writeJSON(w, map[string]any{"error": "配置存储未初始化", "code": "config_store_uninitialized"})
 			return
 		}
-		// Reject duplicate names.
 		for _, k := range s.cfgSrc.Management.APIKeys {
 			if strings.EqualFold(strings.TrimSpace(k.Name), name) {
 				s.cfgMu.Unlock()
@@ -4000,7 +3985,6 @@ func (s *Server) handleManagementAPIKeys(w http.ResponseWriter, r *http.Request)
 				return
 			}
 		}
-		// Password required when first enabling keys.
 		if len(config.ManagementConfig{APIKeys: s.cfgSrc.Management.APIKeys}.EnabledAPIKeys()) == 0 &&
 			strings.TrimSpace(s.cfgSrc.Management.Password) == "" && enabled {
 			s.cfgMu.Unlock()
@@ -4011,38 +3995,130 @@ func (s *Server) handleManagementAPIKeys(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
+		prev := append([]config.APIKeyConfig(nil), s.cfgSrc.Management.APIKeys...)
 		s.cfgSrc.Management.APIKeys = append(s.cfgSrc.Management.APIKeys, entry)
-		if err := s.cfgSrc.NormalizeManagementAuth(); err != nil {
-			// roll back append
-			s.cfgSrc.Management.APIKeys = s.cfgSrc.Management.APIKeys[:len(s.cfgSrc.Management.APIKeys)-1]
+		if err := s.commitAPIKeysLocked(prev); err != nil {
 			s.cfgMu.Unlock()
-			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_management_auth"})
+			status, code := apiKeySaveError(err)
+			w.WriteHeader(status)
+			writeJSON(w, map[string]any{"error": err.Error(), "code": code})
 			return
 		}
-		if err := s.cfgSrc.SaveSettings(); err != nil {
-			s.cfgSrc.Management.APIKeys = s.cfgSrc.Management.APIKeys[:len(s.cfgSrc.Management.APIKeys)-1]
+		s.cfgMu.Unlock()
+		writeJSON(w, map[string]any{
+			"message": "API Key 已创建",
+			"api_key": apiKeyPublicItem(entry, true),
+		})
+	case http.MethodPatch, http.MethodPut:
+		// PATCH /api/management/api-keys?name=old-name
+		// body: { name?, role?, enabled?, rotate? }
+		oldName := strings.TrimSpace(r.URL.Query().Get("name"))
+		if oldName == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "缺少 name 查询参数", "code": "missing_name"})
+			return
+		}
+		var req struct {
+			Name    *string `json:"name"`
+			Role    *string `json:"role"`
+			Enabled *bool   `json:"enabled"`
+			Rotate  bool    `json:"rotate"`
+		}
+		if err := decodeSingleJSONBody(r, &req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "请求格式错误", "code": "invalid_request"})
+			return
+		}
+		s.cfgMu.Lock()
+		if s.cfgSrc == nil {
 			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)
-			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存失败: %v", err), "code": "save_settings_failed"})
+			writeJSON(w, map[string]any{"error": "配置存储未初始化", "code": "config_store_uninitialized"})
 			return
 		}
-		s.cfg.APIKeys = append([]config.APIKeyConfig(nil), s.cfgSrc.Management.APIKeys...)
+		idx := -1
+		for i, k := range s.cfgSrc.Management.APIKeys {
+			if strings.EqualFold(strings.TrimSpace(k.Name), oldName) {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusNotFound)
+			writeJSON(w, map[string]any{"error": "未找到该 key", "code": "not_found"})
+			return
+		}
+		entry := s.cfgSrc.Management.APIKeys[idx]
+		var rotatedPlain string
+		if req.Name != nil {
+			newName := strings.TrimSpace(*req.Name)
+			if newName == "" {
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "名称不能为空", "code": "invalid_name"})
+				return
+			}
+			for i, k := range s.cfgSrc.Management.APIKeys {
+				if i == idx {
+					continue
+				}
+				if strings.EqualFold(strings.TrimSpace(k.Name), newName) {
+					s.cfgMu.Unlock()
+					w.WriteHeader(http.StatusConflict)
+					writeJSON(w, map[string]any{"error": "名称已存在", "code": "duplicate_name"})
+					return
+				}
+			}
+			entry.Name = newName
+		}
+		if req.Role != nil {
+			role, err := normalizeAPIKeyRole(*req.Role)
+			if err != nil {
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_role"})
+				return
+			}
+			entry.Role = role
+		}
+		if req.Enabled != nil {
+			en := *req.Enabled
+			entry.Enabled = &en
+		}
+		if req.Rotate {
+			plain, err := generateAPIKeySecret()
+			if err != nil {
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusInternalServerError)
+				writeJSON(w, map[string]any{"error": "轮换失败", "code": "generate_failed"})
+				return
+			}
+			entry.Key = plain
+			rotatedPlain = plain
+		}
+		// Re-enabling keys still requires password when none enabled yet after change.
+		prev := append([]config.APIKeyConfig(nil), s.cfgSrc.Management.APIKeys...)
+		s.cfgSrc.Management.APIKeys[idx] = entry
+		if err := s.commitAPIKeysLocked(prev); err != nil {
+			s.cfgMu.Unlock()
+			status, code := apiKeySaveError(err)
+			w.WriteHeader(status)
+			writeJSON(w, map[string]any{"error": err.Error(), "code": code})
+			return
+		}
 		s.cfgMu.Unlock()
-
+		item := apiKeyPublicItem(entry, true)
+		if rotatedPlain != "" {
+			item["key"] = rotatedPlain
+			item["hint"] = maskAPIKeyHint(rotatedPlain)
+			item["rotated"] = true
+		}
 		writeJSON(w, map[string]any{
-			"message": "API Key 已创建；明文仅此一次在创建响应中强调显示",
-			"api_key": map[string]any{
-				"name":    name,
-				"role":    role,
-				"enabled": enabled,
-				"key":     plain,
-				"key_set": true,
-				"hint":    maskAPIKeyHint(plain),
-			},
+			"message": "API Key 已更新",
+			"api_key": item,
 		})
 	case http.MethodDelete:
-		// DELETE /api/management/api-keys?name=xxx
 		name := strings.TrimSpace(r.URL.Query().Get("name"))
 		if name == "" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -4072,26 +4148,83 @@ func (s *Server) handleManagementAPIKeys(w http.ResponseWriter, r *http.Request)
 			writeJSON(w, map[string]any{"error": "未找到该 key", "code": "not_found"})
 			return
 		}
+		prev := append([]config.APIKeyConfig(nil), s.cfgSrc.Management.APIKeys...)
 		s.cfgSrc.Management.APIKeys = out
-		if err := s.cfgSrc.NormalizeManagementAuth(); err != nil {
+		if err := s.commitAPIKeysLocked(prev); err != nil {
 			s.cfgMu.Unlock()
-			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_management_auth"})
+			status, code := apiKeySaveError(err)
+			w.WriteHeader(status)
+			writeJSON(w, map[string]any{"error": err.Error(), "code": code})
 			return
 		}
-		if err := s.cfgSrc.SaveSettings(); err != nil {
-			s.cfgMu.Unlock()
-			w.WriteHeader(http.StatusInternalServerError)
-			writeJSON(w, map[string]any{"error": fmt.Sprintf("保存失败: %v", err), "code": "save_settings_failed"})
-			return
-		}
-		s.cfg.APIKeys = append([]config.APIKeyConfig(nil), s.cfgSrc.Management.APIKeys...)
 		s.cfgMu.Unlock()
 		writeJSON(w, map[string]any{"message": "已删除", "name": name})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 	}
+}
+
+// commitAPIKeysLocked normalizes + saves API keys. Caller holds cfgMu write lock.
+// On failure, restores prev into cfgSrc.Management.APIKeys.
+func (s *Server) commitAPIKeysLocked(prev []config.APIKeyConfig) error {
+	if err := s.cfgSrc.NormalizeManagementAuth(); err != nil {
+		s.cfgSrc.Management.APIKeys = prev
+		return err
+	}
+	if err := s.cfgSrc.SaveSettings(); err != nil {
+		s.cfgSrc.Management.APIKeys = prev
+		return fmt.Errorf("保存失败: %w", err)
+	}
+	s.cfg.APIKeys = append([]config.APIKeyConfig(nil), s.cfgSrc.Management.APIKeys...)
+	return nil
+}
+
+func apiKeySaveError(err error) (int, string) {
+	if err == nil {
+		return http.StatusOK, ""
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "password is required") {
+		return http.StatusBadRequest, "password_required_with_api_keys"
+	}
+	if strings.Contains(msg, "保存失败") {
+		return http.StatusInternalServerError, "save_settings_failed"
+	}
+	return http.StatusBadRequest, "invalid_management_auth"
+}
+
+func normalizeAPIKeyRole(role string) (string, error) {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" {
+		return "read", nil
+	}
+	if role != "read" && role != "admin" {
+		return "", fmt.Errorf("role 只能是 read 或 admin")
+	}
+	return role, nil
+}
+
+func apiKeyPublicItem(k config.APIKeyConfig, includeSecret bool) map[string]any {
+	item := map[string]any{
+		"name":    k.Name,
+		"role":    k.Role,
+		"enabled": k.EnabledValue(),
+		"key_set": strings.TrimSpace(k.Key) != "",
+		"hint":    maskAPIKeyHint(k.Key),
+	}
+	if includeSecret {
+		item["key"] = k.Key
+	}
+	return item
+}
+
+func apiKeyPublicList(keys []config.APIKeyConfig, includeSecret bool) []map[string]any {
+	out := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, apiKeyPublicItem(k, includeSecret))
+	}
+	return out
 }
 
 // generateAPIKeySecret returns a URL-safe opaque key: epk_<48 hex chars>.

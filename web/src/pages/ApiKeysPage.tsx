@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Input, Select } from 'antd'
-import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Shield, Trash2 } from 'lucide-react'
-import { createApiKey, deleteApiKey, getSettings, listApiKeys, type ApiKeyMeta } from '../api/settings'
+import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, RotateCcw, Shield, Trash2 } from 'lucide-react'
+import { createApiKey, deleteApiKey, getSettings, listApiKeys, updateApiKey, type ApiKeyMeta } from '../api/settings'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
@@ -31,6 +31,8 @@ export function ApiKeysPage() {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [lastCreated, setLastCreated] = useState<ApiKeyMeta | null>(null)
   const [busy, setBusy] = useState(false)
+  const [editingName, setEditingName] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
 
   const passwordSet = Boolean((settings.data?.management as Record<string, unknown> | undefined)?.password_set)
   const keys = useMemo(() => {
@@ -43,6 +45,7 @@ export function ApiKeysPage() {
     read: keys.filter(k => (k.role || 'read') === 'read').length,
     admin: keys.filter(k => k.role === 'admin').length,
     enabled: keys.filter(k => k.enabled !== false).length,
+    disabled: keys.filter(k => k.enabled === false).length,
   }), [keys])
 
   const refresh = () => {
@@ -75,6 +78,33 @@ export function ApiKeysPage() {
     onError: (e) => toast(e instanceof Error ? e.message : '生成失败', 'error'),
   })
 
+  const updateMut = useMutation({
+    mutationFn: (args: { name: string; body: { name?: string; role?: 'read' | 'admin'; enabled?: boolean; rotate?: boolean } }) =>
+      updateApiKey(args.name, args.body),
+    onSuccess: (res, vars) => {
+      const ak = res.api_key
+      if (ak?.rotated && ak.key) {
+        setLastCreated(ak)
+        if (ak.name) setRevealed(prev => ({ ...prev, [String(ak.name)]: true }))
+        toast('密钥已轮换，请立即复制新 Key（旧 Key 立即失效）', 'ok')
+      } else {
+        toast(res.message || '已更新', 'ok')
+      }
+      if (vars.body.name && vars.body.name !== vars.name) {
+        setRevealed(prev => {
+          const next = { ...prev }
+          const was = next[vars.name]
+          delete next[vars.name]
+          if (was) next[vars.body.name as string] = true
+          return next
+        })
+      }
+      setEditingName(null)
+      refresh()
+    },
+    onError: (e) => toast(e instanceof Error ? e.message : '更新失败', 'error'),
+  })
+
   const deleteMut = useMutation({
     mutationFn: (name: string) => deleteApiKey(name),
     onSuccess: (_res, name) => {
@@ -95,13 +125,15 @@ export function ApiKeysPage() {
     await copyToClipboard(value, toast, `${label}已复制`)
   }
 
+  const acting = busy || createMut.isPending || updateMut.isPending || deleteMut.isPending
+
   return (
     <div className="page api-keys-page">
       <div className="page-header">
         <div>
           <div className="eyebrow">Access Control</div>
           <h1>API Key 管理</h1>
-          <p>商业化访问凭证中心：一键签发、遮挡展示、一键复制、即时吊销。默认 read，可升级为 admin。</p>
+          <p>完整凭证生命周期：签发、遮挡/复制、改角色、启用/禁用、轮换密钥、吊销。</p>
         </div>
         <div className="toolbar">
           <Button onClick={() => { void keysQuery.refetch(); void settings.refetch() }} disabled={keysQuery.isFetching}>
@@ -119,10 +151,11 @@ export function ApiKeysPage() {
       )}
 
       <div className="settings-status-grid quality-cache-grid" style={{ marginBottom: 16 }}>
-        <div className="status-card"><KeyRound size={16} /><span>全部 Key</span><strong>{stats.total}</strong></div>
+        <div className="status-card"><KeyRound size={16} /><span>全部</span><strong>{stats.total}</strong></div>
         <div className="status-card"><Shield size={16} /><span>read</span><strong>{stats.read}</strong></div>
         <div className="status-card"><Shield size={16} /><span>admin</span><strong>{stats.admin}</strong></div>
-        <div className="status-card"><KeyRound size={16} /><span>启用中</span><strong>{stats.enabled}</strong></div>
+        <div className="status-card"><KeyRound size={16} /><span>启用</span><strong>{stats.enabled}</strong></div>
+        <div className="status-card"><KeyRound size={16} /><span>禁用</span><strong>{stats.disabled}</strong></div>
       </div>
 
       <div className="workspace-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 360px) minmax(0, 1fr)', gap: 16 }}>
@@ -130,7 +163,7 @@ export function ApiKeysPage() {
           <div className="panel-header">
             <div>
               <div className="panel-title">签发新 Key</div>
-              <div className="panel-subtitle">无需手填密钥。需先在系统设置中配置管理密码。</div>
+              <div className="panel-subtitle">自动生成密钥，无需手填。需先设置管理密码。</div>
             </div>
           </div>
           <div className="field settings-form-item">
@@ -158,17 +191,17 @@ export function ApiKeysPage() {
           </div>
           <div className="settings-inline-note" style={{ marginTop: 12 }}>
             <Badge tone={passwordSet ? 'good' : 'warn'}>{passwordSet ? '管理密码已设置' : '请先设置管理密码'}</Badge>
-            <span>请求头：<code>X-API-Key: epk_…</code> · 密码可在系统设置中查看/复制</span>
+            <span>请求头：<code>X-API-Key: epk_…</code></span>
           </div>
           <div className="toolbar" style={{ marginTop: 16 }}>
-            <Button variant="primary" disabled={busy || createMut.isPending || !passwordSet} onClick={() => createMut.mutate()}>
-              <Plus size={15} />{busy || createMut.isPending ? '生成中…' : '一键生成 API Key'}
+            <Button variant="primary" disabled={acting || !passwordSet} onClick={() => createMut.mutate()}>
+              <Plus size={15} />{createMut.isPending ? '生成中…' : '一键生成 API Key'}
             </Button>
           </div>
 
           {lastCreated?.key && (
             <div className="settings-alert modern-settings-alert" role="status" style={{ marginTop: 12 }}>
-              <strong>新建 Key 明文</strong>
+              <strong>{lastCreated.rotated ? '轮换后的新 Key' : '新建 Key 明文'}</strong>
               <div className="mono" style={{ wordBreak: 'break-all', margin: '8px 0' }}>{lastCreated.key}</div>
               <div className="toolbar">
                 <Button onClick={() => void copyValue(String(lastCreated.key), 'API Key')}><Copy size={14} />复制 Key</Button>
@@ -182,7 +215,7 @@ export function ApiKeysPage() {
           <div className="panel-header">
             <div>
               <div className="panel-title">已签发凭证</div>
-              <div className="panel-subtitle">默认遮挡显示，可临时查看并一键复制。</div>
+              <div className="panel-subtitle">遮挡显示 · 改角色 · 启用/禁用 · 轮换 · 删除</div>
             </div>
           </div>
 
@@ -204,37 +237,85 @@ export function ApiKeysPage() {
                 const full = String(row.key || '')
                 const show = !!revealed[name]
                 const display = show && full ? full : maskKey(full, row.hint)
+                const enabled = row.enabled !== false
+                const isEditing = editingName === name
                 return (
                   <div className="api-key-table-row" key={name || full}>
                     <div className="api-key-meta">
-                      <strong>{name || '未命名'}</strong>
+                      {isEditing ? (
+                        <Input
+                          size="small"
+                          value={renameDraft}
+                          onChange={e => setRenameDraft(e.target.value)}
+                          onPressEnter={() => {
+                            const next = renameDraft.trim()
+                            if (!next || next === name) {
+                              setEditingName(null)
+                              return
+                            }
+                            updateMut.mutate({ name, body: { name: next } })
+                          }}
+                          style={{ maxWidth: 160 }}
+                        />
+                      ) : (
+                        <strong
+                          style={{ cursor: 'pointer' }}
+                          title="点击重命名"
+                          onClick={() => { setEditingName(name); setRenameDraft(name) }}
+                        >
+                          {name || '未命名'}
+                        </strong>
+                      )}
+                      <Select
+                        size="small"
+                        value={(row.role === 'admin' ? 'admin' : 'read') as 'read' | 'admin'}
+                        style={{ width: 110 }}
+                        disabled={acting}
+                        options={[
+                          { value: 'read', label: 'read' },
+                          { value: 'admin', label: 'admin' },
+                        ]}
+                        onChange={(v) => {
+                          if (v === row.role) return
+                          updateMut.mutate({ name, body: { role: v as 'read' | 'admin' } })
+                        }}
+                      />
                       <Badge tone={roleTone(row.role)}>{row.role || 'read'}</Badge>
                     </div>
                     <div className="api-key-secret mono" title={show ? full : '已遮挡'}>{display || '••••••••'}</div>
                     <div>
-                      <Badge tone={row.enabled === false ? 'neutral' : 'good'}>
-                        {row.enabled === false ? '禁用' : '启用'}
-                      </Badge>
+                      <Badge tone={enabled ? 'good' : 'neutral'}>{enabled ? '启用' : '禁用'}</Badge>
                     </div>
                     <div className="api-key-actions toolbar">
                       <Button
                         onClick={() => setRevealed(prev => ({ ...prev, [name]: !prev[name] }))}
-                        title={show ? '遮挡' : '显示'}
                         disabled={!full}
                       >
                         {show ? <EyeOff size={14} /> : <Eye size={14} />}
                         {show ? '遮挡' : '显示'}
                       </Button>
-                      <Button
-                        onClick={() => void copyValue(full, 'API Key')}
-                        disabled={!full}
-                        title={!full ? '当前会话无法读取明文，请重新生成' : '复制完整 Key'}
-                      >
+                      <Button onClick={() => void copyValue(full, 'API Key')} disabled={!full}>
                         <Copy size={14} />复制
                       </Button>
                       <Button
+                        disabled={acting}
+                        onClick={() => updateMut.mutate({ name, body: { enabled: !enabled } })}
+                        title={enabled ? '禁用后立即失效' : '重新启用'}
+                      >
+                        {enabled ? '禁用' : '启用'}
+                      </Button>
+                      <Button
+                        disabled={acting}
+                        onClick={() => {
+                          if (!window.confirm(`轮换「${name}」的密钥？旧 Key 将立即失效，新 Key 只显示一次。`)) return
+                          updateMut.mutate({ name, body: { rotate: true } })
+                        }}
+                      >
+                        <RotateCcw size={14} />轮换
+                      </Button>
+                      <Button
                         variant="danger"
-                        disabled={deleteMut.isPending}
+                        disabled={acting}
                         onClick={() => {
                           if (!name) return
                           if (!window.confirm(`删除 API Key「${name}」？调用方将立即失效。`)) return
@@ -252,8 +333,9 @@ export function ApiKeysPage() {
 
           <div className="settings-inline-note" style={{ marginTop: 16 }}>
             <span>
-              <strong>read</strong>：nodes / extractor / 状态查询（export、reload、reveal 禁止）。
-              <strong> admin</strong>：完整管理 API。
+              <strong>read</strong>：nodes / extractor / 状态查询。
+              <strong> admin</strong>：完整管理。
+              禁用/轮换/删除均立即生效。
             </span>
           </div>
         </section>

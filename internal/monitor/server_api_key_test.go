@@ -670,3 +670,116 @@ func TestAuthPasswordRevealAndLongSessionPersist(t *testing.T) {
 		t.Fatal("session should survive reload from disk")
 	}
 }
+
+func TestAPIKeyPatchRoleEnableRotate(t *testing.T) {
+	srv := newAPIKeyTestServer(t, nil, "secret")
+	dir := t.TempDir()
+	cfgPath := dir + "/config.yaml"
+	if err := os.WriteFile(cfgPath, []byte("mode: pool\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Management: config.ManagementConfig{Password: "secret", Listen: "127.0.0.1:0"}}
+	cfg.SetFilePath(cfgPath)
+	srv.SetConfig(cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth", strings.NewReader(`{"password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	var auth map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &auth)
+	token, _ := auth["token"].(string)
+
+	// create
+	req = httptest.NewRequest(http.MethodPost, "/api/management/api-keys", strings.NewReader(`{"name":"life","role":"read"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create %d %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	ak := created["api_key"].(map[string]any)
+	oldKey, _ := ak["key"].(string)
+
+	// promote to admin
+	req = httptest.NewRequest(http.MethodPatch, "/api/management/api-keys?name=life", strings.NewReader(`{"role":"admin"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("role %d %s", rec.Code, rec.Body.String())
+	}
+
+	// disable
+	req = httptest.NewRequest(http.MethodPatch, "/api/management/api-keys?name=life", strings.NewReader(`{"enabled":false}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable %d %s", rec.Code, rec.Body.String())
+	}
+	// disabled key cannot auth
+	req = httptest.NewRequest(http.MethodGet, "/api/nodes?page=1&page_size=1", nil)
+	req.Header.Set("X-API-Key", oldKey)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled key status=%d", rec.Code)
+	}
+
+	// re-enable
+	req = httptest.NewRequest(http.MethodPatch, "/api/management/api-keys?name=life", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enable %d %s", rec.Code, rec.Body.String())
+	}
+
+	// rotate
+	req = httptest.NewRequest(http.MethodPatch, "/api/management/api-keys?name=life", strings.NewReader(`{"rotate":true}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate %d %s", rec.Code, rec.Body.String())
+	}
+	var rotated map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &rotated)
+	newKey, _ := rotated["api_key"].(map[string]any)["key"].(string)
+	if newKey == "" || newKey == oldKey {
+		t.Fatalf("expected new key, got %q old %q", newKey, oldKey)
+	}
+	// old fails, new works
+	req = httptest.NewRequest(http.MethodGet, "/api/nodes?page=1&page_size=1", nil)
+	req.Header.Set("X-API-Key", oldKey)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("old key after rotate status=%d", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/export?scheme=http", nil)
+	req.Header.Set("X-API-Key", newKey)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("new admin key export %d %s", rec.Code, rec.Body.String())
+	}
+
+	// rename
+	req = httptest.NewRequest(http.MethodPatch, "/api/management/api-keys?name=life", strings.NewReader(`{"name":"life-2"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename %d %s", rec.Code, rec.Body.String())
+	}
+}
