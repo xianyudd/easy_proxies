@@ -3472,3 +3472,76 @@ html[data-theme="light"] .logbox {
   white-space: nowrap !important;
   border: 0 !important;
 }
+
+
+/* ===== API Keys page ===== */
+.api-keys-page .workspace-grid {
+  align-items: start;
+}
+.api-key-table {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel-2, var(--panel));
+}
+.api-key-table-head,
+.api-key-table-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.1fr) minmax(180px, 1.6fr) 88px minmax(220px, auto);
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+}
+.api-key-table-head {
+  background: color-mix(in srgb, var(--panel) 88%, var(--text) 6%);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+.api-key-table-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.api-key-table-row:first-of-type {
+  border-top: none;
+}
+.api-key-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.api-key-meta strong {
+  font-size: 14px;
+}
+.api-key-secret {
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 70%, #000 8%);
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-key-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+@media (max-width: 980px) {
+  .api-keys-page .workspace-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .api-key-table-head { display: none; }
+  .api-key-table-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .api-key-actions { justify-content: flex-start; }
+}

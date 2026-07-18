@@ -9,7 +9,8 @@ export interface ApiKeyMeta {
   role?: string
   enabled?: boolean
   key_set?: boolean
-  key?: string // only present on create response (one-time)
+  key?: string // available on admin list + create response for copy
+  hint?: string // masked display form
 }
 
 export function listApiKeys() {

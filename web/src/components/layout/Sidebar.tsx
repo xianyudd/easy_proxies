@@ -1,4 +1,4 @@
-import { Activity, FileSearch, Gauge, List, MapPin, ServerCog, Settings, ShieldCheck, Wifi } from 'lucide-react'
+import { Activity, FileSearch, Gauge, KeyRound, List, MapPin, ServerCog, Settings, ShieldCheck, Wifi } from 'lucide-react'
 import { useAppStore } from '../../store/appStore'
 
 const items = [
@@ -8,6 +8,7 @@ const items = [
   ['config', ServerCog, '节点配置'],
   ['quality', ShieldCheck, '节点质量'],
   ['status', Gauge, '运行状态'],
+  ['api-keys', KeyRound, 'API Key'],
   ['settings', Settings, '系统设置'],
   ['diagnostics', Activity, '日志诊断'],
 ] as const
@@ -19,6 +20,7 @@ const tabHashes: Record<typeof items[number][0], string> = {
   config: 'config',
   quality: 'quality',
   status: 'status',
+  'api-keys': 'api-keys',
   settings: 'settings',
   diagnostics: 'diagnostics',
 }

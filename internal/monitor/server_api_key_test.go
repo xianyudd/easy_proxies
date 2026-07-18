@@ -539,7 +539,7 @@ func TestCreateAPIKeyAutoGenerate(t *testing.T) {
 		t.Fatalf("use key %d %s", rec.Code, rec.Body.String())
 	}
 
-	// list redacted
+	// list returns key for admin (UI mask+copy); settings GET stays redacted
 	req = httptest.NewRequest(http.MethodGet, "/api/management/api-keys", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec = httptest.NewRecorder()
@@ -547,8 +547,22 @@ func TestCreateAPIKeyAutoGenerate(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list %d %s", rec.Code, rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), key) {
+		t.Fatalf("admin list should include key for copy UI: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "hint") {
+		t.Fatalf("admin list should include hint: %s", rec.Body.String())
+	}
+	// settings GET still redacts raw keys
+	req = httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings %d %s", rec.Code, rec.Body.String())
+	}
 	if strings.Contains(rec.Body.String(), key) {
-		t.Fatalf("list leaked plaintext key")
+		t.Fatalf("settings leaked plaintext key")
 	}
 
 	// delete

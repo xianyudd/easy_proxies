@@ -3919,10 +3919,23 @@ func formatExtractorEntry(entry extractorProxyEntry, format string, reveal bool)
 func (s *Server) handleManagementAPIKeys(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		// Admin-only route: return full keys so WebUI can mask+copy.
+		// Do not use this shape for read-scoped endpoints.
 		s.cfgMu.RLock()
 		keys := append([]config.APIKeyConfig(nil), s.cfg.APIKeys...)
 		s.cfgMu.RUnlock()
-		writeJSON(w, map[string]any{"api_keys": redactAPIKeys(keys)})
+		out := make([]map[string]any, 0, len(keys))
+		for _, k := range keys {
+			out = append(out, map[string]any{
+				"name":    k.Name,
+				"role":    k.Role,
+				"enabled": k.EnabledValue(),
+				"key":     k.Key,
+				"key_set": strings.TrimSpace(k.Key) != "",
+				"hint":    maskAPIKeyHint(k.Key),
+			})
+		}
+		writeJSON(w, map[string]any{"api_keys": out})
 	case http.MethodPost:
 		var req struct {
 			Name    string `json:"name"`
@@ -4011,13 +4024,14 @@ func (s *Server) handleManagementAPIKeys(w http.ResponseWriter, r *http.Request)
 		s.cfgMu.Unlock()
 
 		writeJSON(w, map[string]any{
-			"message": "API Key 已创建；明文仅此一次返回",
+			"message": "API Key 已创建；明文仅此一次在创建响应中强调显示",
 			"api_key": map[string]any{
 				"name":    name,
 				"role":    role,
 				"enabled": enabled,
-				"key":     plain, // one-time reveal
+				"key":     plain,
 				"key_set": true,
+				"hint":    maskAPIKeyHint(plain),
 			},
 		})
 	case http.MethodDelete:
@@ -5811,11 +5825,24 @@ func redactAPIKeys(keys []config.APIKeyConfig) []map[string]any {
 			"name":    k.Name,
 			"role":    k.Role,
 			"enabled": k.EnabledValue(),
-			// never return raw key material over the API
+			// never return raw key material over the settings API
 			"key_set": strings.TrimSpace(k.Key) != "",
+			"hint":    maskAPIKeyHint(k.Key),
 		})
 	}
 	return out
+}
+
+// maskAPIKeyHint shows a short prefix/suffix for UI display without full secret.
+func maskAPIKeyHint(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	if len(key) <= 12 {
+		return strings.Repeat("•", len(key))
+	}
+	return key[:8] + strings.Repeat("•", 8) + key[len(key)-4:]
 }
 
 // mergeAPIKeys applies an incoming settings PUT list against currently stored

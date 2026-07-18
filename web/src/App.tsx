@@ -13,6 +13,7 @@ import { NodeConfigPage } from './pages/NodeConfigPage'
 import { QualityPage } from './pages/QualityPage'
 import { StatusPage } from './pages/StatusPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { ApiKeysPage } from './pages/ApiKeysPage'
 import { DiagnosticsPage } from './pages/DiagnosticsPage'
 
 const hashTabMap = new Map<string, ReturnType<typeof useAppStore.getState>['activeTab']>([
@@ -25,6 +26,8 @@ const hashTabMap = new Map<string, ReturnType<typeof useAppStore.getState>['acti
   ['#node-config', 'config'],
   ['#quality', 'quality'],
   ['#status', 'status'],
+  ['#api-keys', 'api-keys'],
+  ['#apikeys', 'api-keys'],
   ['#settings', 'settings'],
   ['#subscriptions', 'settings'],
   ['#free-proxy', 'settings'],
@@ -95,6 +98,7 @@ export default function App() {
     {activeTab === 'config' && <NodeConfigPage />}
     {activeTab === 'quality' && <QualityPage />}
     {activeTab === 'status' && <StatusPage />}
+    {activeTab === 'api-keys' && <ApiKeysPage />}
     {activeTab === 'settings' && <SettingsPage />}
     {activeTab === 'diagnostics' && <DiagnosticsPage />}
   </AppLayout>
