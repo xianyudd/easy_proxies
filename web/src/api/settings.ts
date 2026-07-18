@@ -25,6 +25,11 @@ export function createApiKey(payload: { name?: string; role?: 'read' | 'admin'; 
 export function deleteApiKey(name: string) {
   return api.delete<{ message?: string; name?: string }>(`/api/management/api-keys?name=${encodeURIComponent(name)}`)
 }
+
+/** Local admin helper: reveal current management password (requires admin session). */
+export function getManagementPassword() {
+  return api.get<{ password_set?: boolean; password?: string }>('/api/auth/password')
+}
 export function reloadCore() { return api.post<{ message?: string; started?: boolean; reload_status?: ReloadStatus }>('/api/reload') }
 export function getReloadStatus() { return api.get<ReloadStatus>('/api/reload/status') }
 export function getFreeProxyRefreshStatus() { return api.get<FreeProxyRefreshStatus>('/api/free-proxy/refresh/status') }

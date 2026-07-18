@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Input, Select } from 'antd'
 import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Shield, Trash2 } from 'lucide-react'
-import { createApiKey, deleteApiKey, getSettings, listApiKeys, saveSettings, type ApiKeyMeta } from '../api/settings'
+import { createApiKey, deleteApiKey, getSettings, listApiKeys, type ApiKeyMeta } from '../api/settings'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
@@ -30,7 +30,6 @@ export function ApiKeysPage() {
   const [role, setRole] = useState<'read' | 'admin'>('read')
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [lastCreated, setLastCreated] = useState<ApiKeyMeta | null>(null)
-  const [lastPassword, setLastPassword] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const passwordSet = Boolean((settings.data?.management as Record<string, unknown> | undefined)?.password_set)
@@ -53,13 +52,8 @@ export function ApiKeysPage() {
 
   const createMut = useMutation({
     mutationFn: async () => {
-      // Auto-provision management password if missing so one click is enough.
       if (!passwordSet) {
-        const generated = `epw_${crypto.getRandomValues(new Uint8Array(16)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '')}`
-        await saveSettings({
-          management: { password: generated },
-        } as never)
-        setLastPassword(generated)
+        throw new Error('请先在「系统设置 → 管理与日志」设置管理密码（可查看/复制），再生成 API Key')
       }
       return createApiKey({
         name: nameDraft.trim() || undefined,
@@ -136,7 +130,7 @@ export function ApiKeysPage() {
           <div className="panel-header">
             <div>
               <div className="panel-title">签发新 Key</div>
-              <div className="panel-subtitle">无需手填密钥。未设管理密码时会自动生成。</div>
+              <div className="panel-subtitle">无需手填密钥。需先在系统设置中配置管理密码。</div>
             </div>
           </div>
           <div className="field settings-form-item">
@@ -163,22 +157,15 @@ export function ApiKeysPage() {
             />
           </div>
           <div className="settings-inline-note" style={{ marginTop: 12 }}>
-            <Badge tone={passwordSet ? 'good' : 'warn'}>{passwordSet ? '管理密码已设置' : '将自动生成管理密码'}</Badge>
-            <span>请求头：<code>X-API-Key: epk_…</code></span>
+            <Badge tone={passwordSet ? 'good' : 'warn'}>{passwordSet ? '管理密码已设置' : '请先设置管理密码'}</Badge>
+            <span>请求头：<code>X-API-Key: epk_…</code> · 密码可在系统设置中查看/复制</span>
           </div>
           <div className="toolbar" style={{ marginTop: 16 }}>
-            <Button variant="primary" disabled={busy || createMut.isPending} onClick={() => createMut.mutate()}>
+            <Button variant="primary" disabled={busy || createMut.isPending || !passwordSet} onClick={() => createMut.mutate()}>
               <Plus size={15} />{busy || createMut.isPending ? '生成中…' : '一键生成 API Key'}
             </Button>
           </div>
 
-          {lastPassword && (
-            <div className="settings-alert modern-settings-alert" role="status" style={{ marginTop: 16 }}>
-              <strong>已自动生成 WebUI 管理密码</strong>
-              <div className="mono" style={{ wordBreak: 'break-all', margin: '8px 0' }}>{lastPassword}</div>
-              <Button onClick={() => void copyValue(lastPassword, '管理密码')}><Copy size={14} />复制密码</Button>
-            </div>
-          )}
           {lastCreated?.key && (
             <div className="settings-alert modern-settings-alert" role="status" style={{ marginTop: 12 }}>
               <strong>新建 Key 明文</strong>

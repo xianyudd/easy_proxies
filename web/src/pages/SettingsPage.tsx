@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Checkbox, Input, Select } from 'antd'
-import { AlertCircle, Clock3, Database, Plus, Save, Trash2, Wifi } from 'lucide-react'
-import { getFreeProxyRefreshStatus, getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig, startFreeProxyRefresh } from '../api/settings'
+import { AlertCircle, Clock3, Copy, Database, Eye, EyeOff, Plus, Save, Trash2, Wifi } from 'lucide-react'
+import { getFreeProxyRefreshStatus, getManagementPassword, getReloadStatus, getSettings, saveSettings, getSubscriptionStatus, saveSubscriptionConfig, startFreeProxyRefresh } from '../api/settings'
 import { getCloudflareCache } from '../api/cloudflare'
 import { getReputationCache } from '../api/reputation'
 import { Button } from '../components/ui/Button'
@@ -123,6 +123,9 @@ export function SettingsPage() {
   const [subsDirty, setSubsDirty] = useState(false)
   const [managementPasswordDraft, setManagementPasswordDraft] = useState('')
   const [managementPasswordClear, setManagementPasswordClear] = useState(false)
+  const [revealedPassword, setRevealedPassword] = useState<string | null>(null)
+  const [passwordVisible, setPasswordVisible] = useState(false)
+  const [passwordBusy, setPasswordBusy] = useState(false)
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const [subscriptionRefreshState, setSubscriptionRefreshState] = useState<'idle' | 'refreshing'>('idle')
   const [subscriptionRefreshObservedRunning, setSubscriptionRefreshObservedRunning] = useState(false)
@@ -312,6 +315,47 @@ export function SettingsPage() {
     updateDirtyState(draft, nextPasswordDraft, value)
     setManagementPasswordClear(value)
     if (value) setManagementPasswordDraft('')
+  }
+  const revealManagementPassword = async () => {
+    if (passwordBusy) return
+    setPasswordBusy(true)
+    try {
+      if (revealedPassword !== null && passwordVisible) {
+        setPasswordVisible(false)
+        return
+      }
+      if (revealedPassword !== null) {
+        setPasswordVisible(true)
+        return
+      }
+      const res = await getManagementPassword()
+      const pass = String(res.password || '')
+      setRevealedPassword(pass)
+      setPasswordVisible(true)
+      if (!pass) toast('当前未设置管理密码', 'info')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '读取密码失败', 'error')
+    } finally {
+      setPasswordBusy(false)
+    }
+  }
+  const copyManagementPassword = async () => {
+    try {
+      let pass = revealedPassword
+      if (pass === null) {
+        const res = await getManagementPassword()
+        pass = String(res.password || '')
+        setRevealedPassword(pass)
+      }
+      if (!pass) {
+        toast('当前未设置管理密码', 'error')
+        return
+      }
+      await navigator.clipboard.writeText(pass)
+      toast('管理密码已复制', 'ok')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '复制失败', 'error')
+    }
   }
   const updateSubsDraft = (next: string) => {
     setSubs(next)
@@ -628,10 +672,27 @@ export function SettingsPage() {
             {toggle('清空管理密码', managementPasswordClear, updateManagementPasswordClear)}
             <span>
               {mgmt.password_set
-                ? '当前已设置管理密码；密码不会从接口回显。'
-                : '当前未设置管理密码。点击「一键生成 API Key」会自动生成并保存管理密码（也可先手动填写密码再生成）。'}
+                ? '当前已设置管理密码。登录会话约 30 天且重启后仍有效；可在下方查看/复制。'
+                : '当前未设置管理密码。本地可保持空密码；启用 API Key 前需要先设置密码。'}
             </span>
           </div>
+          {!!mgmt.password_set && (
+            <div className="settings-inline-note" style={{ marginTop: 10, flexWrap: 'wrap', gap: 8 }}>
+              <Badge tone="good">已设置</Badge>
+              <span className="mono" style={{ minWidth: 180 }}>
+                {passwordVisible && revealedPassword !== null
+                  ? (revealedPassword || '（空）')
+                  : '••••••••••••••••'}
+              </span>
+              <Button onClick={() => { void revealManagementPassword() }} disabled={passwordBusy}>
+                {passwordVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                {passwordVisible ? '隐藏' : (passwordBusy ? '读取中…' : '查看密码')}
+              </Button>
+              <Button onClick={() => { void copyManagementPassword() }}>
+                <Copy size={14} />复制密码
+              </Button>
+            </div>
+          )}
 
           <div className="settings-inline-note" style={{marginTop: 16}}>
             <Badge tone="info">API Key</Badge>

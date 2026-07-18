@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/nodesource"
@@ -600,5 +601,72 @@ func TestCreateAPIKeyRequiresPassword(t *testing.T) {
 	srv.handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthPasswordRevealAndLongSessionPersist(t *testing.T) {
+	srv := newAPIKeyTestServer(t, nil, "secret-pass")
+	dir := t.TempDir()
+	cfgPath := dir + "/config.yaml"
+	if err := os.WriteFile(cfgPath, []byte("mode: pool\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Management: config.ManagementConfig{Password: "secret-pass", Listen: "127.0.0.1:0"}}
+	cfg.SetFilePath(cfgPath)
+	srv.SetConfig(cfg)
+
+	// login
+	req := httptest.NewRequest(http.MethodPost, "/api/auth", strings.NewReader(`{"password":"secret-pass"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login %d %s", rec.Code, rec.Body.String())
+	}
+	var auth map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &auth)
+	token, _ := auth["token"].(string)
+	if token == "" {
+		t.Fatal("empty token")
+	}
+	// cookie max-age roughly 30d
+	cookies := rec.Result().Cookies()
+	found := false
+	for _, c := range cookies {
+		if c.Name == "session_token" {
+			found = true
+			if c.MaxAge < int((20 * 24 * time.Hour).Seconds()) {
+				t.Fatalf("expected long max-age, got %d", c.MaxAge)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing session cookie")
+	}
+	// session file written
+	store := dir + "/.sessions.json"
+	if _, err := os.Stat(store); err != nil {
+		t.Fatalf("session store missing: %v", err)
+	}
+
+	// reveal password
+	req = httptest.NewRequest(http.MethodGet, "/api/auth/password", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("password %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "secret-pass") {
+		t.Fatalf("password not returned: %s", rec.Body.String())
+	}
+
+	// reload sessions from disk into a new map via load
+	srv.sessionMu.Lock()
+	srv.sessions = make(map[string]*Session)
+	srv.sessionMu.Unlock()
+	srv.loadSessionsFromDisk()
+	if !srv.validateSession(token) {
+		t.Fatal("session should survive reload from disk")
 	}
 }

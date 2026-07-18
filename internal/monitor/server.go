@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -483,9 +484,10 @@ type Server struct {
 	logger  *log.Logger
 
 	// Session management
-	sessionMu  sync.RWMutex
-	sessions   map[string]*Session
-	sessionTTL time.Duration
+	sessionMu   sync.RWMutex
+	sessions    map[string]*Session
+	sessionTTL  time.Duration
+	sessionPath string // durable session file path; set under cfgMu only
 
 	// Concurrency control
 	probeSem *semaphore.Weighted
@@ -537,7 +539,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 		mgr:        mgr,
 		logger:     logger,
 		sessions:   make(map[string]*Session),
-		sessionTTL: 24 * time.Hour,
+		sessionTTL: 30 * 24 * time.Hour, // long-lived local login; persisted on disk
 		probeSem:   semaphore.NewWeighted(maxConcurrentProbes),
 		repChecker: reputation.NewChecker(),
 		cfChecker:  cloudflarecheck.NewChecker(),
@@ -545,13 +547,15 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	s.applyQualityRuntimeConfig(nil)
 	s.qualitySvc = quality.NewService(quality.ServiceOptions{TargetSource: newMonitorQualityTargetSource(s), QuickRunner: monitorQualityRunner{s: s}, CloudflareRunner: monitorQualityRunner{s: s}, ReputationRunner: monitorQualityRunner{s: s}})
 
-	// Start session cleanup goroutine
+	// Restore durable sessions (if any) then start cleanup.
+	s.loadSessionsFromDisk()
 	go s.cleanupExpiredSessions()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/auth", s.handleAuth)
 	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("/api/auth/password", s.withRole("admin", s.handleAuthPassword))
 
 	// read: list/fetch proxies and status. admin: full management.
 	// withRole("admin") is a superset of read; withAuth remains as admin alias.
@@ -627,6 +631,7 @@ func (s *Server) SetConfig(cfg *config.Config) {
 		}
 	}
 	s.cfgSrc = cfg
+	s.updateSessionStorePathLocked()
 	if cfg != nil {
 		s.cfg.ExternalIP = cfg.ExternalIP
 		s.cfg.ProbeTarget = cfg.Management.ProbeTarget
@@ -644,6 +649,8 @@ func (s *Server) SetConfig(cfg *config.Config) {
 		}
 	}
 	s.cfgMu.Unlock()
+	// Path is known now (volume-backed config dir); restore durable sessions.
+	s.loadSessionsFromDisk()
 	s.applyQualityRuntimeConfig(cfg)
 	go s.ensureQualityScheduler()
 }
@@ -4929,6 +4936,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.cfg.Password = s.cfgSrc.Management.Password
 			s.sessionMu.Lock()
 			s.sessions = make(map[string]*Session)
+			s.persistSessionsLocked()
 			s.sessionMu.Unlock()
 		}
 		if req.Management != nil && (hasManagementAPIKeys || hasManagementCORSOrigins) {
@@ -5758,7 +5766,7 @@ func (s *Server) generateSessionToken() (string, error) {
 	return hex.EncodeToString(tokenBytes), nil
 }
 
-// createSession creates a new session with expiration.
+// createSession creates a new session with expiration and persists it.
 func (s *Server) createSession() (*Session, error) {
 	token, err := s.generateSessionToken()
 	if err != nil {
@@ -5774,6 +5782,7 @@ func (s *Server) createSession() (*Session, error) {
 
 	s.sessionMu.Lock()
 	s.sessions[token] = session
+	s.persistSessionsLocked()
 	s.sessionMu.Unlock()
 
 	return session, nil
@@ -5781,22 +5790,21 @@ func (s *Server) createSession() (*Session, error) {
 
 // validateSession checks if a session token is valid and not expired.
 func (s *Server) validateSession(token string) bool {
-	s.sessionMu.RLock()
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
 	session, exists := s.sessions[token]
-	s.sessionMu.RUnlock()
-
 	if !exists {
 		return false
 	}
-
-	// Check if expired
 	if time.Now().After(session.ExpiresAt) {
-		s.sessionMu.Lock()
 		delete(s.sessions, token)
-		s.sessionMu.Unlock()
+		s.persistSessionsLocked()
 		return false
 	}
-
 	return true
 }
 
@@ -5808,13 +5816,112 @@ func (s *Server) cleanupExpiredSessions() {
 	for range ticker.C {
 		now := time.Now()
 		s.sessionMu.Lock()
+		changed := false
 		for token, session := range s.sessions {
 			if now.After(session.ExpiresAt) {
 				delete(s.sessions, token)
+				changed = true
 			}
+		}
+		if changed {
+			s.persistSessionsLocked()
 		}
 		s.sessionMu.Unlock()
 	}
+}
+
+func (s *Server) sessionStorePath() string {
+	// Intentionally lock-free: path is written under cfgMu, read as a plain string.
+	// Never take cfgMu here — callers may already hold sessionMu.
+	if s != nil && strings.TrimSpace(s.sessionPath) != "" {
+		return s.sessionPath
+	}
+	return ".sessions.json"
+}
+
+func (s *Server) updateSessionStorePathLocked() {
+	// Caller must hold cfgMu.
+	if s == nil || s.cfgSrc == nil {
+		return
+	}
+	if p := strings.TrimSpace(s.cfgSrc.FilePath()); p != "" {
+		s.sessionPath = filepath.Join(filepath.Dir(p), ".sessions.json")
+	}
+}
+
+type sessionDiskFile struct {
+	Sessions []Session `json:"sessions"`
+}
+
+func (s *Server) loadSessionsFromDisk() {
+	path := s.sessionStorePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var file sessionDiskFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		if s.logger != nil {
+			s.logger.Printf("session store load failed: %v", err)
+		}
+		return
+	}
+	now := time.Now()
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	for i := range file.Sessions {
+		sess := file.Sessions[i]
+		if strings.TrimSpace(sess.Token) == "" || now.After(sess.ExpiresAt) {
+			continue
+		}
+		s.sessions[sess.Token] = &Session{
+			Token:     sess.Token,
+			CreatedAt: sess.CreatedAt,
+			ExpiresAt: sess.ExpiresAt,
+		}
+	}
+}
+
+// persistSessionsLocked writes sessions to disk. Caller must hold sessionMu.
+func (s *Server) persistSessionsLocked() {
+	path := s.sessionStorePath()
+	file := sessionDiskFile{Sessions: make([]Session, 0, len(s.sessions))}
+	now := time.Now()
+	for _, sess := range s.sessions {
+		if sess == nil || now.After(sess.ExpiresAt) {
+			continue
+		}
+		file.Sessions = append(file.Sessions, *sess)
+	}
+	data, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0o600)
+}
+
+// handleAuthPassword returns the current management password for local admin use.
+// GET only; requires admin session/API key. Intended for local operators who forget
+// the password stored in config.yaml.
+func (s *Server) handleAuthPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
+		return
+	}
+	s.cfgMu.RLock()
+	pass := ""
+	if s.cfgSrc != nil {
+		pass = s.cfgSrc.Management.Password
+	}
+	if pass == "" {
+		pass = s.cfg.Password
+	}
+	s.cfgMu.RUnlock()
+	writeJSON(w, map[string]any{
+		"password_set": strings.TrimSpace(pass) != "",
+		"password":     pass,
+	})
 }
 
 
