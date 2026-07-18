@@ -112,13 +112,32 @@ type AndroidProxyConfig struct {
 	RegionPorts map[string]uint16 `yaml:"region_ports"`
 }
 
+// APIKeyConfig is a long-lived management API credential with a role.
+// role: "read" (fetch/list) or "admin" (full management).
+type APIKeyConfig struct {
+	Name    string `yaml:"name" json:"name"`
+	Key     string `yaml:"key" json:"key"`
+	Role    string `yaml:"role" json:"role"` // read | admin
+	Enabled *bool  `yaml:"enabled" json:"enabled,omitempty"`
+}
+
+// EnabledValue returns whether the key is active. Default true when unset.
+func (k APIKeyConfig) EnabledValue() bool {
+	if k.Enabled == nil {
+		return true
+	}
+	return *k.Enabled
+}
+
 // ManagementConfig controls the monitoring HTTP endpoint.
 type ManagementConfig struct {
-	Enabled        *bool  `yaml:"enabled"`
-	Listen         string `yaml:"listen"`
-	ProbeTarget    string `yaml:"probe_target"`
-	Password       string `yaml:"password"`         // WebUI 访问密码，为空则不需要密码
-	ClashAPIListen string `yaml:"clash_api_listen"` // sing-box Clash API 监听地址
+	Enabled        *bool          `yaml:"enabled"`
+	Listen         string         `yaml:"listen"`
+	ProbeTarget    string         `yaml:"probe_target"`
+	Password       string         `yaml:"password"`          // WebUI 访问密码，为空则不需要密码
+	ClashAPIListen string         `yaml:"clash_api_listen"`  // sing-box Clash API 监听地址
+	APIKeys        []APIKeyConfig `yaml:"api_keys"`          // 外部调用长期密钥；有启用项时未鉴权请求一律 401
+	CORSOrigins    []string       `yaml:"cors_origins"`      // 非空时启用 CORS；空=不发 CORS 头
 }
 
 // SubscriptionRefreshConfig controls subscription auto-refresh and reload settings.
@@ -764,6 +783,9 @@ func (c *Config) normalize() error {
 		defaultEnabled := true
 		c.Management.Enabled = &defaultEnabled
 	}
+	if err := c.normalizeManagementAPIKeys(); err != nil {
+		return err
+	}
 
 	if c.SubscriptionRefresh.Interval <= 0 {
 		c.SubscriptionRefresh.Interval = 1 * time.Hour
@@ -995,6 +1017,9 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 		defaultEnabled := true
 		c.Management.Enabled = &defaultEnabled
 	}
+	if err := c.normalizeManagementAPIKeys(); err != nil {
+		return err
+	}
 	if c.SubscriptionRefresh.Interval <= 0 {
 		c.SubscriptionRefresh.Interval = 1 * time.Hour
 	}
@@ -1136,6 +1161,100 @@ func (c *Config) ManagementEnabled() bool {
 		return true
 	}
 	return *c.Management.Enabled
+}
+
+// NormalizeManagementAuth re-validates api_keys / cors_origins after settings PUT.
+func (c *Config) NormalizeManagementAuth() error {
+	return c.normalizeManagementAPIKeys()
+}
+
+// normalizeManagementAPIKeys trims, validates, and deduplicates API keys.
+func (c *Config) normalizeManagementAPIKeys() error {
+	if c == nil {
+		return nil
+	}
+	if len(c.Management.APIKeys) == 0 {
+		// Trim empty cors origin entries only.
+		c.Management.CORSOrigins = normalizeCORSOrigins(c.Management.CORSOrigins)
+		return nil
+	}
+	seen := make(map[string]string, len(c.Management.APIKeys))
+	out := make([]APIKeyConfig, 0, len(c.Management.APIKeys))
+	for i, raw := range c.Management.APIKeys {
+		key := strings.TrimSpace(raw.Key)
+		if key == "" {
+			// Skip blank slots so partial YAML edits don't break load.
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(raw.Role))
+		if role == "" {
+			role = "read"
+		}
+		if role != "read" && role != "admin" {
+			return fmt.Errorf("management.api_keys[%d]: invalid role %q (use read or admin)", i, raw.Role)
+		}
+		name := strings.TrimSpace(raw.Name)
+		if name == "" {
+			name = fmt.Sprintf("key-%d", i+1)
+		}
+		if prev, ok := seen[key]; ok {
+			return fmt.Errorf("management.api_keys: duplicate key shared by %q and %q", prev, name)
+		}
+		seen[key] = name
+		enabled := raw.Enabled
+		out = append(out, APIKeyConfig{
+			Name:    name,
+			Key:     key,
+			Role:    role,
+			Enabled: enabled,
+		})
+	}
+	c.Management.APIKeys = out
+	c.Management.CORSOrigins = normalizeCORSOrigins(c.Management.CORSOrigins)
+	// Enabled API keys force auth on /api/*. Without a WebUI password there is no
+	// safe browser login path (minting an admin session would be unauthenticated).
+	if len(c.Management.EnabledAPIKeys()) > 0 && strings.TrimSpace(c.Management.Password) == "" {
+		return fmt.Errorf("management.password is required when management.api_keys are enabled")
+	}
+	return nil
+}
+
+func normalizeCORSOrigins(origins []string) []string {
+	if len(origins) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(origins))
+	seen := make(map[string]struct{}, len(origins))
+	for _, o := range origins {
+		o = strings.TrimSpace(o)
+		if o == "" {
+			continue
+		}
+		if _, ok := seen[o]; ok {
+			continue
+		}
+		seen[o] = struct{}{}
+		out = append(out, o)
+	}
+	return out
+}
+
+// EnabledAPIKeys returns enabled management API keys (copy).
+func (c ManagementConfig) EnabledAPIKeys() []APIKeyConfig {
+	if len(c.APIKeys) == 0 {
+		return nil
+	}
+	out := make([]APIKeyConfig, 0, len(c.APIKeys))
+	for _, k := range c.APIKeys {
+		if !k.EnabledValue() {
+			continue
+		}
+		if strings.TrimSpace(k.Key) == "" {
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
 }
 
 // loadNodesFromFile reads a nodes file where each line is a proxy URI

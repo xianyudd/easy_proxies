@@ -85,7 +85,23 @@ management:
   listen: 0.0.0.0:9091                               # 监听地址
   clash_api_listen: 127.0.0.1:9092                   # sing-box Clash API 地址；隔离测试可改高端口
   probe_target: http://cp.cloudflare.com/generate_204  # 健康检查目标
-  password: ""                                       # WebUI 访问密码，为空则不需要密码
+  password: ""                                       # WebUI 访问密码；配置 api_keys 时必须非空
+  # 外部长期密钥。配置任一 enabled key 后，未带 key/session 的请求一律 401。
+  # 同时必须设置 management.password（WebUI 登录）；禁止无密码 mint session。
+  # role: read = 只读（nodes/export 禁止/extractor 默认脱敏）；admin = 完整管理 API
+  # 请求头: X-API-Key: <key>  或  Authorization: Bearer <key>
+  api_keys: []
+  #  - name: local-script
+  #    key: "epk_replace_me_read"
+  #    role: read
+  #    enabled: true
+  #  - name: ops
+  #    key: "epk_replace_me_admin"
+  #    role: admin
+  #    enabled: true
+  # 浏览器跨域时填写来源；空=不发 CORS 头
+  cors_origins: []
+  #  - "https://app.example.com"
 
 # ───────────────────────────────────────────────────────────────
 # DNS 配置（用于节点域名解析，尤其是 VMess）

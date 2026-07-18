@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -27,6 +28,10 @@ type Config struct {
 	ProxyPassword  string // 代理池的密码（用于导出）
 	ExternalIP     string // 外部 IP 地址，用于导出时替换 0.0.0.0
 	SkipCertVerify bool   // 全局跳过 SSL 证书验证
+	// APIKeys / CORSOrigins mirror management config for auth middleware.
+	// Updated via SetConfig when YAML reloads.
+	APIKeys     []config.APIKeyConfig
+	CORSOrigins []string
 }
 
 // NodeInfo is static metadata about a proxy entry.

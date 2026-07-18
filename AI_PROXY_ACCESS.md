@@ -96,10 +96,27 @@ http://127.0.0.1:13002
 
 推荐 AI Agent 使用 `/api/extractor`，不要自己解析订阅。
 
+### API Key（对外推荐）
+
+在 `management.api_keys` 配置长期密钥后，请求需带：
+
+```bash
+curl -sH 'X-API-Key: epk_xxx' \
+  'http://127.0.0.1:9091/api/extractor?region=jp&mode=multi-port&format=json&count=10'
+```
+
+| role | 权限 |
+|------|------|
+| `read` | nodes / export / extractor / 状态查询 |
+| `admin` | 完整管理（settings、reload、probe、refresh…） |
+
+WebUI 仍用 `management.password` 登录拿 session。有 enabled api_keys 时，匿名访问一律 401。
+
 ### 获取日本 multi-port 节点列表
 
 ```bash
-curl -s 'http://127.0.0.1:9091/api/extractor?region=jp&mode=multi-port&format=json&count=10'
+curl -sH 'X-API-Key: epk_xxx' \
+  'http://127.0.0.1:9091/api/extractor?region=jp&mode=multi-port&format=json&count=10'
 ```
 
 ### 获取日本无认证 Android 入口

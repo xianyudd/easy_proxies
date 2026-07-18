@@ -192,7 +192,8 @@ curl -x http://user-jp:pass@127.0.0.1:1221 http://example.com
 - `GET|POST|PUT|DELETE /api/nodes/config[...]`
 - `POST /api/reload`
 
-`management.password` 为空时，Web/API 不要求登录。
+`management.password` 为空且未配置 `api_keys` 时，Web/API 不要求登录。
+配置了 `management.api_keys` 后，请求需带 `X-API-Key` 或 session；`role=read` 只读，`role=admin` 完整管理。
 
 ## 重要运行说明
 

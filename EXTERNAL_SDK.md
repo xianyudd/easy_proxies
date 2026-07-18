@@ -42,8 +42,10 @@ pip install -e /path/to/easy_proxies/sdk/python
 ```ts
 import { EasyProxiesClient } from '@easy-proxies/sdk'
 
+// 推荐：长期 API Key（config management.api_keys）
 const client = new EasyProxiesClient({
   baseUrl: 'http://127.0.0.1:9091',
+  apiKey: process.env.EASY_PROXIES_API_KEY,
 })
 
 const proxies = await client.getProxyUrls({
@@ -60,8 +62,12 @@ console.log(proxies)
 
 ```python
 from easy_proxies_sdk import EasyProxiesClient
+import os
 
-client = EasyProxiesClient(base_url="http://127.0.0.1:9091")
+client = EasyProxiesClient(
+    base_url="http://127.0.0.1:9091",
+    api_key=os.environ.get("EASY_PROXIES_API_KEY"),
+)
 
 proxies = client.get_proxy_urls(
     region="jp",
@@ -132,7 +138,41 @@ await client.checkReputation({
 })
 ```
 
-## 管理端有密码时
+## 管理端鉴权
+
+### 推荐：API Key
+
+```yaml
+# config.yaml
+management:
+  password: "webui-secret"
+  api_keys:
+    - name: app-read
+      key: "epk_xxx"
+      role: read   # read | admin
+      enabled: true
+```
+
+```ts
+const client = new EasyProxiesClient({
+  baseUrl: 'http://127.0.0.1:9091',
+  apiKey: process.env.EASY_PROXIES_API_KEY,
+})
+// 无需 login
+const proxies = await client.getProxyUrls({ reveal: true })
+```
+
+```python
+client = EasyProxiesClient(
+    base_url="http://127.0.0.1:9091",
+    api_key=os.environ["EASY_PROXIES_API_KEY"],
+)
+proxies = client.get_proxy_urls(reveal=True)
+```
+
+`read` 只能拉代理/查状态；`admin` 可写（reload、settings、probe…）。请求头：`X-API-Key` 或 `Authorization: Bearer <key>`。
+
+### 兼容：WebUI 密码 + session
 
 TypeScript:
 
@@ -171,6 +211,7 @@ proxies = client.get_proxy_urls(reveal=True)
 ## 安全建议
 
 - 其他项目和 Easy Proxies 在同机时，优先使用 `127.0.0.1:9091`。
-- 跨机器接入时，只在内网开放管理 API。
-- 不要公网暴露无密码的 `9091`。
+- 跨机器：设 password + 只发 `role: read` key；`external_ip` 填公网地址；前挂 TLS。
+- 配置了 `api_keys` 后，匿名访问管理 API 一律 401。
+- 不要公网暴露无密码/无 key 的 `9091`。
 - 只有确实需要代理凭据时才传 `reveal: true`。

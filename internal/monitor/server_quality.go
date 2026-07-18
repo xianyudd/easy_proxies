@@ -124,6 +124,9 @@ func (s *Server) handleQualityJobItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "cancel" {
+		if !requireAdmin(w, r) {
+			return
+		}
 		if err := s.qualitySvc.CancelJob(id); err != nil && !errors.Is(err, quality.ErrJobTerminal) {
 			w.WriteHeader(http.StatusNotFound)
 			writeJSON(w, map[string]any{"error": err.Error(), "code": "not_found"})

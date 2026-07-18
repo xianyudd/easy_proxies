@@ -342,7 +342,8 @@ Features:
 - **Console**: Real-time application logs (last 1000 lines, WebSocket streaming)
 - **Settings**: All configuration options editable from the browser, changes persist to `config.yaml`
 
-When `management.password` is empty, authentication is bypassed.
+When `management.password` is empty and no `api_keys` are configured, authentication is bypassed.
+With `management.api_keys`, callers must send `X-API-Key` (or a WebUI session). `role: read` is read-only; `role: admin` is full management.
 
 ## Management API
 

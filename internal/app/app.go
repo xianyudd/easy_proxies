@@ -35,6 +35,8 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		ProxyUsername: proxyUsername,
 		ProxyPassword: proxyPassword,
 		ExternalIP:    cfg.ExternalIP,
+		APIKeys:       append([]config.APIKeyConfig(nil), cfg.Management.APIKeys...),
+		CORSOrigins:   append([]string(nil), cfg.Management.CORSOrigins...),
 	}
 
 	// Create and start BoxManager

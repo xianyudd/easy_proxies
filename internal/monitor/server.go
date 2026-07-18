@@ -216,19 +216,33 @@ func settingsPositiveInt(value, fallback int) int {
 }
 
 func settingsFreeProxySources(sources []nodesource.SourceConfig) []map[string]any {
+	return settingsFreeProxySourcesForRole(sources, true)
+}
+
+// settingsFreeProxySourcesForRole redacts source URL/file for non-admin callers
+// (they may embed tokens). Metadata (name/format/enabled) stays visible.
+func settingsFreeProxySourcesForRole(sources []nodesource.SourceConfig, isAdmin bool) []map[string]any {
 	out := make([]map[string]any, 0, len(sources))
 	for _, source := range sources {
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"name":           source.Name,
-			"url":            source.URL,
-			"file":           source.File,
 			"format":         source.Format,
 			"default_scheme": source.DefaultScheme,
 			"enabled":        source.Enabled,
 			"timeout":        positiveDurationString(source.Timeout),
 			"max_nodes":      source.MaxNodes,
 			"max_bytes":      source.MaxBytes,
-		})
+		}
+		if isAdmin {
+			entry["url"] = source.URL
+			entry["file"] = source.File
+		} else {
+			entry["url"] = ""
+			entry["file"] = ""
+			entry["url_set"] = strings.TrimSpace(source.URL) != ""
+			entry["file_set"] = strings.TrimSpace(source.File) != ""
+		}
+		out = append(out, entry)
 	}
 	return out
 }
@@ -538,32 +552,37 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/auth", s.handleAuth)
 	mux.HandleFunc("/api/auth/status", s.handleAuthStatus)
-	mux.HandleFunc("/api/settings", s.withAuth(s.handleSettings))
-	mux.HandleFunc("/api/nodes", s.withAuth(s.handleNodes))
-	mux.HandleFunc("/api/nodes/config", s.withAuth(s.handleConfigNodes))
-	mux.HandleFunc("/api/nodes/config/", s.withAuth(s.handleConfigNodeItem))
-	mux.HandleFunc("/api/nodes/probe-all", s.withAuth(s.handleProbeAll))
-	mux.HandleFunc("/api/nodes/", s.withAuth(s.handleNodeAction))
-	mux.HandleFunc("/api/debug", s.withAuth(s.handleDebug))
-	mux.HandleFunc("/api/export", s.withAuth(s.handleExport))
-	mux.HandleFunc("/api/extractor", s.withAuth(s.handleExtractor))
-	mux.HandleFunc("/api/reputation/ip", s.withAuth(s.handleReputationIP))
-	mux.HandleFunc("/api/reputation/check", s.withAuth(s.handleReputationCheck))
-	mux.HandleFunc("/api/reputation/cache", s.withAuth(s.handleReputationCache))
-	mux.HandleFunc("/api/cloudflare/check", s.withAuth(s.handleCloudflareCheck))
-	mux.HandleFunc("/api/cloudflare/cache", s.withAuth(s.handleCloudflareCache))
-	mux.HandleFunc("/api/quality/jobs", s.withAuth(s.handleQualityJobs))
-	mux.HandleFunc("/api/quality/jobs/", s.withAuth(s.handleQualityJobItem))
-	mux.HandleFunc("/api/subscription/status", s.withAuth(s.handleSubscriptionStatus))
-	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
-	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
-	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
-	mux.HandleFunc("/api/reload/status", s.withAuth(s.handleReloadStatus))
-	mux.HandleFunc("/api/free-proxy/refresh", s.withAuth(s.handleFreeProxyRefresh))
-	mux.HandleFunc("/api/free-proxy/refresh/status", s.withAuth(s.handleFreeProxyRefreshStatus))
-	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
-	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
-	s.handler = defaultAPIContentType(mux)
+
+	// read: list/fetch proxies and status. admin: full management.
+	// withRole("admin") is a superset of read; withAuth remains as admin alias.
+	// settings: GET is read (keys redacted); PUT requires admin (enforced in handler).
+	mux.HandleFunc("/api/settings", s.withRole("read", s.handleSettings))
+	mux.HandleFunc("/api/nodes", s.withRole("read", s.handleNodes))
+	mux.HandleFunc("/api/nodes/config", s.withRole("admin", s.handleConfigNodes))
+	mux.HandleFunc("/api/nodes/config/", s.withRole("admin", s.handleConfigNodeItem))
+	mux.HandleFunc("/api/nodes/probe-all", s.withRole("admin", s.handleProbeAll))
+	mux.HandleFunc("/api/nodes/", s.withRole("admin", s.handleNodeAction))
+	mux.HandleFunc("/api/debug", s.withRole("read", s.handleDebug))
+	mux.HandleFunc("/api/export", s.withRole("admin", s.handleExport))
+	mux.HandleFunc("/api/extractor", s.withRole("read", s.handleExtractor))
+	mux.HandleFunc("/api/reputation/ip", s.withRole("read", s.handleReputationIP))
+	mux.HandleFunc("/api/reputation/check", s.withRole("admin", s.handleReputationCheck))
+	mux.HandleFunc("/api/reputation/cache", s.withRole("read", s.handleReputationCache))
+	mux.HandleFunc("/api/cloudflare/check", s.withRole("admin", s.handleCloudflareCheck))
+	mux.HandleFunc("/api/cloudflare/cache", s.withRole("read", s.handleCloudflareCache))
+	mux.HandleFunc("/api/quality/jobs", s.withRole("admin", s.handleQualityJobs))
+	// Job status/results are read; cancel is admin-checked inside the handler.
+	mux.HandleFunc("/api/quality/jobs/", s.withRole("read", s.handleQualityJobItem))
+	mux.HandleFunc("/api/subscription/status", s.withRole("read", s.handleSubscriptionStatus))
+	mux.HandleFunc("/api/subscription/refresh", s.withRole("admin", s.handleSubscriptionRefresh))
+	mux.HandleFunc("/api/subscription/config", s.withRole("admin", s.handleSubscriptionConfig))
+	mux.HandleFunc("/api/reload", s.withRole("admin", s.handleReload))
+	mux.HandleFunc("/api/reload/status", s.withRole("read", s.handleReloadStatus))
+	mux.HandleFunc("/api/free-proxy/refresh", s.withRole("admin", s.handleFreeProxyRefresh))
+	mux.HandleFunc("/api/free-proxy/refresh/status", s.withRole("read", s.handleFreeProxyRefreshStatus))
+	mux.HandleFunc("/api/traffic", s.withRole("read", s.handleTraffic))
+	mux.HandleFunc("/api/logs", s.withRole("read", s.handleLogs))
+	s.handler = s.withCORS(defaultAPIContentType(mux))
 	s.srv = &http.Server{Addr: cfg.Listen, Handler: s.handler}
 	return s
 }
@@ -612,6 +631,8 @@ func (s *Server) SetConfig(cfg *config.Config) {
 		s.cfg.ProbeTarget = cfg.Management.ProbeTarget
 		s.cfg.Password = cfg.Management.Password
 		s.cfg.SkipCertVerify = cfg.SkipCertVerify
+		s.cfg.APIKeys = append([]config.APIKeyConfig(nil), cfg.Management.APIKeys...)
+		s.cfg.CORSOrigins = append([]string(nil), cfg.Management.CORSOrigins...)
 		// Sync proxy credentials based on mode
 		if cfg.Mode == "multi-port" || cfg.Mode == "hybrid" {
 			s.cfg.ProxyUsername = cfg.MultiPort.Username
@@ -1453,6 +1474,12 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
+	// Upstream node URIs embed protocol secrets; only admin (session/open/admin key)
+	// sees them. Read API keys get an empty uri field.
+	revealURI := true
+	if p, ok := principalFromRequest(r); ok && !roleAtLeast(p.Role, "admin") {
+		revealURI = false
+	}
 	q := r.URL.Query()
 	if !nodesPagedMode(q) {
 		// Legacy compatibility: plain /api/nodes and unknown-only query params
@@ -1462,7 +1489,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		allNodes := s.mgr.Snapshot()
 		regionStats, regionHealthy, sourceStats := nodeStats(allNodes)
 		writeJSON(w, map[string]any{
-			"nodes":          filtered,
+			"nodes":          redactNodeSnapshots(filtered, revealURI),
 			"total_nodes":    len(allNodes),
 			"region_stats":   regionStats,
 			"region_healthy": regionHealthy,
@@ -1527,7 +1554,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]any{
-		"nodes":          filtered,
+		"nodes":          redactNodeSnapshots(filtered, revealURI),
 		"total_nodes":    len(allNodes),
 		"total_filtered": totalFiltered,
 		"page":           page,
@@ -1541,6 +1568,20 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"region_healthy": regionHealthy,
 		"source_stats":   sourceStats,
 	})
+}
+
+// redactNodeSnapshots returns a shallow copy of nodes with URI cleared when
+// revealURI is false (read-scoped callers).
+func redactNodeSnapshots(nodes []Snapshot, revealURI bool) []Snapshot {
+	if revealURI || len(nodes) == 0 {
+		return nodes
+	}
+	out := make([]Snapshot, len(nodes))
+	copy(out, nodes)
+	for i := range out {
+		out[i].URI = ""
+	}
+	return out
 }
 
 func nodeSummaryCounts(nodes []Snapshot) (visible int, available int, portRange map[string]int) {
@@ -2189,36 +2230,172 @@ func decodeSingleJSONReader(reader io.Reader, v any) error {
 	return nil
 }
 
-// withAuth 认证中间件，如果配置了密码则需要验证
-func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// 如果没有配置密码，直接放行
-		if s.cfg.Password == "" {
-			next(w, r)
-			return
-		}
+// authPrincipal is the authenticated caller for a request.
+type authPrincipal struct {
+	Role string // read | admin
+	Via  string // api_key | session | open
+	Name string // api key name when Via=api_key
+}
 
-		// 检查 Cookie 中的 session token
-		cookie, err := r.Cookie("session_token")
-		if err == nil && s.validateSession(cookie.Value) {
-			next(w, r)
-			return
-		}
+type authContextKey struct{}
 
-		// 检查 Authorization header (Bearer token)
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "" {
-			token := strings.TrimPrefix(authHeader, "Bearer ")
+func principalFromRequest(r *http.Request) (authPrincipal, bool) {
+	if r == nil {
+		return authPrincipal{}, false
+	}
+	p, ok := r.Context().Value(authContextKey{}).(authPrincipal)
+	return p, ok
+}
+
+func withPrincipal(r *http.Request, p authPrincipal) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), authContextKey{}, p))
+}
+
+func roleAtLeast(have, need string) bool {
+	if need == "read" {
+		return have == "read" || have == "admin"
+	}
+	return have == "admin"
+}
+
+// authenticate resolves the caller. When enabled API keys exist, anonymous open
+// mode is disabled even if management.password is empty.
+func (s *Server) authenticate(r *http.Request) (authPrincipal, bool) {
+	s.cfgMu.RLock()
+	password := s.cfg.Password
+	keys := config.ManagementConfig{APIKeys: s.cfg.APIKeys}.EnabledAPIKeys()
+	s.cfgMu.RUnlock()
+
+	// 1) X-API-Key — explicit machine credential
+	if apiKey := strings.TrimSpace(r.Header.Get("X-API-Key")); apiKey != "" {
+		if p, ok := matchAPIKey(keys, apiKey); ok {
+			return p, true
+		}
+		// Only hard-fail when API keys are configured. Otherwise ignore a
+		// stale/bogus header so open mode and session cookies still work.
+		if len(keys) > 0 {
+			return authPrincipal{}, false
+		}
+	}
+
+	// 2) Authorization: Bearer <api_key|session>
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		if token != "" && !strings.EqualFold(token, authHeader) {
+			if p, ok := matchAPIKey(keys, token); ok {
+				return p, true
+			}
 			if s.validateSession(token) {
-				next(w, r)
+				return authPrincipal{Role: "admin", Via: "session"}, true
+			}
+			// Invalid bearer: fall through to cookie. A proxy may inject a stale
+			// Authorization header while the WebUI session cookie is still valid.
+		}
+	}
+
+	// 3) session cookie (WebUI)
+	if cookie, err := r.Cookie("session_token"); err == nil && s.validateSession(cookie.Value) {
+		return authPrincipal{Role: "admin", Via: "session"}, true
+	}
+
+	// 4) open mode only when no password and no enabled API keys
+	if password == "" && len(keys) == 0 {
+		return authPrincipal{Role: "admin", Via: "open"}, true
+	}
+	return authPrincipal{}, false
+}
+
+func matchAPIKey(keys []config.APIKeyConfig, provided string) (authPrincipal, bool) {
+	provided = strings.TrimSpace(provided)
+	if provided == "" {
+		return authPrincipal{}, false
+	}
+	for _, k := range keys {
+		if !secureCompareStrings(k.Key, provided) {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(k.Role))
+		if role != "admin" {
+			role = "read"
+		}
+		return authPrincipal{Role: role, Via: "api_key", Name: k.Name}, true
+	}
+	return authPrincipal{}, false
+}
+
+// withAuth is an alias for admin-level access (WebUI / full management).
+func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
+	return s.withRole("admin", next)
+}
+
+// withRole requires authentication and a minimum role (read or admin).
+func (s *Server) withRole(need string, next http.HandlerFunc) http.HandlerFunc {
+	need = strings.ToLower(strings.TrimSpace(need))
+	if need != "admin" {
+		need = "read"
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := s.authenticate(r)
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			writeJSON(w, map[string]any{"error": "未授权，请先登录", "code": "unauthorized"})
+			return
+		}
+		if !roleAtLeast(p.Role, need) {
+			w.WriteHeader(http.StatusForbidden)
+			writeJSON(w, map[string]any{"error": "权限不足", "code": "forbidden"})
+			return
+		}
+		next(w, withPrincipal(r, p))
+	}
+}
+
+// withCORS adds optional CORS headers when management.cors_origins is set.
+func (s *Server) withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.cfgMu.RLock()
+		origins := append([]string(nil), s.cfg.CORSOrigins...)
+		s.cfgMu.RUnlock()
+
+		if len(origins) > 0 {
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			if origin != "" && corsOriginAllowed(origins, origin) {
+				// Always echo the request Origin (never literal "*") so
+				// Access-Control-Allow-Credentials: true is browser-legal.
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, X-API-Key, Content-Type")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 		}
+		next.ServeHTTP(w, r)
+	})
+}
 
-		// 未授权
-		w.WriteHeader(http.StatusUnauthorized)
-		writeJSON(w, map[string]any{"error": "未授权，请先登录", "code": "unauthorized"})
+func corsOriginAllowed(allowed []string, origin string) bool {
+	for _, o := range allowed {
+		if o == "*" || o == origin {
+			return true
+		}
 	}
+	return false
+}
+
+// requireAdmin rejects non-admin principals. Used inside mixed GET/write handlers
+// that are registered at read scope so GET stays readable.
+func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	p, ok := principalFromRequest(r)
+	if ok && roleAtLeast(p.Role, "admin") {
+		return true
+	}
+	w.WriteHeader(http.StatusForbidden)
+	writeJSON(w, map[string]any{"error": "权限不足", "code": "forbidden"})
+	return false
 }
 
 // handleAuthStatus reports whether the current browser already has a valid
@@ -2231,24 +2408,26 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
 		return
 	}
-	if s.cfg.Password == "" {
+	s.cfgMu.RLock()
+	password := s.cfg.Password
+	hasKeys := len(config.ManagementConfig{APIKeys: s.cfg.APIKeys}.EnabledAPIKeys()) > 0
+	s.cfgMu.RUnlock()
+	if password == "" && !hasKeys {
 		writeJSON(w, map[string]any{
 			"authenticated":     true,
 			"password_required": false,
 			"no_password":       true,
+			"api_keys_required": false,
 		})
 		return
 	}
-	authenticated := false
-	if cookie, err := r.Cookie("session_token"); err == nil && s.validateSession(cookie.Value) {
-		authenticated = true
-	} else if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		authenticated = s.validateSession(token)
-	}
+	p, ok := s.authenticate(r)
 	writeJSON(w, map[string]any{
-		"authenticated":     authenticated,
-		"password_required": true,
+		"authenticated":     ok,
+		"password_required": password != "",
+		"api_keys_required": hasKeys && password == "",
+		"role":              p.Role,
+		"via":               p.Via,
 	})
 }
 
@@ -2260,8 +2439,23 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 如果没有配置密码，直接返回成功（不需要token）
-	if s.cfg.Password == "" {
+	s.cfgMu.RLock()
+	password := s.cfg.Password
+	hasKeys := len(config.ManagementConfig{APIKeys: s.cfg.APIKeys}.EnabledAPIKeys()) > 0
+	s.cfgMu.RUnlock()
+
+	// No password configured.
+	if password == "" {
+		if hasKeys {
+			// Config validation should prevent this; refuse rather than mint admin.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			writeJSON(w, map[string]any{
+				"error": "已配置 api_keys 但未设置 management.password，WebUI 无法登录；请设置密码或使用 API Key",
+				"code":  "password_required_with_api_keys",
+			})
+			return
+		}
+		// Fully open management surface — no session needed.
 		writeJSON(w, map[string]any{"message": "无需密码", "no_password": true})
 		return
 	}
@@ -2277,7 +2471,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 使用 constant-time 比较防止时序攻击
-	if !secureCompareStrings(req.Password, s.cfg.Password) {
+	if !secureCompareStrings(req.Password, password) {
 		// 添加随机延迟防止暴力破解
 		time.Sleep(time.Duration(100+mathrand.Intn(200)) * time.Millisecond)
 		w.WriteHeader(http.StatusUnauthorized)
@@ -2322,6 +2516,15 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		writeJSON(w, map[string]any{"error": "method not allowed", "code": "method_not_allowed"})
+		return
+	}
+
+	// Export always embeds live proxy credentials. Route is withRole(admin);
+	// keep an in-handler guard for direct unit-test calls that inject a
+	// non-admin principal. Missing principal (open/unit-test) is allowed.
+	if p, ok := principalFromRequest(r); ok && !roleAtLeast(p.Role, "admin") {
+		w.WriteHeader(http.StatusForbidden)
+		writeJSON(w, map[string]any{"error": "权限不足，export 需 admin key 或 session", "code": "forbidden"})
 		return
 	}
 
@@ -2489,6 +2692,9 @@ func (s *Server) handleCloudflareCache(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"data": items, "count": len(items)})
 	case http.MethodPost, http.MethodDelete:
+		if !requireAdmin(w, r) {
+			return
+		}
 		s.cfChecker.ClearCache()
 		writeJSON(w, map[string]any{"message": "cache cleared"})
 	default:
@@ -2840,6 +3046,9 @@ func (s *Server) handleReputationCache(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"data": items, "count": len(items)})
 	case http.MethodDelete, http.MethodPost:
+		if !requireAdmin(w, r) {
+			return
+		}
 		s.repChecker.ClearCache()
 		writeJSON(w, map[string]any{"message": "cache cleared"})
 	default:
@@ -3177,6 +3386,26 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": "invalid reveal", "code": "invalid_bool"})
 		return
 	}
+	// Credential reveal is admin-only. Read keys always get masked entries.
+	if reveal {
+		if p, ok := principalFromRequest(r); !ok || !roleAtLeast(p.Role, "admin") {
+			// Missing principal = open/unit-test path without middleware: allow reveal
+			// only when management is fully open (no password, no keys).
+			if ok {
+				w.WriteHeader(http.StatusForbidden)
+				writeJSON(w, map[string]any{"error": "reveal=true 需要 admin key 或 session", "code": "forbidden"})
+				return
+			}
+			s.cfgMu.RLock()
+			open := s.cfg.Password == "" && len(config.ManagementConfig{APIKeys: s.cfg.APIKeys}.EnabledAPIKeys()) == 0
+			s.cfgMu.RUnlock()
+			if !open {
+				w.WriteHeader(http.StatusForbidden)
+				writeJSON(w, map[string]any{"error": "reveal=true 需要 admin key 或 session", "code": "forbidden"})
+				return
+			}
+		}
+	}
 
 	count := 1
 	if rawCount := strings.TrimSpace(r.URL.Query().Get("count")); rawCount != "" {
@@ -3284,6 +3513,10 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	canReveal := true
+	if p, ok := principalFromRequest(r); ok {
+		canReveal = roleAtLeast(p.Role, "admin")
+	}
 	writeJSON(w, map[string]any{
 		"region":                region,
 		"mode":                  mode,
@@ -3294,7 +3527,7 @@ func (s *Server) handleExtractor(w http.ResponseWriter, r *http.Request) {
 		"output_count":          len(entries),
 		"warnings":              warnings,
 		"entries":               entries,
-		"supports_reveal":       true,
+		"supports_reveal":       canReveal,
 		"copy_requires_confirm": reveal,
 	})
 }
@@ -3687,7 +3920,19 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// Read full config for extended fields
 		s.cfgMu.RLock()
 		cfg := s.cfgSrc
+		apiKeys := append([]config.APIKeyConfig(nil), s.cfg.APIKeys...)
+		corsOrigins := append([]string(nil), s.cfg.CORSOrigins...)
 		s.cfgMu.RUnlock()
+
+		principal, ok := principalFromRequest(r)
+		// Missing principal only happens for direct unit-test handler calls
+		// (no withRole middleware). Treat as open admin for GET redaction only;
+		// PUT uses a stricter check below.
+		if !ok {
+			principal = authPrincipal{Role: "admin", Via: "open"}
+			ok = true
+		}
+		isAdmin := ok && roleAtLeast(principal.Role, "admin")
 
 		resp := map[string]any{
 			"external_ip":      extIP,
@@ -3745,17 +3990,23 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 		if cfg != nil {
 			resp["mode"] = settingsCoreMode(cfg.Mode)
+			listenerPass := ""
+			multiPass := ""
+			if isAdmin {
+				listenerPass = cfg.Listener.Password
+				multiPass = cfg.MultiPort.Password
+			}
 			resp["listener"] = map[string]any{
 				"address":  cfg.Listener.Address,
 				"port":     cfg.Listener.Port,
 				"username": cfg.Listener.Username,
-				"password": cfg.Listener.Password,
+				"password": listenerPass,
 			}
 			resp["multi_port"] = map[string]any{
 				"address":   cfg.MultiPort.Address,
 				"base_port": cfg.MultiPort.BasePort,
 				"username":  cfg.MultiPort.Username,
-				"password":  cfg.MultiPort.Password,
+				"password":  multiPass,
 			}
 			resp["android_proxy"] = map[string]any{
 				"enabled":      cfg.AndroidProxy.Enabled,
@@ -3769,9 +4020,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"blacklist_duration": positiveDurationString(cfg.Pool.BlacklistDuration),
 			}
 			resp["management"] = map[string]any{
-				"listen":       cfg.Management.Listen,
-				"password":     "",
-				"password_set": strings.TrimSpace(cfg.Management.Password) != "",
+				"listen":        cfg.Management.Listen,
+				"password":      "",
+				"password_set":  strings.TrimSpace(cfg.Management.Password) != "",
+				"api_keys":      redactAPIKeys(apiKeys),
+				"cors_origins":  corsOrigins,
 			}
 			resp["geoip"] = map[string]any{
 				"enabled":              cfg.GeoIP.Enabled,
@@ -3781,15 +4034,26 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"auto_update_enabled":  cfg.GeoIP.AutoUpdateEnabled,
 				"auto_update_interval": positiveDurationString(cfg.GeoIP.AutoUpdateInterval),
 			}
-			resp["subscriptions"] = cfg.Subscriptions
+			// Subscription URLs are secrets — only admin sees them.
+			if isAdmin {
+				resp["subscriptions"] = cfg.Subscriptions
+			} else {
+				resp["subscriptions"] = []string{}
+				resp["subscriptions_count"] = len(cfg.Subscriptions)
+			}
 			resp["subscription_refresh"] = map[string]any{
 				"enabled":  cfg.SubscriptionRefresh.Enabled,
 				"interval": positiveDurationString(cfg.SubscriptionRefresh.Interval),
 			}
 
-			resp["free_proxy_sources"] = settingsFreeProxySources(cfg.FreeProxySources)
+			resp["free_proxy_sources"] = settingsFreeProxySourcesForRole(cfg.FreeProxySources, isAdmin)
 			resp["free_proxy_max_nodes"] = cfg.FreeProxyMaxNodes
-			resp["free_proxy_download_proxy"] = cfg.FreeProxyDownloadProxy
+			if isAdmin {
+				resp["free_proxy_download_proxy"] = cfg.FreeProxyDownloadProxy
+			} else {
+				resp["free_proxy_download_proxy"] = ""
+				resp["free_proxy_download_proxy_set"] = strings.TrimSpace(cfg.FreeProxyDownloadProxy) != ""
+			}
 			filter := cfg.FreeProxyFilter.Normalized()
 			resp["free_proxy_filter"] = map[string]any{
 				"enabled":              filter.Enabled,
@@ -3824,9 +4088,37 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"cloudflare_timeout":     positiveDurationString(q.CloudflareTimeout),
 				"cloudflare_concurrency": q.CloudflareConcurrency,
 			}
+		} else {
+			resp["management"] = map[string]any{
+				"listen":       s.cfg.Listen,
+				"password":     "",
+				"password_set": strings.TrimSpace(s.cfg.Password) != "",
+				"api_keys":     redactAPIKeys(apiKeys),
+				"cors_origins": corsOrigins,
+			}
 		}
 		writeJSON(w, resp)
 	case http.MethodPut:
+		// PUT is admin-only when a principal is present.
+		// Direct unit-test handler calls have no principal:
+		//   - allow if no API keys are configured (legacy password/open tests)
+		//   - deny if API keys are configured (external-auth threat model)
+		if p, ok := principalFromRequest(r); ok {
+			if !roleAtLeast(p.Role, "admin") {
+				w.WriteHeader(http.StatusForbidden)
+				writeJSON(w, map[string]any{"error": "权限不足", "code": "forbidden"})
+				return
+			}
+		} else {
+			s.cfgMu.RLock()
+			hasKeys := len(config.ManagementConfig{APIKeys: s.cfg.APIKeys}.EnabledAPIKeys()) > 0
+			s.cfgMu.RUnlock()
+			if hasKeys {
+				w.WriteHeader(http.StatusUnauthorized)
+				writeJSON(w, map[string]any{"error": "未授权，请先登录", "code": "unauthorized"})
+				return
+			}
+		}
 		var req struct {
 			ExternalIP     string `json:"external_ip"`
 			ProbeTarget    string `json:"probe_target"`
@@ -3856,9 +4148,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				BlacklistDuration string `json:"blacklist_duration"`
 			} `json:"pool,omitempty"`
 			Management *struct {
-				Listen        string `json:"listen"`
-				Password      string `json:"password"`
-				ClearPassword bool   `json:"clear_password"`
+				Listen        string               `json:"listen"`
+				Password      string               `json:"password"`
+				ClearPassword bool                 `json:"clear_password"`
+				APIKeys       []config.APIKeyConfig `json:"api_keys"`
+				CORSOrigins   []string             `json:"cors_origins"`
 			} `json:"management,omitempty"`
 			Log *struct {
 				Output     string `json:"output"`
@@ -3928,6 +4222,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasManagementListen := hasNestedJSONKey(body, "management", "listen")
 		hasManagementPassword := hasNestedJSONKey(body, "management", "password")
 		hasManagementClearPassword := hasNestedJSONKey(body, "management", "clear_password")
+		hasManagementAPIKeys := hasNestedJSONKey(body, "management", "api_keys")
+		hasManagementCORSOrigins := hasNestedJSONKey(body, "management", "cors_origins")
 		hasGeoIPEnabled := hasNestedJSONKey(body, "geoip", "enabled")
 		hasGeoIPDatabasePath := hasNestedJSONKey(body, "geoip", "database_path")
 		hasGeoIPListen := hasNestedJSONKey(body, "geoip", "listen")
@@ -4331,6 +4627,23 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			} else if hasManagementPassword && strings.TrimSpace(req.Management.Password) != "" {
 				s.cfgSrc.Management.Password = req.Management.Password
 			}
+			if hasManagementAPIKeys {
+				// JSON null unmarshals to nil; treat as omit (preserve keys).
+				// Explicit empty array [] still clears all keys via mergeAPIKeys.
+				if req.Management.APIKeys != nil {
+					merged, err := mergeAPIKeys(s.cfgSrc.Management.APIKeys, req.Management.APIKeys)
+					if err != nil {
+						s.cfgMu.Unlock()
+						w.WriteHeader(http.StatusBadRequest)
+						writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_api_keys"})
+						return
+					}
+					s.cfgSrc.Management.APIKeys = merged
+				}
+			}
+			if hasManagementCORSOrigins {
+				s.cfgSrc.Management.CORSOrigins = append([]string(nil), req.Management.CORSOrigins...)
+			}
 		}
 		if req.GeoIP != nil {
 			if hasGeoIPDatabasePath {
@@ -4414,11 +4727,28 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			subscriptionConfigChanged = subscriptionConfigChanged || oldSubscriptionRefresh.Enabled != s.cfgSrc.SubscriptionRefresh.Enabled || oldSubscriptionRefresh.Interval != s.cfgSrc.SubscriptionRefresh.Interval
 		}
 		managementPasswordTouched := req.Management != nil && ((hasManagementClearPassword && req.Management.ClearPassword) || (hasManagementPassword && strings.TrimSpace(req.Management.Password) != ""))
+		// Validate password/api_keys invariant before committing runtime password
+		// or persisting. Covers clear_password with remaining keys, and key edits.
+		if req.Management != nil && (managementPasswordTouched || hasManagementAPIKeys || hasManagementCORSOrigins) {
+			if err := s.cfgSrc.NormalizeManagementAuth(); err != nil {
+				if managementPasswordTouched {
+					s.cfgSrc.Management.Password = oldManagementPassword
+				}
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": err.Error(), "code": "invalid_management_auth"})
+				return
+			}
+		}
 		if managementPasswordTouched && s.cfgSrc.Management.Password != oldManagementPassword {
 			s.cfg.Password = s.cfgSrc.Management.Password
 			s.sessionMu.Lock()
 			s.sessions = make(map[string]*Session)
 			s.sessionMu.Unlock()
+		}
+		if req.Management != nil && (hasManagementAPIKeys || hasManagementCORSOrigins) {
+			s.cfg.APIKeys = append([]config.APIKeyConfig(nil), s.cfgSrc.Management.APIKeys...)
+			s.cfg.CORSOrigins = append([]string(nil), s.cfgSrc.Management.CORSOrigins...)
 		}
 		if s.cfgSrc.Mode == "multi-port" || s.cfgSrc.Mode == "hybrid" {
 			s.cfg.ProxyUsername = s.cfgSrc.MultiPort.Username
@@ -5302,7 +5632,95 @@ func (s *Server) cleanupExpiredSessions() {
 	}
 }
 
+
+func redactAPIKeys(keys []config.APIKeyConfig) []map[string]any {
+	out := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, map[string]any{
+			"name":    k.Name,
+			"role":    k.Role,
+			"enabled": k.EnabledValue(),
+			// never return raw key material over the API
+			"key_set": strings.TrimSpace(k.Key) != "",
+		})
+	}
+	return out
+}
+
+// mergeAPIKeys applies an incoming settings PUT list against currently stored
+// keys. Entries with an empty Key keep the previous secret matched by name
+// (so a GET→edit→PUT round-trip of redacted settings does not wipe keys).
+// An empty non-nil list clears all keys. nil means "caller error" and is a no-op
+// leave-as-is (settings PUT guards against nil before calling).
+func mergeAPIKeys(existing, incoming []config.APIKeyConfig) ([]config.APIKeyConfig, error) {
+	if incoming == nil {
+		return append([]config.APIKeyConfig(nil), existing...), nil
+	}
+	byName := make(map[string]config.APIKeyConfig, len(existing))
+	for _, k := range existing {
+		name := strings.TrimSpace(k.Name)
+		if name == "" {
+			continue
+		}
+		byName[name] = k
+	}
+	out := make([]config.APIKeyConfig, 0, len(incoming))
+	seenNames := make(map[string]struct{}, len(incoming))
+	for i, raw := range incoming {
+		name := strings.TrimSpace(raw.Name)
+		key := strings.TrimSpace(raw.Key)
+		role := strings.ToLower(strings.TrimSpace(raw.Role))
+		if role == "" {
+			role = "read"
+		}
+		if role != "read" && role != "admin" {
+			return nil, fmt.Errorf("management.api_keys[%d]: invalid role %q", i, raw.Role)
+		}
+		if name == "" {
+			if key == "" {
+				// Skip fully blank slots.
+				continue
+			}
+			name = fmt.Sprintf("key-%d", i+1)
+		}
+		if _, dup := seenNames[name]; dup {
+			return nil, fmt.Errorf("management.api_keys: duplicate name %q", name)
+		}
+		seenNames[name] = struct{}{}
+		if key == "" {
+			prev, ok := byName[name]
+			if !ok || strings.TrimSpace(prev.Key) == "" {
+				return nil, fmt.Errorf("management.api_keys[%d]: key required for new entry %q", i, name)
+			}
+			key = prev.Key
+		}
+		out = append(out, config.APIKeyConfig{
+			Name:    name,
+			Key:     key,
+			Role:    role,
+			Enabled: raw.Enabled,
+		})
+	}
+	return out, nil
+}
+
 // secureCompareStrings performs constant-time string comparison to prevent timing attacks.
+// Length is padded so mismatched lengths do not short-circuit before ConstantTimeCompare.
 func secureCompareStrings(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+	ab := []byte(a)
+	bb := []byte(b)
+	n := len(ab)
+	if len(bb) > n {
+		n = len(bb)
+	}
+	if n == 0 {
+		return true
+	}
+	ap := make([]byte, n)
+	bp := make([]byte, n)
+	copy(ap, ab)
+	copy(bp, bb)
+	// Include length equality in the constant-time result.
+	sameLen := subtle.ConstantTimeEq(int32(len(ab)), int32(len(bb)))
+	return subtle.ConstantTimeCompare(ap, bp)&sameLen == 1
 }

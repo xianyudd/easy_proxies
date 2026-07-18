@@ -39,6 +39,7 @@ export interface EasyProxiesClientOptions {
   baseUrl?: string
   token?: string
   password?: string
+  apiKey?: string
   fetchImpl?: typeof fetch
 }
 
@@ -155,12 +156,14 @@ export class EasyProxiesClient {
   private baseUrl: string
   private token?: string
   private password?: string
+  private apiKey?: string
   private fetchImpl: typeof fetch
 
   constructor(options: EasyProxiesClientOptions = {}) {
     this.baseUrl = (options.baseUrl || 'http://127.0.0.1:9091').replace(/\/+$/, '')
     this.token = options.token
     this.password = options.password
+    this.apiKey = options.apiKey
     this.fetchImpl = options.fetchImpl || fetch
   }
 
@@ -239,7 +242,8 @@ export class EasyProxiesClient {
     const headers = new Headers(init.headers)
     if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json')
     if (!headers.has('Accept')) headers.set('Accept', 'application/json')
-    if (this.token) headers.set('Authorization', `Bearer ${this.token}`)
+    if (this.apiKey) headers.set('X-API-Key', this.apiKey)
+    else if (this.token) headers.set('Authorization', `Bearer ${this.token}`)
 
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       ...init,

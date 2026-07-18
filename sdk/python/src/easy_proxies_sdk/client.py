@@ -20,11 +20,13 @@ class EasyProxiesClient:
         base_url: str = "http://127.0.0.1:9091",
         token: Optional[str] = None,
         password: Optional[str] = None,
+        api_key: Optional[str] = None,
         timeout: float = 30.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.password = password
+        self.api_key = api_key
         self.timeout = timeout
 
     def login(self, password: Optional[str] = None) -> Dict[str, Any]:
@@ -159,7 +161,9 @@ class EasyProxiesClient:
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        if self.token:
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        elif self.token:
             headers["Authorization"] = f"Bearer {self.token}"
 
         request = Request(
