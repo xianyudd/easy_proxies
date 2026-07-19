@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Terminal,
   Trash2,
+  X,
 } from 'lucide-react'
 import {
   createApiKey,
@@ -81,6 +82,55 @@ const PLAY_SAMPLES: PlaySample[] = [
   },
 ]
 
+type PlayResult = {
+  status: number
+  ms: number
+  body: string
+  contentType: string
+  bytes: number
+  sampleId: string
+  at: number
+}
+
+function formatPlayBody(raw: string, contentType: string): { text: string; kind: 'json' | 'text' } {
+  const trimmed = raw.trim()
+  if (!trimmed) return { text: '(empty)', kind: 'text' }
+  const looksJson = contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')
+  if (looksJson) {
+    try {
+      return { text: JSON.stringify(JSON.parse(trimmed), null, 2), kind: 'json' }
+    } catch {
+      /* fall through */
+    }
+  }
+  return { text: raw, kind: 'text' }
+}
+
+function playStatusTone(status: number): 'good' | 'warn' | 'bad' | 'neutral' {
+  if (status >= 200 && status < 300) return 'good'
+  if (status === 401 || status === 403) return 'warn'
+  if (status === 0 || status >= 500) return 'bad'
+  if (status >= 400) return 'warn'
+  return 'neutral'
+}
+
+function playStatusLabel(status: number): string {
+  if (status === 0) return '网络错误'
+  if (status === 200) return 'OK'
+  if (status === 401) return '未授权'
+  if (status === 403) return '权限不足'
+  if (status === 404) return '未找到'
+  if (status >= 500) return '服务错误'
+  if (status >= 400) return '请求错误'
+  return '已响应'
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function maskKey(key?: string, hint?: string) {
   if (hint) return hint
   const value = String(key || '')
@@ -112,7 +162,7 @@ export function ApiKeysPage() {
   const [playKeyName, setPlayKeyName] = useState<string>('')
   const [playSampleId, setPlaySampleId] = useState<string>(PLAY_SAMPLES[0].id)
   const [playRunning, setPlayRunning] = useState(false)
-  const [playResult, setPlayResult] = useState<{ status: number; ms: number; body: string } | null>(null)
+  const [playResult, setPlayResult] = useState<PlayResult | null>(null)
   const secretTimerRef = useRef<number | undefined>(undefined)
 
   const passwordSet = Boolean((settings.data?.management as Record<string, unknown> | undefined)?.password_set)
@@ -149,6 +199,19 @@ export function ApiKeysPage() {
     return `curl -sS -H 'X-API-Key: ${token}' '${playOrigin}${playSample.path}'`
   }, [playKey?.key, playOrigin, playSample.path])
 
+  const playView = useMemo(() => {
+    if (!playResult) return null
+    const formatted = formatPlayBody(playResult.body, playResult.contentType)
+    return {
+      ...playResult,
+      display: formatted.text,
+      kind: formatted.kind,
+      tone: playStatusTone(playResult.status),
+      label: playStatusLabel(playResult.status),
+      sampleLabel: PLAY_SAMPLES.find(s => s.id === playResult.sampleId)?.label || playResult.sampleId,
+    }
+  }, [playResult])
+
   const runPlayCommand = async () => {
     const key = playKey?.key?.trim()
     if (!key) {
@@ -174,15 +237,33 @@ export function ApiKeysPage() {
           'X-API-Key': key,
         },
       })
-      const text = await res.text()
+      const buf = await res.arrayBuffer()
+      const bytes = buf.byteLength
+      const text = new TextDecoder('utf-8').decode(buf)
       const ms = Math.round(performance.now() - t0)
-      const body = text.length > 4000 ? `${text.slice(0, 4000)}\n…(截断)` : text
-      setPlayResult({ status: res.status, ms, body })
+      const body = text.length > 8000 ? `${text.slice(0, 8000)}\n…(已截断，共 ${formatBytes(bytes)})` : text
+      setPlayResult({
+        status: res.status,
+        ms,
+        body,
+        contentType: res.headers.get('content-type') || '',
+        bytes,
+        sampleId: playSample.id,
+        at: Date.now(),
+      })
       if (res.ok) toast(`试跑成功 ${res.status} · ${ms}ms`, 'ok')
-      else toast(`试跑返回 ${res.status}`, 'error')
+      else toast(`试跑返回 ${res.status} · ${playStatusLabel(res.status)}`, 'error')
     } catch (e) {
       const ms = Math.round(performance.now() - t0)
-      setPlayResult({ status: 0, ms, body: e instanceof Error ? e.message : '请求失败' })
+      setPlayResult({
+        status: 0,
+        ms,
+        body: e instanceof Error ? e.message : '请求失败',
+        contentType: '',
+        bytes: 0,
+        sampleId: playSample.id,
+        at: Date.now(),
+      })
       toast('试跑失败', 'error')
     } finally {
       setPlayRunning(false)
@@ -875,13 +956,41 @@ export function ApiKeysPage() {
             <Play size={14} />{playRunning ? '试跑中…' : '试跑'}
           </Button>
         </div>
-        {playResult && (
-          <div className={`api-keys-play-result ${playResult.status >= 200 && playResult.status < 300 ? 'is-ok' : 'is-bad'}`}>
+        {playView ? (
+          <div className={`api-keys-play-result is-${playView.tone}`}>
             <div className="api-keys-play-result-head">
-              <strong>HTTP {playResult.status || 'ERR'}</strong>
-              <span>{playResult.ms} ms</span>
+              <div className="api-keys-play-result-title">
+                <Badge tone={playView.tone}>
+                  {playView.status === 0 ? 'ERR' : playView.status}
+                </Badge>
+                <strong>{playView.label}</strong>
+                <span className="api-keys-play-result-sample">{playView.sampleLabel}</span>
+              </div>
+              <div className="api-keys-play-result-metrics">
+                <span>{playView.ms} ms</span>
+                <span>{formatBytes(playView.bytes)}</span>
+                {playView.kind === 'json' && <span>JSON</span>}
+              </div>
             </div>
-            <pre className="mono">{playResult.body || '(empty)'}</pre>
+            <div className="api-keys-play-result-toolbar">
+              <Button onClick={() => void copyValue(playView.display, '响应')}>
+                <Copy size={14} />复制响应
+              </Button>
+              <Button onClick={() => setPlayResult(null)}>
+                <X size={14} />清空
+              </Button>
+            </div>
+            <pre className={`mono api-keys-play-result-body is-${playView.kind}`}>{playView.display}</pre>
+          </div>
+        ) : (
+          <div className="api-keys-play-result is-empty">
+            <div className="api-keys-play-empty">
+              <Play size={18} />
+              <div>
+                <strong>尚未试跑</strong>
+                <p>选择 Key 与示例后点「试跑」，这里会显示状态码、耗时与格式化响应。</p>
+              </div>
+            </div>
           </div>
         )}
       </section>
