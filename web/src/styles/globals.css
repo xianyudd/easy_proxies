@@ -3956,3 +3956,80 @@ html[data-theme="light"] .logbox {
     align-items: stretch;
   }
 }
+
+/* API key command playground */
+.api-keys-playground {
+  margin-top: 2px;
+}
+.api-keys-play-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.1fr) auto;
+  gap: 12px 14px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+.api-keys-play-grid .field label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--muted);
+}
+.api-keys-play-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-height: 40px;
+  padding-bottom: 4px;
+}
+.api-keys-play-cmd {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--bg) 72%, #000 8%);
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  margin-bottom: 12px;
+  user-select: all;
+}
+.api-keys-play-actions {
+  margin-bottom: 10px;
+}
+.api-keys-play-result {
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  overflow: hidden;
+}
+.api-keys-play-result.is-ok {
+  border-color: color-mix(in srgb, var(--green, #22c55e) 35%, var(--border));
+}
+.api-keys-play-result.is-bad {
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 40%, var(--border));
+}
+.api-keys-play-result-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  font-size: 12.5px;
+}
+.api-keys-play-result pre {
+  margin: 0;
+  padding: 12px;
+  max-height: 240px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+@media (max-width: 980px) {
+  .api-keys-play-grid {
+    grid-template-columns: 1fr;
+  }
+}

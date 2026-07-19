@@ -10,11 +10,13 @@ import {
   KeyRound,
   MoreHorizontal,
   Pencil,
+  Play,
   Plus,
   RefreshCw,
   RotateCcw,
   Shield,
   ShieldCheck,
+  Terminal,
   Trash2,
 } from 'lucide-react'
 import {
@@ -37,6 +39,47 @@ import { copyToClipboard } from '../lib/clipboard'
 const SECRET_MODAL_SECONDS = 12
 /** Show multi-select + bulk bar only when managing multiple credentials. */
 const BULK_THRESHOLD = 2
+
+type PlaySample = {
+  id: string
+  label: string
+  method: 'GET'
+  path: string
+  needAdmin?: boolean
+  hint: string
+}
+
+const PLAY_SAMPLES: PlaySample[] = [
+  {
+    id: 'nodes',
+    label: '节点列表',
+    method: 'GET',
+    path: '/api/nodes?page=1&page_size=3',
+    hint: 'read 可用',
+  },
+  {
+    id: 'extractor',
+    label: '提取代理',
+    method: 'GET',
+    path: '/api/extractor?region=all&mode=pool&format=http_url&count=1',
+    hint: 'read 可用 · 默认打码',
+  },
+  {
+    id: 'auth-status',
+    label: '鉴权状态',
+    method: 'GET',
+    path: '/api/auth/status',
+    hint: '任意 Key',
+  },
+  {
+    id: 'export',
+    label: '导出明文',
+    method: 'GET',
+    path: '/api/export?scheme=http',
+    needAdmin: true,
+    hint: '需 admin',
+  },
+]
 
 function maskKey(key?: string, hint?: string) {
   if (hint) return hint
@@ -66,6 +109,10 @@ export function ApiKeysPage() {
   const [renameDraft, setRenameDraft] = useState('')
   const [highlightName, setHighlightName] = useState<string | null>(null)
   const [selectedNames, setSelectedNames] = useState<string[]>([])
+  const [playKeyName, setPlayKeyName] = useState<string>('')
+  const [playSampleId, setPlaySampleId] = useState<string>(PLAY_SAMPLES[0].id)
+  const [playRunning, setPlayRunning] = useState(false)
+  const [playResult, setPlayResult] = useState<{ status: number; ms: number; body: string } | null>(null)
   const secretTimerRef = useRef<number | undefined>(undefined)
 
   const passwordSet = Boolean((settings.data?.management as Record<string, unknown> | undefined)?.password_set)
@@ -75,6 +122,72 @@ export function ApiKeysPage() {
   }, [keysQuery.data])
 
   const bulkEnabled = keys.length >= BULK_THRESHOLD
+
+  // Default playground key to first available secret-bearing key.
+  useEffect(() => {
+    if (!keys.length) {
+      setPlayKeyName('')
+      return
+    }
+    if (playKeyName && keys.some(k => k.name === playKeyName)) return
+    const first = keys.find(k => k.key) || keys[0]
+    setPlayKeyName(String(first?.name || ''))
+  }, [keys, playKeyName])
+
+  const playKey = useMemo(
+    () => keys.find(k => k.name === playKeyName),
+    [keys, playKeyName],
+  )
+  const playSample = useMemo(
+    () => PLAY_SAMPLES.find(s => s.id === playSampleId) || PLAY_SAMPLES[0],
+    [playSampleId],
+  )
+  const playOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:9091'
+  const playCurl = useMemo(() => {
+    const key = playKey?.key?.trim()
+    const token = key || '<YOUR_API_KEY>'
+    return `curl -sS -H 'X-API-Key: ${token}' '${playOrigin}${playSample.path}'`
+  }, [playKey?.key, playOrigin, playSample.path])
+
+  const runPlayCommand = async () => {
+    const key = playKey?.key?.trim()
+    if (!key) {
+      toast('请选择一把含明文的 API Key（需 admin 登录后列表可见）', 'error')
+      return
+    }
+    if (playKey?.enabled === false) {
+      toast('该 Key 已禁用，请先启用', 'error')
+      return
+    }
+    if (playSample.needAdmin && playKey?.role !== 'admin') {
+      toast('该示例需要 admin 角色 Key', 'error')
+      return
+    }
+    setPlayRunning(true)
+    setPlayResult(null)
+    const t0 = performance.now()
+    try {
+      const res = await fetch(`${playOrigin}${playSample.path}`, {
+        method: playSample.method,
+        headers: {
+          Accept: 'application/json, text/plain, */*',
+          'X-API-Key': key,
+        },
+      })
+      const text = await res.text()
+      const ms = Math.round(performance.now() - t0)
+      const body = text.length > 4000 ? `${text.slice(0, 4000)}\n…(截断)` : text
+      setPlayResult({ status: res.status, ms, body })
+      if (res.ok) toast(`试跑成功 ${res.status} · ${ms}ms`, 'ok')
+      else toast(`试跑返回 ${res.status}`, 'error')
+    } catch (e) {
+      const ms = Math.round(performance.now() - t0)
+      setPlayResult({ status: 0, ms, body: e instanceof Error ? e.message : '请求失败' })
+      toast('试跑失败', 'error')
+    } finally {
+      setPlayRunning(false)
+    }
+  }
 
   const stats = useMemo(() => ({
     total: keys.length,
@@ -706,6 +819,72 @@ export function ApiKeysPage() {
           )}
         </section>
       </div>
+
+      <section className="panel api-keys-playground">
+        <div className="panel-header">
+          <div>
+            <div className="panel-title"><Terminal size={16} style={{ verticalAlign: '-2px', marginRight: 6 }} />命令试验区</div>
+            <div className="panel-subtitle">选一把 Key 和示例接口，复制 curl 或直接试跑（结果仅本地显示）。</div>
+          </div>
+        </div>
+        <div className="api-keys-play-grid">
+          <div className="field">
+            <label>使用 Key</label>
+            <Select
+              size="large"
+              style={{ width: '100%' }}
+              value={playKeyName || undefined}
+              placeholder={keys.length ? '选择 API Key' : '请先签发 Key'}
+              disabled={!keys.length}
+              options={keys.map(k => ({
+                value: String(k.name || ''),
+                label: `${k.name || '未命名'} · ${k.role || 'read'}${k.enabled === false ? ' · 禁用' : ''}`,
+              }))}
+              onChange={setPlayKeyName}
+            />
+          </div>
+          <div className="field">
+            <label>示例接口</label>
+            <Select
+              size="large"
+              style={{ width: '100%' }}
+              value={playSampleId}
+              options={PLAY_SAMPLES.map(s => ({
+                value: s.id,
+                label: `${s.label}${s.needAdmin ? ' (admin)' : ''}`,
+              }))}
+              onChange={setPlaySampleId}
+            />
+          </div>
+          <div className="api-keys-play-meta">
+            <Badge tone={playSample.needAdmin ? 'warn' : 'info'}>{playSample.hint}</Badge>
+            {playKey?.role && <Badge tone={playKey.role === 'admin' ? 'warn' : 'neutral'}>{playKey.role}</Badge>}
+            {playKey?.enabled === false && <Badge tone="neutral">已禁用</Badge>}
+          </div>
+        </div>
+        <div className="api-keys-play-cmd mono" title={playCurl}>{playCurl}</div>
+        <div className="toolbar api-keys-play-actions">
+          <Button onClick={() => void copyValue(playCurl, '命令')}>
+            <Copy size={14} />复制命令
+          </Button>
+          <Button
+            variant="primary"
+            disabled={playRunning || !keys.length}
+            onClick={() => void runPlayCommand()}
+          >
+            <Play size={14} />{playRunning ? '试跑中…' : '试跑'}
+          </Button>
+        </div>
+        {playResult && (
+          <div className={`api-keys-play-result ${playResult.status >= 200 && playResult.status < 300 ? 'is-ok' : 'is-bad'}`}>
+            <div className="api-keys-play-result-head">
+              <strong>HTTP {playResult.status || 'ERR'}</strong>
+              <span>{playResult.ms} ms</span>
+            </div>
+            <pre className="mono">{playResult.body || '(empty)'}</pre>
+          </div>
+        )}
+      </section>
 
       <Modal
         open={!!pendingSecret?.key}
