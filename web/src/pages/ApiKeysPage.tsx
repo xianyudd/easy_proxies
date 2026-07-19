@@ -228,9 +228,25 @@ export function ApiKeysPage() {
 
   const runBulk = async (action: ApiKeyBulkAction, label: string) => {
     if (!selectedNames.length) return
+    // Only touch keys that actually need the change (avoid "success 2" no-ops).
+    let targets = selectedNames
+    if (action.type === 'enable') {
+      targets = selectedRows.filter(k => k.enabled === false).map(k => String(k.name || '')).filter(Boolean)
+    } else if (action.type === 'disable') {
+      targets = selectedRows.filter(k => k.enabled !== false).map(k => String(k.name || '')).filter(Boolean)
+    } else if (action.type === 'set_role') {
+      targets = selectedRows
+        .filter(k => (k.role || 'read') !== action.role)
+        .map(k => String(k.name || ''))
+        .filter(Boolean)
+    }
+    if (!targets.length) {
+      toast('所选密钥已是目标状态，无需变更', 'info')
+      return
+    }
     setBulkBusy(true)
     try {
-      const result = await runBulkApiKeyAction(selectedNames, action)
+      const result = await runBulkApiKeyAction(targets, action)
       if (result.fail === 0) {
         toast(`${label}成功（${result.ok}）`, 'ok')
       } else {
