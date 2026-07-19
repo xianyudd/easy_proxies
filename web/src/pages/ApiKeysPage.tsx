@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Dropdown, Input, Modal, Progress, Select, Switch } from 'antd'
+import { Dropdown, Input, Modal, Progress, Select, Switch, Table } from 'antd'
+import type { ColumnsType, TableProps } from 'antd/es/table'
 import type { MenuProps } from 'antd'
 import {
   Copy,
@@ -16,15 +17,26 @@ import {
   ShieldCheck,
   Trash2,
 } from 'lucide-react'
-import { createApiKey, deleteApiKey, getSettings, listApiKeys, updateApiKey, type ApiKeyMeta } from '../api/settings'
+import {
+  createApiKey,
+  deleteApiKey,
+  getSettings,
+  listApiKeys,
+  runBulkApiKeyAction,
+  updateApiKey,
+  type ApiKeyBulkAction,
+  type ApiKeyMeta,
+} from '../api/settings'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { useToast } from '../components/ui/Toast'
 import { copyToClipboard } from '../lib/clipboard'
 
-/** One-time secret modal auto-closes quickly; copy pauses the timer. */
+/** One-time secret modal auto-closes quickly; copy closes immediately. */
 const SECRET_MODAL_SECONDS = 12
+/** Show multi-select + bulk bar only when managing multiple credentials. */
+const BULK_THRESHOLD = 2
 
 function maskKey(key?: string, hint?: string) {
   if (hint) return hint
@@ -32,6 +44,10 @@ function maskKey(key?: string, hint?: string) {
   if (!value) return '••••••••••••'
   if (value.length <= 12) return '•'.repeat(Math.max(8, value.length))
   return `${value.slice(0, 10)} ··· ${value.slice(-4)}`
+}
+
+function rowKeyOf(row: ApiKeyMeta, index: number) {
+  return String(row.name || row.hint || `key-${index}`)
 }
 
 export function ApiKeysPage() {
@@ -45,9 +61,11 @@ export function ApiKeysPage() {
   const [pendingSecret, setPendingSecret] = useState<ApiKeyMeta | null>(null)
   const [secretCountdown, setSecretCountdown] = useState(0)
   const [busy, setBusy] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [highlightName, setHighlightName] = useState<string | null>(null)
+  const [selectedNames, setSelectedNames] = useState<string[]>([])
   const secretTimerRef = useRef<number | undefined>(undefined)
 
   const passwordSet = Boolean((settings.data?.management as Record<string, unknown> | undefined)?.password_set)
@@ -56,12 +74,24 @@ export function ApiKeysPage() {
     return Array.isArray(rows) ? rows : []
   }, [keysQuery.data])
 
+  const bulkEnabled = keys.length >= BULK_THRESHOLD
+
   const stats = useMemo(() => ({
     total: keys.length,
     admin: keys.filter(k => k.role === 'admin').length,
     enabled: keys.filter(k => k.enabled !== false).length,
     disabled: keys.filter(k => k.enabled === false).length,
   }), [keys])
+
+  // Drop selections that no longer exist; clear selection when bulk UI hides.
+  useEffect(() => {
+    if (!bulkEnabled) {
+      setSelectedNames([])
+      return
+    }
+    const alive = new Set(keys.map((k, i) => rowKeyOf(k, i)))
+    setSelectedNames(prev => prev.filter(n => alive.has(n)))
+  }, [keys, bulkEnabled])
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['api-keys'] })
@@ -159,6 +189,7 @@ export function ApiKeysPage() {
           if (was) next[vars.body.name as string] = true
           return next
         })
+        setSelectedNames(prev => prev.map(n => (n === vars.name ? String(vars.body.name) : n)))
       }
       setRenameTarget(null)
       refresh()
@@ -175,6 +206,7 @@ export function ApiKeysPage() {
         delete next[name]
         return next
       })
+      setSelectedNames(prev => prev.filter(n => n !== name))
       toast(`已删除 ${name}`, 'ok')
       refresh()
     },
@@ -192,7 +224,38 @@ export function ApiKeysPage() {
     closeSecretModal()
   }
 
-  const acting = busy || createMut.isPending || updateMut.isPending || deleteMut.isPending
+  const acting = busy || bulkBusy || createMut.isPending || updateMut.isPending || deleteMut.isPending
+
+  const runBulk = async (action: ApiKeyBulkAction, label: string) => {
+    if (!selectedNames.length) return
+    setBulkBusy(true)
+    try {
+      const result = await runBulkApiKeyAction(selectedNames, action)
+      if (result.fail === 0) {
+        toast(`${label}成功（${result.ok}）`, 'ok')
+      } else {
+        toast(`${label}完成：成功 ${result.ok}，失败 ${result.fail}`, result.ok ? 'info' : 'error')
+      }
+      setSelectedNames([])
+      refresh()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : `${label}失败`, 'error')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const confirmBulk = (action: ApiKeyBulkAction, title: string, content: string, label: string) => {
+    Modal.confirm({
+      title,
+      content,
+      okText: '确认',
+      okType: action.type === 'delete' ? 'danger' : 'primary',
+      cancelText: '取消',
+      centered: true,
+      onOk: () => runBulk(action, label),
+    })
+  }
 
   const confirmRotate = (name: string) => {
     Modal.confirm({
@@ -272,9 +335,114 @@ export function ApiKeysPage() {
     ]
   }
 
+  const columns: ColumnsType<ApiKeyMeta> = useMemo(() => [
+    {
+      title: '名称',
+      dataIndex: 'name',
+      key: 'name',
+      width: 180,
+      ellipsis: true,
+      render: (value: string | undefined) => <strong className="api-key-name-cell">{value || '未命名'}</strong>,
+    },
+    {
+      title: '角色',
+      dataIndex: 'role',
+      key: 'role',
+      width: 120,
+      render: (value: string | undefined, row) => {
+        const name = String(row.name || '')
+        const current = value === 'admin' ? 'admin' : 'read'
+        return (
+          <Select
+            size="small"
+            value={current}
+            className="api-key-role-select"
+            disabled={acting || !name}
+            options={[
+              { value: 'read', label: 'read' },
+              { value: 'admin', label: 'admin' },
+            ]}
+            onChange={(v) => {
+              if (v === current) return
+              updateMut.mutate({ name, body: { role: v as 'read' | 'admin' } })
+            }}
+          />
+        )
+      },
+    },
+    {
+      title: '密钥',
+      key: 'secret',
+      ellipsis: true,
+      render: (_: unknown, row) => {
+        const name = String(row.name || '')
+        const full = String(row.key || '')
+        const show = !!revealed[name]
+        const display = show && full ? full : maskKey(full, row.hint)
+        return (
+          <div className="api-key-table-secret mono" title={show ? full : '已遮挡'}>
+            {display || '••••••••••••'}
+          </div>
+        )
+      },
+    },
+    {
+      title: '状态',
+      key: 'enabled',
+      width: 110,
+      render: (_: unknown, row) => {
+        const name = String(row.name || '')
+        const enabled = row.enabled !== false
+        return (
+          <div className="api-key-table-status">
+            <Switch
+              size="small"
+              checked={enabled}
+              disabled={acting || !name}
+              onChange={(checked) => updateMut.mutate({ name, body: { enabled: checked } })}
+            />
+            <span>{enabled ? '启用' : '禁用'}</span>
+          </div>
+        )
+      },
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 148,
+      fixed: 'right',
+      render: (_: unknown, row) => {
+        const name = String(row.name || '')
+        const full = String(row.key || '')
+        return (
+          <div className="api-key-table-actions">
+            <Button onClick={() => void copyValue(full, 'API Key')} disabled={!full} title="复制">
+              <Copy size={14} />
+            </Button>
+            <Dropdown menu={{ items: rowMenu(row) }} trigger={['click']} placement="bottomRight">
+              <Button disabled={acting || !name} title="更多">
+                <MoreHorizontal size={14} />
+              </Button>
+            </Dropdown>
+          </div>
+        )
+      },
+    },
+  ], [acting, revealed, updateMut.isPending, deleteMut.isPending, bulkBusy])
+
+  const rowSelection: TableProps<ApiKeyMeta>['rowSelection'] | undefined = bulkEnabled
+    ? {
+        selectedRowKeys: selectedNames,
+        onChange: (keys) => setSelectedNames(keys.map(String)),
+        getCheckboxProps: (row) => ({ disabled: acting || !row.name }),
+      }
+    : undefined
+
   const secretProgress = secretCountdown > 0
     ? Math.round((secretCountdown / SECRET_MODAL_SECONDS) * 100)
     : 0
+
+  const selectedCount = selectedNames.length
 
   return (
     <div className="page api-keys-page">
@@ -290,6 +458,7 @@ export function ApiKeysPage() {
             <span>X-API-Key</span>
             <span>read / admin</span>
             <span>即时吊销</span>
+            {bulkEnabled && <span>批量管理</span>}
           </div>
         </div>
         <div className="api-keys-hero-stats">
@@ -412,11 +581,66 @@ export function ApiKeysPage() {
             <div>
               <div className="panel-title">凭证列表</div>
               <div className="panel-subtitle">
-                主操作：复制 / 启停。更多：显示、重命名、轮换、删除。
+                {bulkEnabled
+                  ? '表格管理 · 勾选后可批量启用/禁用/改角色/删除（≥2 把密钥时自动开启）'
+                  : '表格管理 · 密钥达到 2 把后自动出现批量勾选'}
               </div>
             </div>
             <Badge tone={keys.length ? 'info' : 'neutral'}>{keys.length} keys</Badge>
           </div>
+
+          {selectedCount > 0 && bulkEnabled && (
+            <div className="api-key-bulk-bar" role="region" aria-label="批量操作">
+              <div className="api-key-bulk-meta">
+                <strong>已选 {selectedCount} 项</strong>
+                <button type="button" className="api-key-bulk-clear" onClick={() => setSelectedNames([])}>
+                  清除选择
+                </button>
+              </div>
+              <div className="api-key-bulk-actions">
+                <Button disabled={acting} onClick={() => void runBulk({ type: 'enable' }, '批量启用')}>
+                  批量启用
+                </Button>
+                <Button disabled={acting} onClick={() => void runBulk({ type: 'disable' }, '批量禁用')}>
+                  批量禁用
+                </Button>
+                <Button
+                  disabled={acting}
+                  onClick={() => confirmBulk(
+                    { type: 'set_role', role: 'read' },
+                    `将 ${selectedCount} 把 Key 设为 read？`,
+                    '仅保留只读权限，写操作将立即失败。',
+                    '批量设为 read',
+                  )}
+                >
+                  设为 read
+                </Button>
+                <Button
+                  disabled={acting}
+                  onClick={() => confirmBulk(
+                    { type: 'set_role', role: 'admin' },
+                    `将 ${selectedCount} 把 Key 设为 admin？`,
+                    '将获得完整管理权限，请确认调用方可信。',
+                    '批量设为 admin',
+                  )}
+                >
+                  设为 admin
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={acting}
+                  onClick={() => confirmBulk(
+                    { type: 'delete' },
+                    `删除 ${selectedCount} 把 API Key？`,
+                    '相关调用方将立即失效，且无法恢复。',
+                    '批量删除',
+                  )}
+                >
+                  <Trash2 size={14} />批量删除
+                </Button>
+              </div>
+            </div>
+          )}
 
           {!keys.length ? (
             <div className="api-keys-empty">
@@ -425,70 +649,29 @@ export function ApiKeysPage() {
               <p>在左侧生成第一把密钥。创建后会弹出可复制的明文窗口，{SECRET_MODAL_SECONDS}s 后自动关闭。</p>
             </div>
           ) : (
-            <div className="api-key-list">
-              {keys.map(row => {
+            <Table<ApiKeyMeta>
+              className="api-key-data-table"
+              size="middle"
+              rowKey={(row, index) => rowKeyOf(row, index ?? 0)}
+              columns={columns}
+              dataSource={keys}
+              pagination={false}
+              scroll={{ x: 760 }}
+              rowSelection={rowSelection}
+              loading={keysQuery.isFetching && !keys.length}
+              rowClassName={(row) => {
                 const name = String(row.name || '')
-                const full = String(row.key || '')
-                const show = !!revealed[name]
-                const display = show && full ? full : maskKey(full, row.hint)
-                const enabled = row.enabled !== false
-                const isAdmin = row.role === 'admin'
-                return (
-                  <article
-                    key={name || full}
-                    className={`api-key-card${highlightName === name ? ' is-highlight' : ''}${!enabled ? ' is-disabled' : ''}`}
-                  >
-                    <div className="api-key-card-main">
-                      <div className="api-key-card-title">
-                        <strong title={name}>{name || '未命名'}</strong>
-                        <Select
-                          size="small"
-                          value={(isAdmin ? 'admin' : 'read') as 'read' | 'admin'}
-                          className="api-key-role-select"
-                          disabled={acting}
-                          options={[
-                            { value: 'read', label: 'read' },
-                            { value: 'admin', label: 'admin' },
-                          ]}
-                          onChange={(v) => {
-                            if (v === row.role) return
-                            updateMut.mutate({ name, body: { role: v as 'read' | 'admin' } })
-                          }}
-                        />
-                      </div>
-                      <div className="api-key-card-secret mono" title={show ? full : '已遮挡'}>
-                        {display || '••••••••••••'}
-                      </div>
-                    </div>
-                    <div className="api-key-card-side">
-                      <div className="api-key-card-toggle">
-                        <Switch
-                          checked={enabled}
-                          disabled={acting}
-                          onChange={(checked) => updateMut.mutate({ name, body: { enabled: checked } })}
-                        />
-                        <span>{enabled ? '启用' : '禁用'}</span>
-                      </div>
-                      <div className="api-key-card-actions">
-                        <Button onClick={() => void copyValue(full, 'API Key')} disabled={!full}>
-                          <Copy size={14} />复制
-                        </Button>
-                        <Dropdown menu={{ items: rowMenu(row) }} trigger={['click']} placement="bottomRight">
-                          <Button disabled={acting}>
-                            <MoreHorizontal size={14} />
-                          </Button>
-                        </Dropdown>
-                      </div>
-                    </div>
-                  </article>
-                )
-              })}
-            </div>
+                const classes = []
+                if (highlightName === name) classes.push('api-key-row-highlight')
+                if (row.enabled === false) classes.push('api-key-row-disabled')
+                return classes.join(' ')
+              }}
+              locale={{ emptyText: '暂无 API Key' }}
+            />
           )}
         </section>
       </div>
 
-      {/* One-time secret reveal — modal + countdown (not a toast) */}
       <Modal
         open={!!pendingSecret?.key}
         title={null}
