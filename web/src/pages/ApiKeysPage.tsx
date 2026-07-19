@@ -511,22 +511,17 @@ export function ApiKeysPage() {
 
   return (
     <div className="page api-keys-page">
-      <section className="api-keys-hero">
-        <div className="api-keys-hero-copy">
+      <div className="page-header api-keys-page-header">
+        <div>
           <div className="eyebrow">Access Control</div>
           <h1>API Key</h1>
           <p>
-            为脚本与外部服务签发访问凭证。默认 <strong>read</strong> 只读拉代理；
-            <strong> admin</strong> 拥有完整管理权限。密钥明文仅在创建/轮换时显示一次。
+            为脚本与服务签发访问凭证。默认 <strong>read</strong> 只读；
+            <strong> admin</strong> 完整管理。明文仅在创建/轮换时显示一次。
+            {bulkEnabled ? ' 密钥 ≥2 时可勾选批量管理。' : ' 密钥达到 2 把后自动出现批量勾选。'}
           </p>
-          <div className="api-keys-hero-pills">
-            <span>X-API-Key</span>
-            <span>read / admin</span>
-            <span>即时吊销</span>
-            {bulkEnabled && <span>批量管理</span>}
-          </div>
         </div>
-        <div className="api-keys-hero-stats">
+        <div className="api-keys-header-stats" aria-label="凭证统计">
           <div>
             <span>全部</span>
             <strong>{stats.total}</strong>
@@ -539,34 +534,12 @@ export function ApiKeysPage() {
             <span>Admin</span>
             <strong>{stats.admin}</strong>
           </div>
-          <div>
-            <span>禁用</span>
-            <strong>{stats.disabled}</strong>
-          </div>
-        </div>
-      </section>
-
-      <div className="extractor-flow api-keys-flow" aria-label="使用流程">
-        <div className="extractor-flow-step">
-          <span>1</span>
-          <div>
-            <strong>签发</strong>
-            <p>生成 read 或 admin</p>
-          </div>
-        </div>
-        <div className="extractor-flow-step">
-          <span>2</span>
-          <div>
-            <strong>复制使用</strong>
-            <p>Header: X-API-Key</p>
-          </div>
-        </div>
-        <div className="extractor-flow-step">
-          <span>3</span>
-          <div>
-            <strong>轮换 / 吊销</strong>
-            <p>泄露时立即失效</p>
-          </div>
+          {stats.disabled > 0 && (
+            <div>
+              <span>禁用</span>
+              <strong>{stats.disabled}</strong>
+            </div>
+          )}
         </div>
       </div>
 
@@ -583,7 +556,7 @@ export function ApiKeysPage() {
           <div className="panel-header">
             <div>
               <div className="panel-title">签发凭证</div>
-              <div className="panel-subtitle">自动生成安全密钥，无需手填。</div>
+              <div className="panel-subtitle">自动生成密钥 · 无需手填</div>
             </div>
             <Button onClick={() => { void keysQuery.refetch(); void settings.refetch() }} disabled={keysQuery.isFetching}>
               <RefreshCw size={15} />
@@ -647,8 +620,8 @@ export function ApiKeysPage() {
               <div className="panel-title">凭证列表</div>
               <div className="panel-subtitle">
                 {bulkEnabled
-                  ? '表格管理 · 勾选后可批量启用/禁用/改角色/删除（≥2 把密钥时自动开启）'
-                  : '表格管理 · 密钥达到 2 把后自动出现批量勾选'}
+                  ? '勾选后批量启用 / 禁用 / 改角色 / 删除'
+                  : '表格管理 · 达到 2 把密钥后自动出现批量勾选'}
               </div>
             </div>
             <Badge tone={keys.length ? 'info' : 'neutral'}>{keys.length} keys</Badge>
