@@ -444,6 +444,55 @@ export function ApiKeysPage() {
 
   const selectedCount = selectedNames.length
 
+  const selectedRows = useMemo(
+    () => keys.filter((k, i) => selectedNames.includes(rowKeyOf(k, i))),
+    [keys, selectedNames],
+  )
+
+  const selectedStats = useMemo(() => {
+    const total = selectedRows.length
+    const enabled = selectedRows.filter(k => k.enabled !== false).length
+    const disabled = total - enabled
+    const read = selectedRows.filter(k => (k.role || 'read') !== 'admin').length
+    const admin = total - read
+    return {
+      total,
+      allEnabled: total > 0 && enabled === total,
+      allDisabled: total > 0 && disabled === total,
+      allRead: total > 0 && read === total,
+      allAdmin: total > 0 && admin === total,
+      canEnable: disabled > 0,
+      canDisable: enabled > 0,
+      canSetRead: admin > 0,
+      canSetAdmin: read > 0,
+    }
+  }, [selectedRows])
+
+  const roleMenu: MenuProps['items'] = [
+    {
+      key: 'read',
+      label: '设为 read（只读）',
+      disabled: acting || !selectedStats.canSetRead,
+      onClick: () => confirmBulk(
+        { type: 'set_role', role: 'read' },
+        `将 ${selectedCount} 把 Key 设为 read？`,
+        '仅保留只读权限，写操作将立即失败。',
+        '批量设为 read',
+      ),
+    },
+    {
+      key: 'admin',
+      label: '设为 admin（完整管理）',
+      disabled: acting || !selectedStats.canSetAdmin,
+      onClick: () => confirmBulk(
+        { type: 'set_role', role: 'admin' },
+        `将 ${selectedCount} 把 Key 设为 admin？`,
+        '将获得完整管理权限，请确认调用方可信。',
+        '批量设为 admin',
+      ),
+    },
+  ]
+
   return (
     <div className="page api-keys-page">
       <section className="api-keys-hero">
@@ -592,40 +641,36 @@ export function ApiKeysPage() {
           {selectedCount > 0 && bulkEnabled && (
             <div className="api-key-bulk-bar" role="region" aria-label="批量操作">
               <div className="api-key-bulk-meta">
-                <strong>已选 {selectedCount} 项</strong>
-                <button type="button" className="api-key-bulk-clear" onClick={() => setSelectedNames([])}>
-                  清除选择
-                </button>
+                <span className="api-key-bulk-count">{selectedCount}</span>
+                <div>
+                  <strong>已选 {selectedCount} 项</strong>
+                  <button type="button" className="api-key-bulk-clear" onClick={() => setSelectedNames([])}>
+                    清除选择
+                  </button>
+                </div>
               </div>
               <div className="api-key-bulk-actions">
-                <Button disabled={acting} onClick={() => void runBulk({ type: 'enable' }, '批量启用')}>
-                  批量启用
-                </Button>
-                <Button disabled={acting} onClick={() => void runBulk({ type: 'disable' }, '批量禁用')}>
-                  批量禁用
+                <Button
+                  disabled={acting || !selectedStats.canEnable}
+                  title={!selectedStats.canEnable ? '所选密钥均已启用' : '批量启用'}
+                  onClick={() => void runBulk({ type: 'enable' }, '批量启用')}
+                >
+                  启用
                 </Button>
                 <Button
-                  disabled={acting}
-                  onClick={() => confirmBulk(
-                    { type: 'set_role', role: 'read' },
-                    `将 ${selectedCount} 把 Key 设为 read？`,
-                    '仅保留只读权限，写操作将立即失败。',
-                    '批量设为 read',
-                  )}
+                  disabled={acting || !selectedStats.canDisable}
+                  title={!selectedStats.canDisable ? '所选密钥均已禁用' : '批量禁用'}
+                  onClick={() => void runBulk({ type: 'disable' }, '批量禁用')}
                 >
-                  设为 read
+                  禁用
                 </Button>
-                <Button
-                  disabled={acting}
-                  onClick={() => confirmBulk(
-                    { type: 'set_role', role: 'admin' },
-                    `将 ${selectedCount} 把 Key 设为 admin？`,
-                    '将获得完整管理权限，请确认调用方可信。',
-                    '批量设为 admin',
-                  )}
-                >
-                  设为 admin
-                </Button>
+                <span className="api-key-bulk-sep" aria-hidden />
+                <Dropdown menu={{ items: roleMenu }} trigger={['click']} placement="bottomRight" disabled={acting}>
+                  <Button disabled={acting || (!selectedStats.canSetRead && !selectedStats.canSetAdmin)}>
+                    改角色
+                  </Button>
+                </Dropdown>
+                <span className="api-key-bulk-sep" aria-hidden />
                 <Button
                   variant="danger"
                   disabled={acting}
@@ -636,7 +681,7 @@ export function ApiKeysPage() {
                     '批量删除',
                   )}
                 >
-                  <Trash2 size={14} />批量删除
+                  <Trash2 size={14} />删除
                 </Button>
               </div>
             </div>
@@ -651,7 +696,7 @@ export function ApiKeysPage() {
           ) : (
             <Table<ApiKeyMeta>
               className="api-key-data-table"
-              size="middle"
+              size="small"
               rowKey={(row, index) => rowKeyOf(row, index ?? 0)}
               columns={columns}
               dataSource={keys}
@@ -659,11 +704,12 @@ export function ApiKeysPage() {
               scroll={{ x: 760 }}
               rowSelection={rowSelection}
               loading={keysQuery.isFetching && !keys.length}
-              rowClassName={(row) => {
-                const name = String(row.name || '')
-                const classes = []
-                if (highlightName === name) classes.push('api-key-row-highlight')
+              rowClassName={(row, index) => {
+                const name = rowKeyOf(row, index)
+                const classes: string[] = []
+                if (highlightName === name || highlightName === row.name) classes.push('api-key-row-highlight')
                 if (row.enabled === false) classes.push('api-key-row-disabled')
+                if (selectedNames.includes(name)) classes.push('api-key-row-selected')
                 return classes.join(' ')
               }}
               locale={{ emptyText: '暂无 API Key' }}
