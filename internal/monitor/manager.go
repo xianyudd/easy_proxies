@@ -255,21 +255,17 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 		round := e.probeRound
 		g := e.governance
 		reason := e.quarantineReason
-		// Thin probes for structural isolates to cut noise.
+		// Thin probes for structural isolates to cut noise (reason set, not failure-blacklist).
 		skip := false
 		if g.Enabled && reason != "" && g.IsolatedProbeEveryN > 1 {
 			if int(round)%g.IsolatedProbeEveryN != 1 {
 				skip = true
 			}
 		}
-		// Always skip probe when blacklisted unless expired.
-		if e.blacklist && time.Now().Before(e.until) && reason != "" && g.Enabled {
-			// still allow rare thinned probes above; if skip true leave blacklisted
-			if skip {
-				e.mu.Unlock()
-				skippedIsolated.Add(1)
-				continue
-			}
+		// Failure blacklist still skips probes until expiry.
+		if e.blacklist && time.Now().Before(e.until) && reason == "" {
+			e.mu.Unlock()
+			continue
 		}
 		e.mu.Unlock()
 
@@ -308,10 +304,19 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 				entry.lastProbe = latency
 				entry.available = true
 				entry.initialCheckDone = true
-				// recovery: clear structural quarantine only for non-structural? keep reason for stats but unblacklist on success
+				// Recovery: clear failure blacklist. Structural classes stay quarantined
+				// unless classification no longer matches (e.g. host recovered / URI change).
 				if entry.blacklist {
 					entry.blacklist = false
 					entry.until = time.Time{}
+				}
+				g := entry.governance
+				if reason := g.ClassifyStructural(entry.info.Protocol, entry.info.URI); reason != "" {
+					// Structural isolates remain out of effective pool even on rare success.
+					entry.quarantineReason = reason
+					entry.available = false
+				} else {
+					// Host quarantine is advisory: a successful probe clears it for this node.
 					entry.quarantineReason = ""
 				}
 			}
@@ -457,17 +462,23 @@ func (m *Manager) Register(info NodeInfo) *EntryHandle {
 	g := m.cfg.Governance
 	g.Normalize()
 	e.governance = g
-	// Apply structural quarantine at registration (does not remove protocol support).
+	// Apply structural quarantine at registration.
+	// Important: do NOT set blacklist=true here — blacklist is reserved for failure/zombie bans.
+	// Quarantined nodes stay out of the effective pool via available=false + initialCheckDone,
+	// and pool selection already skips checked-unavailable members.
 	if reason := g.ClassifyStructural(info.Protocol, info.URI); reason != "" {
 		e.quarantineReason = reason
-		e.blacklist = true
-		e.until = time.Now().Add(g.StructuralDuration)
 		e.available = false
+		e.initialCheckDone = true
+		// clear accidental failure-blacklist only when reason is pure structural and no prior fails?
+		// keep existing blacklist if already failure-banned.
 	} else if reason := g.ClassifyHostQuarantine(info.Protocol, info.URI); reason != "" {
 		e.quarantineReason = reason
-		e.blacklist = true
-		e.until = time.Now().Add(g.StructuralDuration)
 		e.available = false
+		e.initialCheckDone = true
+	} else if e.quarantineReason != "" && (strings.HasPrefix(e.quarantineReason, "isolate_") || strings.HasPrefix(e.quarantineReason, "host_quarantine")) {
+		// URI/protocol changed away from structural class: drop structural reason.
+		e.quarantineReason = ""
 	}
 	return &EntryHandle{ref: e}
 }
@@ -964,16 +975,7 @@ func (h *EntryHandle) SetBlacklistFn(fn func(time.Duration)) {
 	}
 	h.ref.mu.Lock()
 	h.ref.blacklistFn = fn
-	// If already structurally quarantined at Register, push into pool routing state.
-	apply := h.ref.blacklist && h.ref.quarantineReason != "" && fn != nil
-	remain := time.Until(h.ref.until)
 	h.ref.mu.Unlock()
-	if apply {
-		if remain < time.Minute {
-			remain = time.Hour
-		}
-		fn(remain)
-	}
 }
 
 // MarkInitialCheckDone marks the initial health check as completed.

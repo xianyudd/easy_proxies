@@ -448,6 +448,13 @@ func (p *poolOutbound) availableMembersLocked(now time.Time, network string, buf
 		if member.shared != nil && member.shared.isBlacklisted(now) {
 			continue
 		}
+		// Structural quarantine: never select (not even as fallback).
+		if member.entry != nil {
+			snap := member.entry.Snapshot()
+			if snap.QuarantineReason != "" {
+				continue
+			}
+		}
 		if network != "" && !common.Contains(member.outbound.Network(), network) {
 			continue
 		}

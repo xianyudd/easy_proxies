@@ -89,7 +89,10 @@ func TestStructuralQuarantineOnRegister(t *testing.T) {
 	}
 	h := m.Register(NodeInfo{Tag: "hy", Name: "hy", URI: "hysteria2://p@h:443", Protocol: "hysteria2"})
 	snap := h.Snapshot()
-	if !snap.Blacklisted || snap.QuarantineReason == "" {
-		t.Fatalf("expected structural quarantine, got bl=%v reason=%q", snap.Blacklisted, snap.QuarantineReason)
+	if snap.QuarantineReason == "" || snap.Available {
+		t.Fatalf("expected structural quarantine unavailable, got bl=%v avail=%v reason=%q", snap.Blacklisted, snap.Available, snap.QuarantineReason)
+	}
+	if snap.Blacklisted {
+		t.Fatalf("structural quarantine must not set blacklisted=true, reason=%q", snap.QuarantineReason)
 	}
 }
