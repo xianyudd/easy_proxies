@@ -37,6 +37,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		ExternalIP:    cfg.ExternalIP,
 		APIKeys:       append([]config.APIKeyConfig(nil), cfg.Management.APIKeys...),
 		CORSOrigins:   append([]string(nil), cfg.Management.CORSOrigins...),
+		Governance:    monitor.DefaultGovernance(),
 	}
 
 	// Create and start BoxManager

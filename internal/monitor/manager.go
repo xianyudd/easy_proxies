@@ -32,6 +32,8 @@ type Config struct {
 	// Updated via SetConfig when YAML reloads.
 	APIKeys     []config.APIKeyConfig
 	CORSOrigins []string
+	// Governance controls structural quarantine / zombie policy (optional).
+	Governance GovernanceConfig
 }
 
 // NodeInfo is static metadata about a proxy entry.
@@ -69,6 +71,7 @@ type Snapshot struct {
 	ActiveConnections int32           `json:"active_connections"`
 	LastError         string          `json:"last_error,omitempty"`
 	LastErrorStage    string          `json:"last_error_stage,omitempty"` // dial | http_probe | empty on success
+	QuarantineReason  string          `json:"quarantine_reason,omitempty"`
 	LastFailure       time.Time       `json:"last_failure,omitempty"`
 	LastSuccess       time.Time       `json:"last_success,omitempty"`
 	LastProbeLatency  time.Duration   `json:"last_probe_latency,omitempty"`
@@ -100,6 +103,7 @@ type entry struct {
 	until            time.Time
 	lastError        string
 	lastErrorStage   string
+	quarantineReason string
 	lastFail         time.Time
 	lastOK           time.Time
 	lastProbe        time.Duration
@@ -109,6 +113,8 @@ type entry struct {
 	blacklistFn      func(time.Duration)
 	initialCheckDone bool
 	available        bool
+	probeRound       uint64 // for isolated probe thinning
+	governance       GovernanceConfig
 	mu               sync.RWMutex
 }
 
@@ -240,13 +246,38 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 	var failedCount atomic.Int32
 	failureSummary := newProbeFailureSummary(5)
 
+	var skippedIsolated atomic.Int32
 	for _, e := range entries {
-		e.mu.RLock()
+		e.mu.Lock()
 		probeFn := e.probe
 		tag := e.info.Tag
-		e.mu.RUnlock()
+		e.probeRound++
+		round := e.probeRound
+		g := e.governance
+		reason := e.quarantineReason
+		// Thin probes for structural isolates to cut noise.
+		skip := false
+		if g.Enabled && reason != "" && g.IsolatedProbeEveryN > 1 {
+			if int(round)%g.IsolatedProbeEveryN != 1 {
+				skip = true
+			}
+		}
+		// Always skip probe when blacklisted unless expired.
+		if e.blacklist && time.Now().Before(e.until) && reason != "" && g.Enabled {
+			// still allow rare thinned probes above; if skip true leave blacklisted
+			if skip {
+				e.mu.Unlock()
+				skippedIsolated.Add(1)
+				continue
+			}
+		}
+		e.mu.Unlock()
 
 		if probeFn == nil {
+			continue
+		}
+		if skip {
+			skippedIsolated.Add(1)
 			continue
 		}
 
@@ -260,10 +291,14 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 			latency, err := probe(ctx)
 			cancel()
 
+			// Prefer probe func side-effects (RecordFailureStage/Success). Still mirror available flags.
 			entry.mu.Lock()
 			if err != nil {
 				failedCount.Add(1)
-				entry.lastError = err.Error()
+				// stage-prefixed errors may already be recorded by probe func
+				if entry.lastError == "" {
+					entry.lastError = err.Error()
+				}
 				entry.lastFail = time.Now()
 				entry.available = false
 				entry.initialCheckDone = true
@@ -273,6 +308,12 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 				entry.lastProbe = latency
 				entry.available = true
 				entry.initialCheckDone = true
+				// recovery: clear structural quarantine only for non-structural? keep reason for stats but unblacklist on success
+				if entry.blacklist {
+					entry.blacklist = false
+					entry.until = time.Time{}
+					entry.quarantineReason = ""
+				}
 			}
 			entry.mu.Unlock()
 
@@ -284,7 +325,8 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 	wg.Wait()
 
 	if m.logger != nil {
-		m.logger.Info("health check completed: ", availableCount.Load(), " available, ", failedCount.Load(), " failed")
+		m.logger.Info("health check completed: ", availableCount.Load(), " available, ", failedCount.Load(), " failed",
+			", skipped_isolated=", skippedIsolated.Load())
 		if failedCount.Load() > 0 {
 			m.logger.Warn(failureSummary.String())
 		}
@@ -410,6 +452,22 @@ func (m *Manager) Register(info NodeInfo) *EntryHandle {
 		m.nodes[info.Tag] = e
 	} else {
 		e.info = info
+	}
+	// Keep governance pointer fresh for zombie / structural rules.
+	g := m.cfg.Governance
+	g.Normalize()
+	e.governance = g
+	// Apply structural quarantine at registration (does not remove protocol support).
+	if reason := g.ClassifyStructural(info.Protocol, info.URI); reason != "" {
+		e.quarantineReason = reason
+		e.blacklist = true
+		e.until = time.Now().Add(g.StructuralDuration)
+		e.available = false
+	} else if reason := g.ClassifyHostQuarantine(info.Protocol, info.URI); reason != "" {
+		e.quarantineReason = reason
+		e.blacklist = true
+		e.until = time.Now().Add(g.StructuralDuration)
+		e.available = false
 	}
 	return &EntryHandle{ref: e}
 }
@@ -643,6 +701,7 @@ func (e *entry) snapshot() Snapshot {
 		ActiveConnections: e.active.Load(),
 		LastError:         e.lastError,
 		LastErrorStage:    e.lastErrorStage,
+		QuarantineReason:  e.quarantineReason,
 		LastFailure:       e.lastFail,
 		LastSuccess:       e.lastOK,
 		LastProbeLatency:  e.lastProbe,
@@ -672,19 +731,33 @@ func (e *entry) recordFailureStage(err error, stage string) {
 	e.lastFail = time.Now()
 	e.available = false
 	e.appendTimelineLocked(false, 0, errStr)
+
 	// Zombie auto-blacklist: never succeeded but failed many times.
+	// Skip for vmess / flaky vless-ws with history when governance enabled.
+	skipZombie := false
+	thresh := 10
+	dur := 6 * time.Hour
+	if e.governance.Enabled {
+		skipZombie = e.governance.ShouldSkipZombieAutoBlacklist(e.info.Protocol, e.info.URI, e.success)
+	}
+	if e.governance.ZombieZeroSuccessFails > 0 {
+		thresh = e.governance.ZombieZeroSuccessFails
+	}
+	if e.governance.ZombieDuration > 0 {
+		dur = e.governance.ZombieDuration
+	}
 	var zombieFn func(time.Duration)
-	zombie := false
-	if e.success == 0 && e.failure >= 10 && !e.blacklist {
-		zombie = true
+	if !skipZombie && e.success == 0 && e.failure >= thresh && !e.blacklist {
 		zombieFn = e.blacklistFn
-		// Mark monitor state immediately for UI.
 		e.blacklist = true
-		e.until = time.Now().Add(6 * time.Hour)
+		e.until = time.Now().Add(dur)
+		if e.quarantineReason == "" {
+			e.quarantineReason = "zombie_zero_success"
+		}
 	}
 	e.mu.Unlock()
-	if zombie && zombieFn != nil {
-		zombieFn(6 * time.Hour)
+	if zombieFn != nil {
+		zombieFn(dur)
 	}
 }
 
@@ -891,7 +964,16 @@ func (h *EntryHandle) SetBlacklistFn(fn func(time.Duration)) {
 	}
 	h.ref.mu.Lock()
 	h.ref.blacklistFn = fn
+	// If already structurally quarantined at Register, push into pool routing state.
+	apply := h.ref.blacklist && h.ref.quarantineReason != "" && fn != nil
+	remain := time.Until(h.ref.until)
 	h.ref.mu.Unlock()
+	if apply {
+		if remain < time.Minute {
+			remain = time.Hour
+		}
+		fn(remain)
+	}
 }
 
 // MarkInitialCheckDone marks the initial health check as completed.

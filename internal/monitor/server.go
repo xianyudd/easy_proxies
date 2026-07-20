@@ -1943,6 +1943,7 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 			"last_failure":       snap.LastFailure,
 			"last_error":         snap.LastError,
 			"last_error_stage":   snap.LastErrorStage,
+			"quarantine_reason":  snap.QuarantineReason,
 			"available":          snap.Available,
 			"blacklisted":        snap.Blacklisted,
 			"timeline":           snap.Timeline,
@@ -1952,12 +1953,41 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 	if totalCalls > 0 {
 		successRate = float64(totalSuccess) / float64(totalCalls) * 100
 	}
+	// Governance effective-pool metrics (exclude structural quarantine from denominator).
+	gHits := map[string]int{}
+	effectiveTotal, effectiveOK := 0, 0
+	for _, snap := range snapshots {
+		if snap.QuarantineReason != "" {
+			gHits[snap.QuarantineReason]++
+			// strip host detail for rollup keys
+			if i := strings.Index(snap.QuarantineReason, ":"); i > 0 {
+				base := snap.QuarantineReason[:i]
+				gHits[base]++
+			}
+			continue
+		}
+		effectiveTotal++
+		if snap.Available && !snap.Blacklisted {
+			effectiveOK++
+		}
+	}
+	var effectiveRate float64
+	if effectiveTotal > 0 {
+		effectiveRate = float64(effectiveOK) / float64(effectiveTotal) * 100
+	}
 	resp := map[string]any{
 		"node_count":    len(snapshots),
 		"total_calls":   totalCalls,
 		"total_success": totalSuccess,
 		"success_rate":  successRate,
 		"by_protocol":   byProtocol,
+		"governance": map[string]any{
+			"effective_total":   effectiveTotal,
+			"effective_ok":      effectiveOK,
+			"effective_rate":    effectiveRate,
+			"quarantine_hits":   gHits,
+			"quarantined_total": len(snapshots) - effectiveTotal,
+		},
 	}
 	if !summaryOnly {
 		resp["nodes"] = debugNodes
