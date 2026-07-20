@@ -2,6 +2,7 @@ package builder
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 
 	"easy_proxies/internal/config"
@@ -119,4 +120,23 @@ func outboundDetour(t *testing.T, outbound option.Outbound) string {
 		t.Fatalf("outbound %q options %T do not expose dialer options", outbound.Tag, outbound.Options)
 	}
 	return wrapper.TakeDialerOptions().Detour
+}
+
+func TestBuildHysteria2Options_ColonPortRangeInQuery(t *testing.T) {
+	u, err := url.Parse("hysteria2://secret@example.com:443?ports=21000:21999&sni=www.bing.com&insecure=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := buildHysteria2Options(u, false)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if len(opts.ServerPorts) == 0 {
+		t.Fatalf("expected hop ports from 21000:21999, got %#v", opts.ServerPorts)
+	}
+	// sing-box style keeps colon ranges
+	joined := strings.Join([]string(opts.ServerPorts), ",")
+	if !strings.Contains(joined, "21000") || !strings.Contains(joined, "21999") {
+		t.Fatalf("unexpected ports %#v", opts.ServerPorts)
+	}
 }

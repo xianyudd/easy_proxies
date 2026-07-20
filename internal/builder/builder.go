@@ -1327,7 +1327,8 @@ func looksLikeHysteria2PortSet(v string) bool {
 		return false
 	}
 	for _, r := range v {
-		if (r >= '0' && r <= '9') || r == '-' || r == ',' {
+		// accept both 21000-21999 and share-link 21000:21999
+		if (r >= '0' && r <= '9') || r == '-' || r == ':' || r == ',' {
 			continue
 		}
 		return false
