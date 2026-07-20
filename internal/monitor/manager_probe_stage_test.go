@@ -22,11 +22,11 @@ func TestRecordFailureStageAndZombieBlacklist(t *testing.T) {
 		}
 		blacklisted++
 	})
-	for i := 0; i < 9; i++ {
+	for i := 0; i < 14; i++ {
 		h.RecordFailureStage(errors.New("timeout"), ProbeStageDial)
 	}
 	snap := h.Snapshot()
-	if snap.FailureCount != 9 || snap.Blacklisted {
+	if snap.FailureCount != 14 || snap.Blacklisted {
 		t.Fatalf("before threshold: fail=%d bl=%v stage=%q err=%q", snap.FailureCount, snap.Blacklisted, snap.LastErrorStage, snap.LastError)
 	}
 	if snap.LastErrorStage != ProbeStageDial || snap.LastError == "" || snap.LastError[0] != '[' {

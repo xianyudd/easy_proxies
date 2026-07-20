@@ -21,18 +21,20 @@ type GovernanceConfig struct {
 	IsolatedProbeEveryN int `yaml:"isolated_probe_every_n" json:"isolated_probe_every_n"`
 }
 
-// DefaultGovernance returns recommended G1 defaults (safe for vmess / vless-ws).
+// DefaultGovernance returns recovery-oriented defaults.
+// Permanent structural abandon is OFF so experimental protocols can recover;
+// temporary zombie bans still protect the pool from never-working endpoints.
 func DefaultGovernance() GovernanceConfig {
 	return GovernanceConfig{
 		Enabled:                true,
-		IsolateProtocols:       []string{"hysteria2", "hy2", "anytls"},
-		IsolateVlessReality:    true,
-		HostQuarantine:         true,
-		ZombieZeroSuccessFails: 10,
-		ZombieDuration:         6 * time.Hour,
+		IsolateProtocols:       nil, // do not permanently isolate hy2/anytls
+		IsolateVlessReality:    false,
+		HostQuarantine:         false, // static host bans removed; recover on success
+		ZombieZeroSuccessFails: 15,
+		ZombieDuration:         2 * time.Hour,
 		FlakyMinSuccess:        5,
-		StructuralDuration:     24 * time.Hour,
-		IsolatedProbeEveryN:    6, // probe structural isolates ~1/6 as often
+		StructuralDuration:     2 * time.Hour,
+		IsolatedProbeEveryN:    1, // probe every round while recovering
 	}
 }
 

@@ -599,7 +599,15 @@ func buildVLESSOptions(u *url.URL, skipCertVerify bool) (option.VLESSOutboundOpt
 	if flow := query.Get("flow"); flow != "" {
 		opts.Flow = flow
 	}
-	if packetEncoding := query.Get("packetEncoding"); packetEncoding != "" {
+	packetEncoding := query.Get("packetEncoding")
+	if packetEncoding == "" {
+		packetEncoding = query.Get("packet_encoding")
+	}
+	// Vision flow commonly expects xudp packet encoding; many share links omit it.
+	if packetEncoding == "" && strings.Contains(strings.ToLower(query.Get("flow")), "vision") {
+		packetEncoding = "xudp"
+	}
+	if packetEncoding != "" {
 		opts.PacketEncoding = &packetEncoding
 	}
 	if transport, err := buildV2RayTransport(query); err != nil {
@@ -716,6 +724,12 @@ func buildTLSOptions(query url.Values, skipCertVerify bool) (*option.OutboundTLS
 	}
 	if security == "reality" {
 		pbk := query.Get("pbk")
+		if pbk == "" {
+			pbk = query.Get("publicKey")
+		}
+		if pbk == "" {
+			pbk = query.Get("public_key")
+		}
 		// Validate reality public key - must be valid base64 and 32 bytes (43-44 chars base64)
 		if pbk == "" {
 			return nil, fmt.Errorf("reality security requires public_key (pbk parameter)")
@@ -731,7 +745,14 @@ func buildTLSOptions(query url.Values, skipCertVerify bool) (*option.OutboundTLS
 		if len(decoded) != 32 {
 			return nil, fmt.Errorf("invalid reality public_key: expected 32 bytes, got %d", len(decoded))
 		}
-		tlsOptions.Reality = &option.OutboundRealityOptions{Enabled: true, PublicKey: pbk, ShortID: query.Get("sid")}
+		sid := query.Get("sid")
+		if sid == "" {
+			sid = query.Get("shortId")
+		}
+		if sid == "" {
+			sid = query.Get("short_id")
+		}
+		tlsOptions.Reality = &option.OutboundRealityOptions{Enabled: true, PublicKey: pbk, ShortID: sid}
 		// Reality requires uTLS; use default fingerprint if not specified
 		if tlsOptions.UTLS == nil {
 			if fp == "" {
@@ -897,8 +918,13 @@ func buildAnyTLSOptions(u *url.URL, skipCertVerify bool) (option.AnyTLSOutboundO
 		Password:      password,
 	}
 
-	// Parse TLS options
-	if tlsOptions, err := buildTLSOptions(query, skipCertVerify); err != nil {
+	// Parse TLS options. Share links often omit security=tls but still pass sni/fp/alpn.
+	qTLS := query
+	if strings.TrimSpace(qTLS.Get("security")) == "" {
+		qTLS = cloneQuery(query)
+		qTLS.Set("security", "tls")
+	}
+	if tlsOptions, err := buildTLSOptions(qTLS, skipCertVerify); err != nil {
 		return option.AnyTLSOutboundOptions{}, err
 	} else if tlsOptions != nil {
 		opts.OutboundTLSOptionsContainer = option.OutboundTLSOptionsContainer{TLS: tlsOptions}
@@ -1642,4 +1668,14 @@ func stripRegionClassificationURIs(text string) string {
 		kept = append(kept, part)
 	}
 	return strings.Join(kept, " ")
+}
+
+func cloneQuery(v url.Values) url.Values {
+	out := make(url.Values, len(v))
+	for k, vals := range v {
+		cp := make([]string, len(vals))
+		copy(cp, vals)
+		out[k] = cp
+	}
+	return out
 }
