@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,7 +79,20 @@ func (s *sharedMemberState) recordFailure(cause error, threshold int, duration t
 	s.mu.Unlock()
 
 	if entry := s.entry.Load(); entry != nil {
-		entry.RecordFailure(cause)
+		stage := ""
+		if cause != nil {
+			msg := cause.Error()
+			if strings.HasPrefix(msg, monitor.ProbeStageDial) {
+				stage = monitor.ProbeStageDial
+			} else if strings.HasPrefix(msg, monitor.ProbeStageHTTP) {
+				stage = monitor.ProbeStageHTTP
+			}
+		}
+		if stage != "" {
+			entry.RecordFailureStage(cause, stage)
+		} else {
+			entry.RecordFailure(cause)
+		}
 		if triggered {
 			entry.Blacklist(until)
 		}

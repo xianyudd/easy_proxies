@@ -45,6 +45,8 @@ type NodeInfo struct {
 	Region        string `json:"region,omitempty"`  // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
 	Country       string `json:"country,omitempty"` // Full country name from GeoIP
 	Source        string `json:"source,omitempty"`  // Runtime source: inline, nodes_file, subscription, free_proxy
+	Protocol      string `json:"protocol,omitempty"`    // URI scheme: vless, vmess, hysteria2, anytls, ...
+	ViaUpstream   bool   `json:"via_upstream,omitempty"` // true when dialed through upstream_proxy detour
 }
 
 // TimelineEvent represents a single usage event for debug tracking.
@@ -66,6 +68,7 @@ type Snapshot struct {
 	BlacklistedUntil  time.Time       `json:"blacklisted_until"`
 	ActiveConnections int32           `json:"active_connections"`
 	LastError         string          `json:"last_error,omitempty"`
+	LastErrorStage    string          `json:"last_error_stage,omitempty"` // dial | http_probe | empty on success
 	LastFailure       time.Time       `json:"last_failure,omitempty"`
 	LastSuccess       time.Time       `json:"last_success,omitempty"`
 	LastProbeLatency  time.Duration   `json:"last_probe_latency,omitempty"`
@@ -82,6 +85,12 @@ type EntryHandle struct {
 	ref *entry
 }
 
+// Probe stage constants for last_error_stage / diagnostics.
+const (
+	ProbeStageDial = "dial"
+	ProbeStageHTTP = "http_probe"
+)
+
 type entry struct {
 	info             NodeInfo
 	failure          int
@@ -90,6 +99,7 @@ type entry struct {
 	blacklist        bool
 	until            time.Time
 	lastError        string
+	lastErrorStage   string
 	lastFail         time.Time
 	lastOK           time.Time
 	lastProbe        time.Duration
@@ -379,6 +389,11 @@ func (m *Manager) Register(info NodeInfo) *EntryHandle {
 		return nil
 	}
 	info.Tag = tag
+	if strings.TrimSpace(info.Protocol) == "" {
+		if i := strings.Index(info.URI, "://"); i > 0 {
+			info.Protocol = strings.ToLower(info.URI[:i])
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.allowedTags != nil {
@@ -627,6 +642,7 @@ func (e *entry) snapshot() Snapshot {
 		BlacklistedUntil:  e.until,
 		ActiveConnections: e.active.Load(),
 		LastError:         e.lastError,
+		LastErrorStage:    e.lastErrorStage,
 		LastFailure:       e.lastFail,
 		LastSuccess:       e.lastOK,
 		LastProbeLatency:  e.lastProbe,
@@ -638,13 +654,38 @@ func (e *entry) snapshot() Snapshot {
 }
 
 func (e *entry) recordFailure(err error) {
+	e.recordFailureStage(err, "")
+}
+
+func (e *entry) recordFailureStage(err error, stage string) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	errStr := err.Error()
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	if stage != "" && errStr != "" && !strings.HasPrefix(errStr, "[") {
+		errStr = "[" + stage + "] " + errStr
+	}
 	e.failure++
 	e.lastError = errStr
+	e.lastErrorStage = stage
 	e.lastFail = time.Now()
+	e.available = false
 	e.appendTimelineLocked(false, 0, errStr)
+	// Zombie auto-blacklist: never succeeded but failed many times.
+	var zombieFn func(time.Duration)
+	zombie := false
+	if e.success == 0 && e.failure >= 10 && !e.blacklist {
+		zombie = true
+		zombieFn = e.blacklistFn
+		// Mark monitor state immediately for UI.
+		e.blacklist = true
+		e.until = time.Now().Add(6 * time.Hour)
+	}
+	e.mu.Unlock()
+	if zombie && zombieFn != nil {
+		zombieFn(6 * time.Hour)
+	}
 }
 
 func (e *entry) recordSuccess() {
@@ -660,7 +701,11 @@ func (e *entry) recordSuccessWithLatency(latency time.Duration) {
 	defer e.mu.Unlock()
 	e.success++
 	e.lastOK = time.Now()
+	e.lastError = ""
+	e.lastErrorStage = ""
 	e.lastProbe = latency
+	e.available = true
+	e.initialCheckDone = true
 	latencyMs := latency.Milliseconds()
 	if latencyMs == 0 && latency > 0 {
 		latencyMs = 1
@@ -757,6 +802,14 @@ func (h *EntryHandle) RecordFailure(err error) {
 		return
 	}
 	h.ref.recordFailure(err)
+}
+
+// RecordFailureStage records a probe failure with stage=dial|http_probe.
+func (h *EntryHandle) RecordFailureStage(err error, stage string) {
+	if h == nil || h.ref == nil {
+		return
+	}
+	h.ref.recordFailureStage(err, stage)
 }
 
 // RecordSuccess updates the last success timestamp.

@@ -54,6 +54,8 @@ type MemberMeta struct {
 	Region        string // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
 	Country       string // Full country name from GeoIP
 	Source        string // Runtime config source: inline, nodes_file, subscription, free_proxy
+	Protocol      string // URI scheme
+	ViaUpstream   bool   // dials through upstream_proxy detour
 }
 
 // Register wires the pool outbound into the registry.
@@ -129,6 +131,8 @@ func newPool(ctx context.Context, _ adapter.Router, logger singlog.ContextLogger
 				Region:        meta.Region,
 				Country:       meta.Country,
 				Source:        meta.Source,
+				Protocol:      meta.Protocol,
+				ViaUpstream:   meta.ViaUpstream,
 			}
 			entry := monitorMgr.Register(info)
 			if entry != nil {
@@ -229,6 +233,8 @@ func (p *poolOutbound) initializeMembersLocked() error {
 				Region:        meta.Region,
 				Country:       meta.Country,
 				Source:        meta.Source,
+				Protocol:      meta.Protocol,
+				ViaUpstream:   meta.ViaUpstream,
 			}
 			entry := p.monitor.Register(info)
 			if entry != nil {
@@ -295,14 +301,14 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 			start := time.Now()
 			conn, err := m.outbound.DialContext(ctx, N.NetworkTCP, destination)
 			if err != nil {
-				results <- probeResult{member: m, err: err}
+				results <- probeResult{member: m, err: fmt.Errorf("%s: %w", monitor.ProbeStageDial, err)}
 				return
 			}
 
 			_, err = httpProbe(conn, destination.AddrString())
 			conn.Close()
 			if err != nil {
-				results <- probeResult{member: m, err: err}
+				results <- probeResult{member: m, err: fmt.Errorf("%s: %w", monitor.ProbeStageHTTP, err)}
 				return
 			}
 
@@ -313,15 +319,33 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 	// Collect results
 	availableCount := 0
 	failedCount := 0
+	stageDial, stageHTTP := 0, 0
 	for i := 0; i < len(members); i++ {
 		res := <-results
 		if res.err != nil {
 			p.logger.Warn("initial probe failed for ", res.member.tag, ": ", res.err)
 			failedCount++
+			errStr := res.err.Error()
+			if strings.HasPrefix(errStr, monitor.ProbeStageDial) {
+				stageDial++
+			} else if strings.HasPrefix(errStr, monitor.ProbeStageHTTP) {
+				stageHTTP++
+			}
+			// Prefer shared.recordFailure when available (also updates entry once).
 			if res.member.shared != nil {
 				res.member.shared.recordFailure(res.err, 1, p.options.BlacklistDuration)
 			} else if res.member.entry != nil {
-				res.member.entry.RecordFailure(res.err)
+				stage := ""
+				if strings.HasPrefix(errStr, monitor.ProbeStageDial) {
+					stage = monitor.ProbeStageDial
+				} else if strings.HasPrefix(errStr, monitor.ProbeStageHTTP) {
+					stage = monitor.ProbeStageHTTP
+				}
+				if stage != "" {
+					res.member.entry.RecordFailureStage(res.err, stage)
+				} else {
+					res.member.entry.RecordFailure(res.err)
+				}
 			}
 			if res.member.entry != nil {
 				res.member.entry.MarkInitialCheckDone(false)
@@ -337,7 +361,8 @@ func (p *poolOutbound) probeAllMembersOnStartup() {
 		}
 	}
 
-	p.logger.Info("initial health check completed: ", availableCount, " available, ", failedCount, " failed")
+	p.logger.Info("initial health check completed: ", availableCount, " available, ", failedCount, " failed",
+		" (dial_fail=", stageDial, " http_fail=", stageHTTP, ")")
 }
 
 func (p *poolOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -576,9 +601,9 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 		conn, err := member.outbound.DialContext(ctx, N.NetworkTCP, destination)
 		if err != nil {
 			if member.entry != nil {
-				member.entry.RecordFailure(err)
+				member.entry.RecordFailureStage(err, monitor.ProbeStageDial)
 			}
-			return 0, err
+			return 0, fmt.Errorf("%s: %w", monitor.ProbeStageDial, err)
 		}
 		defer conn.Close()
 
@@ -586,9 +611,9 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 		_, err = httpProbe(conn, destination.AddrString())
 		if err != nil {
 			if member.entry != nil {
-				member.entry.RecordFailure(err)
+				member.entry.RecordFailureStage(err, monitor.ProbeStageHTTP)
 			}
-			return 0, err
+			return 0, fmt.Errorf("%s: %w", monitor.ProbeStageHTTP, err)
 		}
 
 		// Total duration = dial time + HTTP probe
@@ -643,9 +668,9 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 		conn, err := member.outbound.DialContext(ctx, N.NetworkTCP, destination)
 		if err != nil {
 			if member.entry != nil {
-				member.entry.RecordFailure(err)
+				member.entry.RecordFailureStage(err, monitor.ProbeStageDial)
 			}
-			return 0, err
+			return 0, fmt.Errorf("%s: %w", monitor.ProbeStageDial, err)
 		}
 		defer conn.Close()
 
@@ -653,9 +678,9 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 		_, err = httpProbe(conn, destination.AddrString())
 		if err != nil {
 			if member.entry != nil {
-				member.entry.RecordFailure(err)
+				member.entry.RecordFailureStage(err, monitor.ProbeStageHTTP)
 			}
-			return 0, err
+			return 0, fmt.Errorf("%s: %w", monitor.ProbeStageHTTP, err)
 		}
 
 		// Total duration = dial time + TTFB

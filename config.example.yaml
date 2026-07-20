@@ -37,7 +37,11 @@ skip_cert_verify: false
 # 示例：upstream_proxy: socks5://127.0.0.1:7890
 upstream_proxy: ""
 
-# 可选：让指定协议绕过 upstream_proxy。常用于 Hy2 UDP 不适合再套一层 SOCKS/HTTP 上游代理的场景。
+# 可选：让指定协议绕过 upstream_proxy（直连节点入口）。
+# - Hy2/AnyTLS 常因 UDP/会话特性不适合再套一层 SOCKS/HTTP 上游，可列入 bypass。
+# - 若本机无法直连这些入口，bypass 会导致探测全部 timeout/EOF；此时要么保证直连可达，
+#   要么临时清空 bypass 做 A/B（Hy2 套 SOCKS 仍可能不理想，以日志/by_protocol 为准）。
+# - VMess/VLESS 等 TCP 协议通常应走 upstream_proxy（不要 bypass），以便统一出口。
 upstream_proxy_bypass:
   protocols: []
   # protocols:

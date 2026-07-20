@@ -1901,9 +1901,29 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	debugNodes := make([]map[string]any, 0, len(snapshots))
+	byProtocol := map[string]map[string]int{}
 	for _, snap := range snapshots {
 		totalCalls += snap.SuccessCount + int64(snap.FailureCount)
 		totalSuccess += snap.SuccessCount
+		proto := strings.TrimSpace(snap.Protocol)
+		if proto == "" {
+			proto = "unknown"
+		}
+		if byProtocol[proto] == nil {
+			byProtocol[proto] = map[string]int{"total": 0, "available": 0, "blacklisted": 0, "dial_fail": 0, "http_fail": 0}
+		}
+		byProtocol[proto]["total"]++
+		if snap.Blacklisted {
+			byProtocol[proto]["blacklisted"]++
+		} else if snap.Available {
+			byProtocol[proto]["available"]++
+		}
+		switch snap.LastErrorStage {
+		case ProbeStageDial:
+			byProtocol[proto]["dial_fail"]++
+		case ProbeStageHTTP:
+			byProtocol[proto]["http_fail"]++
+		}
 		if summaryOnly {
 			continue
 		}
@@ -1912,6 +1932,9 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 			"name":               snap.Name,
 			"mode":               snap.Mode,
 			"port":               snap.Port,
+			"source":             snap.Source,
+			"protocol":           snap.Protocol,
+			"via_upstream":       snap.ViaUpstream,
 			"failure_count":      snap.FailureCount,
 			"success_count":      snap.SuccessCount,
 			"active_connections": snap.ActiveConnections,
@@ -1919,6 +1942,8 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 			"last_success":       snap.LastSuccess,
 			"last_failure":       snap.LastFailure,
 			"last_error":         snap.LastError,
+			"last_error_stage":   snap.LastErrorStage,
+			"available":          snap.Available,
 			"blacklisted":        snap.Blacklisted,
 			"timeline":           snap.Timeline,
 		})
@@ -1932,6 +1957,7 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 		"total_calls":   totalCalls,
 		"total_success": totalSuccess,
 		"success_rate":  successRate,
+		"by_protocol":   byProtocol,
 	}
 	if !summaryOnly {
 		resp["nodes"] = debugNodes

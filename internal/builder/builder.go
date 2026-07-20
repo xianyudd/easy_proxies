@@ -97,16 +97,20 @@ func Build(cfg *config.Config) (option.Options, error) {
 			failedNodes = append(failedNodes, node.Name)
 			continue
 		}
+		viaUpstream := false
 		if upstreamProxy != "" && !shouldBypassUpstreamProxy(node.URI, cfg.UpstreamProxyBypass) {
 			applyOutboundDetour(&outbound, upstreamProxyTag)
+			viaUpstream = true
 		}
 		memberTags = append(memberTags, tag)
 		baseOutbounds = append(baseOutbounds, outbound)
 		meta := poolout.MemberMeta{
-			Name:   node.Name,
-			URI:    node.URI,
-			Mode:   cfg.Mode,
-			Source: string(node.Source),
+			Name:        node.Name,
+			URI:         node.URI,
+			Mode:        cfg.Mode,
+			Source:      string(node.Source),
+			Protocol:    nodeScheme(node.URI),
+			ViaUpstream: viaUpstream,
 		}
 		// For multi-port and hybrid modes, use per-node port
 		if cfg.Mode == "multi-port" || cfg.Mode == "hybrid" {
