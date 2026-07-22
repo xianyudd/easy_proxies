@@ -69,6 +69,13 @@ type Manager struct {
 	cfg            *config.Config
 	monitorCfg     monitor.Config
 
+	// upstreamPreferred is the configured/primary upstream_proxy that should be
+	// persisted and shown in settings. upstreamRuntimeOverride is a temporary
+	// failover value applied only to sing-box reloads; it must never stick on
+	// m.cfg or be written by SaveSettings.
+	upstreamPreferred       string
+	upstreamRuntimeOverride string
+
 	drainTimeout      time.Duration
 	minAvailableNodes int
 	logger            Logger
@@ -84,6 +91,9 @@ func New(cfg *config.Config, monitorCfg monitor.Config, opts ...Option) *Manager
 	m := &Manager{
 		cfg:        cfg,
 		monitorCfg: monitorCfg,
+	}
+	if cfg != nil {
+		m.upstreamPreferred = strings.TrimSpace(cfg.UpstreamProxy)
 	}
 	m.applyConfigSettings(cfg)
 	for _, opt := range opts {
@@ -200,6 +210,9 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 	oldBox := m.currentBox
 	oldCfg := m.cfg
 	m.currentBox = nil // Mark as reloading
+	// Resolve which upstream the new box should actually use, while tracking
+	// the persistable primary separately from any temporary failover override.
+	m.applyUpstreamForBoxBuildLocked(newCfg)
 	m.mu.Unlock()
 
 	if ctx == nil {
@@ -290,6 +303,10 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 	m.mu.Lock()
 	m.currentBox = instance
 	m.cfg = newCfg
+	// Box may have been built with a temporary failover upstream; the
+	// authoritative config object always keeps the preferred primary so
+	// SaveSettings / WebUI never persist the override.
+	m.restorePreferredUpstreamLocked()
 	m.mu.Unlock()
 
 	// Sync config to monitor server so future WebUI settings changes target the current config pointer
@@ -1053,8 +1070,10 @@ func (m *Manager) TriggerReload(ctx context.Context) error {
 	return m.ReloadWithPortMap(cfgCopy, portMap)
 }
 
-// ApplyUpstreamProxy updates the in-memory upstream_proxy and reloads sing-box.
-// It does not write the change to disk (runtime failover/recover only).
+// ApplyUpstreamProxy applies a runtime-only upstream_proxy override and reloads
+// sing-box. Preferred (primary) config is preserved for Save/settings; only the
+// box build uses the temporary value. Passing the preferred (or empty after
+// preferred was set) clears the override and recovers to primary.
 func (m *Manager) ApplyUpstreamProxy(ctx context.Context, upstream string) error {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
@@ -1066,11 +1085,78 @@ func (m *Manager) ApplyUpstreamProxy(ctx context.Context, upstream string) error
 		m.mu.Unlock()
 		return errConfigUnavailable
 	}
-	m.cfg.UpstreamProxy = strings.TrimSpace(upstream)
+	// Capture preferred once from current authoritative config if unset.
+	if strings.TrimSpace(m.upstreamPreferred) == "" {
+		m.upstreamPreferred = strings.TrimSpace(m.cfg.UpstreamProxy)
+	}
+	// If preferred is still empty, treat the first Apply as preferred capture
+	// from the requested value so subsequent failover still has a primary.
+	if strings.TrimSpace(m.upstreamPreferred) == "" {
+		m.upstreamPreferred = strings.TrimSpace(upstream)
+	}
+
+	up := strings.TrimSpace(upstream)
+	pref := strings.TrimSpace(m.upstreamPreferred)
+	if up == "" || up == pref {
+		m.upstreamRuntimeOverride = ""
+	} else {
+		m.upstreamRuntimeOverride = up
+	}
+
+	// Authoritative cfg always holds preferred primary.
+	if pref != "" {
+		m.cfg.UpstreamProxy = pref
+	}
 	cfgCopy := m.copyConfigLocked()
 	portMap := m.cfg.BuildPortMap()
 	m.mu.Unlock()
 	return m.ReloadWithPortMap(cfgCopy, portMap)
+}
+
+// EffectiveUpstreamProxy returns the upstream actually used by the running box
+// (runtime override if set, else preferred / cfg value).
+func (m *Manager) EffectiveUpstreamProxy() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if o := strings.TrimSpace(m.upstreamRuntimeOverride); o != "" {
+		return o
+	}
+	if p := strings.TrimSpace(m.upstreamPreferred); p != "" {
+		return p
+	}
+	if m.cfg != nil {
+		return strings.TrimSpace(m.cfg.UpstreamProxy)
+	}
+	return ""
+}
+
+// PreferredUpstreamProxy returns the configured primary upstream (persistable).
+func (m *Manager) PreferredUpstreamProxy() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if p := strings.TrimSpace(m.upstreamPreferred); p != "" {
+		return p
+	}
+	if m.cfg != nil {
+		return strings.TrimSpace(m.cfg.UpstreamProxy)
+	}
+	return ""
+}
+
+// SetPreferredUpstreamProxy updates the persistable primary upstream and clears
+// any runtime failover override that no longer applies. Call when settings
+// intentionally change upstream_proxy.
+func (m *Manager) SetPreferredUpstreamProxy(upstream string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	up := strings.TrimSpace(upstream)
+	m.upstreamPreferred = up
+	if m.upstreamRuntimeOverride != "" && m.upstreamRuntimeOverride == up {
+		m.upstreamRuntimeOverride = ""
+	}
+	if m.cfg != nil {
+		m.cfg.UpstreamProxy = up
+	}
 }
 
 // ReloadWithPortMap gracefully switches to a new configuration, preserving port assignments.
@@ -1264,7 +1350,57 @@ func (m *Manager) copyConfigLocked() *config.Config {
 		copy(cloned.Subscriptions, m.cfg.Subscriptions)
 	}
 	cloned.SetFilePath(m.cfg.FilePath())
+	// Box builds should use the effective (possibly failed-over) upstream.
+	if o := strings.TrimSpace(m.upstreamRuntimeOverride); o != "" {
+		cloned.UpstreamProxy = o
+	} else if p := strings.TrimSpace(m.upstreamPreferred); p != "" {
+		cloned.UpstreamProxy = p
+	}
 	return &cloned
+}
+
+// applyUpstreamForBoxBuildLocked mutates newCfg.UpstreamProxy to the effective
+// (possibly failed-over) value used to build sing-box, and updates preferred
+// when no override is active. Caller must hold m.mu.
+func (m *Manager) applyUpstreamForBoxBuildLocked(newCfg *config.Config) {
+	if newCfg == nil {
+		return
+	}
+	cur := strings.TrimSpace(newCfg.UpstreamProxy)
+	override := strings.TrimSpace(m.upstreamRuntimeOverride)
+	if override == "" {
+		if cur != "" {
+			m.upstreamPreferred = cur
+		} else if pref := strings.TrimSpace(m.upstreamPreferred); pref != "" {
+			newCfg.UpstreamProxy = pref
+		}
+		return
+	}
+	// Failover active: adopt a new preferred if the incoming config carries a
+	// primary that is not the temporary override (settings change mid-failover).
+	if cur != "" && cur != override {
+		m.upstreamPreferred = cur
+	} else if strings.TrimSpace(m.upstreamPreferred) == "" && cur != "" {
+		m.upstreamPreferred = cur
+	}
+	newCfg.UpstreamProxy = override
+}
+
+// restorePreferredUpstreamLocked ensures m.cfg always holds the persistable
+// primary upstream after a reload that may have used a temporary override.
+// Caller must hold m.mu.
+func (m *Manager) restorePreferredUpstreamLocked() {
+	if m.cfg == nil {
+		return
+	}
+	if strings.TrimSpace(m.upstreamRuntimeOverride) == "" {
+		if cur := strings.TrimSpace(m.cfg.UpstreamProxy); cur != "" {
+			m.upstreamPreferred = cur
+		}
+	}
+	if pref := strings.TrimSpace(m.upstreamPreferred); pref != "" {
+		m.cfg.UpstreamProxy = pref
+	}
 }
 
 func (m *Manager) nodeIndexLocked(name string) int {

@@ -37,11 +37,12 @@ type fakeNodeManager struct {
 	doneOnce    sync.Once
 	reloadCh    chan int
 	reloadBlock chan struct{}
-	nodes       []config.NodeConfig
-	created     []config.NodeConfig
-	updated     []config.NodeConfig
-	updatedName string
-	deleted     []string
+	nodes           []config.NodeConfig
+	created         []config.NodeConfig
+	updated         []config.NodeConfig
+	updatedName     string
+	deleted         []string
+	onApplyUpstream func(string)
 }
 
 func freeLocalListen(t *testing.T) string {
@@ -206,7 +207,9 @@ func (f *fakeNodeManager) TriggerReload(ctx context.Context) error {
 }
 
 func (f *fakeNodeManager) ApplyUpstreamProxy(ctx context.Context, upstream string) error {
-	_ = upstream
+	if f.onApplyUpstream != nil {
+		f.onApplyUpstream(upstream)
+	}
 	return f.TriggerReload(ctx)
 }
 

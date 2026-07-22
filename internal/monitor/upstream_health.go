@@ -281,17 +281,12 @@ func (s *Server) maybeRecover(primary string) {
 }
 
 // applyUpstreamOverride updates runtime upstream via NodeManager and records switch state.
+// It must NOT rewrite cfgSrc.UpstreamProxy: that field is the persistable primary.
+// Runtime failover is applied only through NodeManager.ApplyUpstreamProxy (box build).
 func (s *Server) applyUpstreamOverride(upstream string, toFallback bool, reason string) error {
 	if s.nodeMgr == nil {
 		return fmt.Errorf("node manager not configured")
 	}
-	// Also mirror into cfgSrc for settings display (not persisted unless Save).
-	s.cfgMu.Lock()
-	if s.cfgSrc != nil {
-		s.cfgSrc.UpstreamProxy = strings.TrimSpace(upstream)
-	}
-	s.cfgMu.Unlock()
-
 	if err := s.nodeMgr.ApplyUpstreamProxy(context.Background(), upstream); err != nil {
 		return err
 	}
