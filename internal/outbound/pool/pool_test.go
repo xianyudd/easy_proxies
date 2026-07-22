@@ -261,3 +261,84 @@ func TestEffectiveMultiportDefaults(t *testing.T) {
 		t.Fatalf("threshold=%d", opts.FailureThreshold)
 	}
 }
+
+
+func TestLatencyScoreEWMASmoothsSpike(t *testing.T) {
+	ResetSharedStateStore()
+	s := acquireSharedState("n1")
+	if got := s.latencyScore(100); got != 100 {
+		t.Fatalf("first sample = %d, want 100", got)
+	}
+	// same sample should not recompute
+	if got := s.latencyScore(100); got != 100 {
+		t.Fatalf("same sample = %d", got)
+	}
+	// spike 1000 → ewma = 0.3*1000 + 0.7*100 = 370
+	if got := s.latencyScore(1000); got != 370 {
+		t.Fatalf("after spike = %d, want 370", got)
+	}
+}
+
+func TestSelectMemberStickyWithinMargin(t *testing.T) {
+	ResetSharedStateStore()
+	mgr, err := monitor.NewManager(monitor.Config{})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	// sticky a is clearly worse (500ms); b is first-sample 50ms → outside margin, switch.
+	a := mgr.Register(monitor.NodeInfo{Tag: "a"})
+	a.MarkInitialCheckDone(true)
+	a.RecordSuccessWithLatency(500 * time.Millisecond)
+
+	b := mgr.Register(monitor.NodeInfo{Tag: "b"})
+	b.MarkInitialCheckDone(true)
+	b.RecordSuccessWithLatency(50 * time.Millisecond)
+
+	sa := acquireSharedState("a")
+	sb := acquireSharedState("b")
+	sa.attachEntry(a)
+	sb.attachEntry(b)
+
+	p := &poolOutbound{mode: modeLatency, stickyTag: "a"}
+	candidates := []*memberState{
+		{tag: "b", outbound: newTestOutbound("b", []string{N.NetworkTCP}), entry: b, shared: sb},
+		{tag: "a", outbound: newTestOutbound("a", []string{N.NetworkTCP}), entry: a, shared: sa},
+	}
+	got := p.selectMember(candidates)
+	if got == nil || got.tag != "b" {
+		t.Fatalf("selected %#v, want switch to clearly better b outside sticky margin", got)
+	}
+}
+
+func TestSelectMemberStickyKeepsWhenSlightlyWorse(t *testing.T) {
+	ResetSharedStateStore()
+	mgr, err := monitor.NewManager(monitor.Config{})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	// sticky a at 200; best b at 120 (delta 80 < 150) → keep a
+	a := mgr.Register(monitor.NodeInfo{Tag: "a"})
+	a.MarkInitialCheckDone(true)
+	a.RecordSuccessWithLatency(200 * time.Millisecond)
+
+	b := mgr.Register(monitor.NodeInfo{Tag: "b"})
+	b.MarkInitialCheckDone(true)
+	b.RecordSuccessWithLatency(120 * time.Millisecond)
+
+	sa := acquireSharedState("a")
+	sb := acquireSharedState("b")
+	sa.attachEntry(a)
+	sb.attachEntry(b)
+
+	p := &poolOutbound{mode: modeLatency, stickyTag: "a"}
+	candidates := []*memberState{
+		{tag: "b", outbound: newTestOutbound("b", []string{N.NetworkTCP}), entry: b, shared: sb},
+		{tag: "a", outbound: newTestOutbound("a", []string{N.NetworkTCP}), entry: a, shared: sa},
+	}
+	got := p.selectMember(candidates)
+	if got == nil || got.tag != "a" {
+		t.Fatalf("selected %#v, want sticky a within margin", got)
+	}
+}

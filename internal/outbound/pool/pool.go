@@ -43,6 +43,10 @@ const (
 	// activeConnLatencyPenaltyMs is added per concurrent connection in balance mode so
 	// a slightly slower idle node can beat an overloaded fast node.
 	activeConnLatencyPenaltyMs int64 = 100
+
+	// stickyLatencyMarginMs: keep the previously chosen member while its score is
+	// within this margin of the best candidate (reduces thrashing under noisy probes).
+	stickyLatencyMarginMs int64 = 150
 )
 
 // Options controls pool outbound behaviour.
@@ -94,6 +98,9 @@ type poolOutbound struct {
 	rngMu          sync.Mutex // protects rng for random mode
 	monitor        *monitor.Manager
 	candidatesPool sync.Pool
+	// stickyTag is the last selected member for latency/balance modes.
+	// Sticky selection avoids thrashing when probe noise is within stickyLatencyMarginMs.
+	stickyTag string
 }
 
 func newPool(ctx context.Context, _ adapter.Router, logger singlog.ContextLogger, tag string, options Options) (adapter.Outbound, error) {
@@ -512,6 +519,9 @@ func (p *poolOutbound) selectMember(candidates []*memberState) *memberState {
 		return nil
 	}
 	if len(candidates) == 1 {
+		if p != nil {
+			p.stickyTag = candidates[0].tag
+		}
 		return candidates[0]
 	}
 	switch p.mode {
@@ -521,27 +531,36 @@ func (p *poolOutbound) selectMember(candidates []*memberState) *memberState {
 		p.rngMu.Unlock()
 		return candidates[idx]
 	case modeLatency:
-		// Lowest probe latency wins; break ties with fewer active connections.
-		return selectByScore(candidates, false)
+		// Lowest EWMA latency wins; stick to previous member within a margin.
+		return p.selectByScore(candidates, false)
 	case modeBalance:
-		// Latency-aware least-connections: score = latency_ms + active*penalty.
+		// Latency-aware least-connections: score = ewma_ms + active*penalty.
 		// Keeps load spreading while steering traffic toward faster nodes.
-		return selectByScore(candidates, true)
+		return p.selectByScore(candidates, true)
 	default:
 		idx := int(p.rrCounter.Add(1)-1) % len(candidates)
 		return candidates[idx]
 	}
 }
 
-// memberLatencyMs returns the last successful probe latency for ranking.
+// memberLatencyMs returns a smoothed probe latency for ranking.
+// Uses shared EWMA so single noisy probes do not flip routing every tick.
 // Untested / unknown members get unknownLatencyMs so probed fast nodes win after health checks.
 func memberLatencyMs(member *memberState) int64 {
-	if member == nil || member.entry == nil {
+	if member == nil {
 		return unknownLatencyMs
 	}
-	snap := member.entry.Snapshot()
-	if snap.LastLatencyMs > 0 {
-		return snap.LastLatencyMs
+	var sample int64
+	if member.entry != nil {
+		if snap := member.entry.Snapshot(); snap.LastLatencyMs > 0 {
+			sample = snap.LastLatencyMs
+		}
+	}
+	if member.shared != nil {
+		return member.shared.latencyScore(sample)
+	}
+	if sample > 0 {
+		return sample
 	}
 	return unknownLatencyMs
 }
@@ -556,9 +575,12 @@ func memberActive(member *memberState) int32 {
 // selectByScore picks the member with the lowest selection score.
 // When withActivePenalty is true (balance mode), each concurrent connection adds
 // activeConnLatencyPenaltyMs so overloaded fast nodes yield to idle slightly-slower ones.
-func selectByScore(candidates []*memberState, withActivePenalty bool) *memberState {
-	var selected *memberState
+// Within stickyLatencyMarginMs of the best score, the previous stickyTag is kept.
+func (p *poolOutbound) selectByScore(candidates []*memberState, withActivePenalty bool) *memberState {
+	var best *memberState
 	var bestScore int64
+	var sticky *memberState
+	var stickyScore int64
 	for _, member := range candidates {
 		lat := memberLatencyMs(member)
 		active := memberActive(member)
@@ -566,10 +588,24 @@ func selectByScore(candidates []*memberState, withActivePenalty bool) *memberSta
 		if withActivePenalty {
 			score += int64(active) * activeConnLatencyPenaltyMs
 		}
-		if selected == nil || score < bestScore || (score == bestScore && active < memberActive(selected)) {
-			selected = member
+		if best == nil || score < bestScore || (score == bestScore && active < memberActive(best)) {
+			best = member
 			bestScore = score
 		}
+		if p != nil && p.stickyTag != "" && member.tag == p.stickyTag {
+			sticky = member
+			stickyScore = score
+		}
+	}
+	selected := best
+	if sticky != nil && best != nil && sticky.tag != best.tag {
+		// Keep sticky while it is still "close enough" to the best score.
+		if stickyScore <= bestScore+stickyLatencyMarginMs {
+			selected = sticky
+		}
+	}
+	if p != nil && selected != nil {
+		p.stickyTag = selected.tag
 	}
 	return selected
 }

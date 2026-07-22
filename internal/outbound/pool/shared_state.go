@@ -16,8 +16,12 @@ type sharedMemberState struct {
 	failures         int
 	blacklisted      bool
 	blacklistedUntil time.Time
-	entry            atomic.Pointer[monitor.EntryHandle]
-	active           atomic.Int32
+	// ewmaLatencyMs / lastSampleMs smooth probe latency for selection scoring.
+	// Updated only when a new probe sample is observed (lastSampleMs changes).
+	ewmaLatencyMs int64
+	lastSampleMs  int64
+	entry         atomic.Pointer[monitor.EntryHandle]
+	active        atomic.Int32
 }
 
 var sharedStateStore sync.Map // map[tag]*sharedMemberState
@@ -157,6 +161,37 @@ func (s *sharedMemberState) decActive() {
 
 func (s *sharedMemberState) activeCount() int32 {
 	return s.active.Load()
+}
+
+// latencyScore returns a smoothed latency for selection.
+// sample is the latest probe total latency (ms). When sample is new, EWMA is
+// updated with alpha≈0.3 so one spike does not immediately re-rank the pool.
+// Returns unknownLatencyMs when no sample has been observed yet.
+func (s *sharedMemberState) latencyScore(sample int64) int64 {
+	if s == nil {
+		if sample > 0 {
+			return sample
+		}
+		return unknownLatencyMs
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sample <= 0 {
+		if s.ewmaLatencyMs > 0 {
+			return s.ewmaLatencyMs
+		}
+		return unknownLatencyMs
+	}
+	if s.lastSampleMs != sample {
+		if s.ewmaLatencyMs <= 0 {
+			s.ewmaLatencyMs = sample
+		} else {
+			// alpha=0.3: next = 0.3*sample + 0.7*prev  (integer form)
+			s.ewmaLatencyMs = (sample*3 + s.ewmaLatencyMs*7) / 10
+		}
+		s.lastSampleMs = sample
+	}
+	return s.ewmaLatencyMs
 }
 
 // releaseSharedMember clears blacklist state for a tag (called from release functions).
