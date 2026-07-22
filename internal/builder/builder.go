@@ -327,8 +327,8 @@ func Build(cfg *config.Config) (option.Options, error) {
 			perOptions := poolout.Options{
 				Mode:              "sequential",
 				Members:           []string{tag},
-				FailureThreshold:  cfg.Pool.FailureThreshold,
-				BlacklistDuration: cfg.Pool.BlacklistDuration,
+				FailureThreshold:  cfg.Pool.EffectiveMultiportFailureThreshold(),
+				BlacklistDuration: cfg.Pool.EffectiveMultiportBlacklistDuration(),
 				Metadata:          perMeta,
 			}
 			perPool := option.Outbound{

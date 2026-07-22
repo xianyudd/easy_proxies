@@ -1053,6 +1053,26 @@ func (m *Manager) TriggerReload(ctx context.Context) error {
 	return m.ReloadWithPortMap(cfgCopy, portMap)
 }
 
+// ApplyUpstreamProxy updates the in-memory upstream_proxy and reloads sing-box.
+// It does not write the change to disk (runtime failover/recover only).
+func (m *Manager) ApplyUpstreamProxy(ctx context.Context, upstream string) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	if m.cfg == nil {
+		m.mu.Unlock()
+		return errConfigUnavailable
+	}
+	m.cfg.UpstreamProxy = strings.TrimSpace(upstream)
+	cfgCopy := m.copyConfigLocked()
+	portMap := m.cfg.BuildPortMap()
+	m.mu.Unlock()
+	return m.ReloadWithPortMap(cfgCopy, portMap)
+}
+
 // ReloadWithPortMap gracefully switches to a new configuration, preserving port assignments.
 func (m *Manager) ReloadWithPortMap(newCfg *config.Config, portMap map[string]uint16) error {
 	if newCfg == nil {

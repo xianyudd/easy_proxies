@@ -50,6 +50,7 @@ type Config struct {
 	LogLevel               string                    `yaml:"log_level"`
 	SkipCertVerify         bool                      `yaml:"skip_cert_verify"`          // 全局跳过 SSL 证书验证
 	UpstreamProxy          string                    `yaml:"upstream_proxy"`            // Optional SOCKS/HTTP proxy used as sing-box outbound detour
+	UpstreamProxyFallback  string                    `yaml:"upstream_proxy_fallback"`   // Optional fallback when primary upstream is unhealthy
 	UpstreamProxyBypass    UpstreamProxyBypassConfig `yaml:"upstream_proxy_bypass"`     // Protocols that should bypass upstream_proxy detour
 	FreeProxyDownloadProxy string                    `yaml:"free_proxy_download_proxy"` // HTTP/SOCKS5 proxy for downloading free proxy sources; falls back to HTTPS_PROXY env
 
@@ -94,6 +95,33 @@ type PoolConfig struct {
 	Mode              string        `yaml:"mode"`
 	FailureThreshold  int           `yaml:"failure_threshold"`
 	BlacklistDuration time.Duration `yaml:"blacklist_duration"`
+	// MultiportFailureThreshold applies to single-member multi-port pools only.
+	// 0 means inherit FailureThreshold.
+	MultiportFailureThreshold int `yaml:"multiport_failure_threshold"`
+	// MultiportBlacklistDuration applies to single-member multi-port pools only.
+	// Zero means use the normalized multiport default (shorter than global 24h).
+	// Set equal to blacklist_duration if you want identical behavior.
+	MultiportBlacklistDuration time.Duration `yaml:"multiport_blacklist_duration"`
+}
+
+// EffectiveMultiportFailureThreshold returns the failure threshold for multi-port mini-pools.
+func (p PoolConfig) EffectiveMultiportFailureThreshold() int {
+	if p.MultiportFailureThreshold > 0 {
+		return p.MultiportFailureThreshold
+	}
+	if p.FailureThreshold > 0 {
+		return p.FailureThreshold
+	}
+	return 3
+}
+
+// EffectiveMultiportBlacklistDuration returns the blacklist duration for multi-port mini-pools.
+func (p PoolConfig) EffectiveMultiportBlacklistDuration() time.Duration {
+	if p.MultiportBlacklistDuration > 0 {
+		return p.MultiportBlacklistDuration
+	}
+	// Safer default than 24h: multiport is a single-node entry; long bans kill dedicated ports.
+	return 10 * time.Minute
 }
 
 // MultiPortConfig defines address/credential defaults for multi-port mode.
@@ -758,6 +786,14 @@ func (c *Config) normalize() error {
 	if c.Pool.BlacklistDuration <= 0 {
 		c.Pool.BlacklistDuration = 24 * time.Hour
 	}
+	// Multiport defaults: more tolerant threshold + short ban so dedicated ports recover quickly.
+	// Explicit 0 multiport_failure_threshold inherits FailureThreshold via Effective*.
+	if c.Pool.MultiportFailureThreshold < 0 {
+		c.Pool.MultiportFailureThreshold = 0
+	}
+	if c.Pool.MultiportBlacklistDuration < 0 {
+		c.Pool.MultiportBlacklistDuration = 0
+	}
 	if c.MultiPort.Address == "" {
 		c.MultiPort.Address = "0.0.0.0"
 	}
@@ -1000,6 +1036,13 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	}
 	if c.Pool.BlacklistDuration <= 0 {
 		c.Pool.BlacklistDuration = 24 * time.Hour
+	}
+	// Clamp invalid multiport overrides; 0 inherits via Effective* helpers.
+	if c.Pool.MultiportFailureThreshold < 0 {
+		c.Pool.MultiportFailureThreshold = 0
+	}
+	if c.Pool.MultiportBlacklistDuration < 0 {
+		c.Pool.MultiportBlacklistDuration = 0
 	}
 	if c.MultiPort.Address == "" {
 		c.MultiPort.Address = "0.0.0.0"
@@ -2016,6 +2059,7 @@ func (c *Config) SaveSettings() error {
 	saveCfg.Management.ProbeTarget = c.Management.ProbeTarget
 	saveCfg.SkipCertVerify = c.SkipCertVerify
 	saveCfg.UpstreamProxy = c.UpstreamProxy
+	saveCfg.UpstreamProxyFallback = c.UpstreamProxyFallback
 	saveCfg.UpstreamProxyBypass = c.UpstreamProxyBypass
 	saveCfg.Log = c.Log
 	saveCfg.Subscriptions = c.Subscriptions

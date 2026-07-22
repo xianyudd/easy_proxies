@@ -54,6 +54,8 @@ type NodeManager interface {
 	UpdateNode(ctx context.Context, name string, node config.NodeConfig) (config.NodeConfig, error)
 	DeleteNode(ctx context.Context, name string) error
 	TriggerReload(ctx context.Context) error
+	// ApplyUpstreamProxy sets in-memory upstream_proxy and reloads the box (not persisted).
+	ApplyUpstreamProxy(ctx context.Context, upstream string) error
 }
 
 type reloadStatus struct {
@@ -301,7 +303,7 @@ func normalizeCoreMode(mode string) string {
 
 func isAllowedPoolMode(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "", "sequential", "random", "balance", "round_robin", "least_failures":
+	case "", "sequential", "random", "balance", "latency", "round_robin", "least_failures":
 		return true
 	default:
 		return false
@@ -517,6 +519,9 @@ type Server struct {
 	qualityStop    chan struct{}
 	qualityRunning bool
 	qualityConfig  config.QualityCheckConfig
+
+	// upstreamHealth is C0 observability for upstream_proxy reachability.
+	upstreamHealth upstreamHealthState
 }
 
 // NewServer constructs a server; it can be nil when disabled.
@@ -1217,9 +1222,11 @@ func (s *Server) Start(ctx context.Context) {
 		return
 	}
 	s.ensureQualityScheduler()
+	s.StartUpstreamHealthLoop(20 * time.Second)
 
 	go func() {
 		<-ctx.Done()
+		s.StopUpstreamHealthLoop()
 		s.Shutdown(context.Background())
 	}()
 }
@@ -1939,6 +1946,8 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 			"success_count":      snap.SuccessCount,
 			"active_connections": snap.ActiveConnections,
 			"last_latency_ms":    snap.LastLatencyMs,
+			"last_dial_ms":       snap.LastDialMs,
+			"last_http_ms":       snap.LastHTTPMs,
 			"last_success":       snap.LastSuccess,
 			"last_failure":       snap.LastFailure,
 			"last_error":         snap.LastError,
@@ -1988,6 +1997,7 @@ func (s *Server) handleDebug(w http.ResponseWriter, r *http.Request) {
 			"quarantine_hits":   gHits,
 			"quarantined_total": len(snapshots) - effectiveTotal,
 		},
+		"upstream_health": s.upstreamHealthSnapshot(),
 	}
 	if !summaryOnly {
 		resp["nodes"] = debugNodes
@@ -4396,9 +4406,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"region_ports": cfg.AndroidProxy.RegionPorts,
 			}
 			resp["pool"] = map[string]any{
-				"mode":               settingsPoolMode(cfg.Pool.Mode),
-				"failure_threshold":  settingsPositiveInt(cfg.Pool.FailureThreshold, 3),
-				"blacklist_duration": positiveDurationString(cfg.Pool.BlacklistDuration),
+				"mode":                          settingsPoolMode(cfg.Pool.Mode),
+				"failure_threshold":             settingsPositiveInt(cfg.Pool.FailureThreshold, 3),
+				"blacklist_duration":            positiveDurationString(cfg.Pool.BlacklistDuration),
+				"multiport_failure_threshold":   cfg.Pool.EffectiveMultiportFailureThreshold(),
+				"multiport_blacklist_duration":  positiveDurationString(cfg.Pool.EffectiveMultiportBlacklistDuration()),
 			}
 			resp["management"] = map[string]any{
 				"listen":        cfg.Management.Listen,
@@ -4524,9 +4536,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				RegionPorts map[string]uint16 `json:"region_ports"`
 			} `json:"android_proxy,omitempty"`
 			Pool *struct {
-				Mode              string `json:"mode"`
-				FailureThreshold  int    `json:"failure_threshold"`
-				BlacklistDuration string `json:"blacklist_duration"`
+				Mode                       string `json:"mode"`
+				FailureThreshold           int    `json:"failure_threshold"`
+				BlacklistDuration          string `json:"blacklist_duration"`
+				MultiportFailureThreshold  int    `json:"multiport_failure_threshold"`
+				MultiportBlacklistDuration string `json:"multiport_blacklist_duration"`
 			} `json:"pool,omitempty"`
 			Management *struct {
 				Listen        string               `json:"listen"`
@@ -4600,6 +4614,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		hasPoolMode := hasNestedJSONKey(body, "pool", "mode")
 		hasPoolFailureThreshold := hasNestedJSONKey(body, "pool", "failure_threshold")
 		hasPoolBlacklistDuration := hasNestedJSONKey(body, "pool", "blacklist_duration")
+		hasPoolMultiportFailureThreshold := hasNestedJSONKey(body, "pool", "multiport_failure_threshold")
+		hasPoolMultiportBlacklistDuration := hasNestedJSONKey(body, "pool", "multiport_blacklist_duration")
 		hasManagementListen := hasNestedJSONKey(body, "management", "listen")
 		hasManagementPassword := hasNestedJSONKey(body, "management", "password")
 		hasManagementClearPassword := hasNestedJSONKey(body, "management", "clear_password")
@@ -4681,6 +4697,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, map[string]any{"error": "无效的节点池失败阈值", "code": "invalid_pool_failure_threshold"})
 				return
 			}
+			if hasPoolMultiportFailureThreshold && req.Pool.MultiportFailureThreshold < 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "无效的多端口失败阈值", "code": "invalid_pool_multiport_failure_threshold"})
+				return
+			}
 		}
 		var poolBlacklistDuration time.Duration
 		if req.Pool != nil && hasPoolBlacklistDuration && strings.TrimSpace(req.Pool.BlacklistDuration) != "" {
@@ -4696,6 +4717,21 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			poolBlacklistDuration = d
+		}
+		var poolMultiportBlacklistDuration time.Duration
+		if req.Pool != nil && hasPoolMultiportBlacklistDuration && strings.TrimSpace(req.Pool.MultiportBlacklistDuration) != "" {
+			d, err := time.ParseDuration(req.Pool.MultiportBlacklistDuration)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": fmt.Sprintf("无效的多端口黑名单时长: %v", err), "code": "invalid_pool_multiport_blacklist_duration"})
+				return
+			}
+			if d <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, map[string]any{"error": "多端口黑名单时长必须大于 0", "code": "invalid_pool_multiport_blacklist_duration"})
+				return
+			}
+			poolMultiportBlacklistDuration = d
 		}
 		var geoIPAutoUpdateInterval time.Duration
 		if req.GeoIP != nil && strings.TrimSpace(req.GeoIP.AutoUpdateInterval) != "" {
@@ -4997,6 +5033,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if hasPoolBlacklistDuration && strings.TrimSpace(req.Pool.BlacklistDuration) != "" {
 				s.cfgSrc.Pool.BlacklistDuration = poolBlacklistDuration
+			}
+			if hasPoolMultiportFailureThreshold {
+				s.cfgSrc.Pool.MultiportFailureThreshold = req.Pool.MultiportFailureThreshold
+			}
+			if hasPoolMultiportBlacklistDuration && strings.TrimSpace(req.Pool.MultiportBlacklistDuration) != "" {
+				s.cfgSrc.Pool.MultiportBlacklistDuration = poolMultiportBlacklistDuration
 			}
 		}
 		if req.Management != nil {

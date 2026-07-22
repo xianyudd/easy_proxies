@@ -34,8 +34,16 @@ log:
 skip_cert_verify: false
 
 # 可选：节点出站前置代理。用于当前机器无法直连节点入口时，让 VLESS/VMess/AnyTLS 等 TCP 出站通过 SOCKS/HTTP 代理拨号。
-# 示例：upstream_proxy: socks5://127.0.0.1:7890
+# 示例：
+# Optional dedicated local relay (see scripts/upstream_relay_*.sh):
+#   systemctl --user status easy_proxies_upstream
+#   upstream_proxy: socks5://127.0.0.1:17890
+# Leave system Clash on 7890 untouched; EP uses the relay only.
+
+upstream_proxy: socks5://127.0.0.1:7890
 upstream_proxy: ""
+# upstream_proxy_fallback: socks5://127.0.0.1:7890  # used when primary fails health checks
+
 
 # 可选：让指定协议绕过 upstream_proxy（直连节点入口）。
 # - Hy2/AnyTLS 常因 UDP/会话特性不适合再套一层 SOCKS/HTTP 上游，可列入 bypass。
@@ -65,12 +73,21 @@ listener:
 # 代理池配置
 # ───────────────────────────────────────────────────────────────
 pool:
-  # 调度模式: sequential（顺序）, random（随机）, balance（均衡）
+  # 调度模式:
+  #   sequential  顺序轮询
+  #   random      随机
+  #   balance     延迟感知的最少连接（latency + active*100ms），默认生产推荐
+  #   latency     纯最低延迟（同延迟时选更少连接）
   mode: sequential
-  # 连续失败多少次后加入黑名单
+  # 连续失败多少次后加入黑名单（全局池）
   failure_threshold: 3
-  # 黑名单持续时间
+  # 黑名单持续时间（全局池）
   blacklist_duration: 24h
+  # 多端口单节点池：更宽松阈值 + 更短封禁，避免 dedicated 端口被 24h 废掉
+  # multiport_failure_threshold: 5   # 0/省略 = 继承 failure_threshold
+  # multiport_blacklist_duration: 10m  # 省略 = 默认 10m
+  multiport_failure_threshold: 5
+  multiport_blacklist_duration: 10m
 
 # ───────────────────────────────────────────────────────────────
 # 多端口模式配置（multi-port / hybrid 模式使用）

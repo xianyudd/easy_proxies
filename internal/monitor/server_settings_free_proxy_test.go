@@ -205,6 +205,11 @@ func (f *fakeNodeManager) TriggerReload(ctx context.Context) error {
 	return f.err
 }
 
+func (f *fakeNodeManager) ApplyUpstreamProxy(ctx context.Context, upstream string) error {
+	_ = upstream
+	return f.TriggerReload(ctx)
+}
+
 func (f *fakeNodeManager) ReloadCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

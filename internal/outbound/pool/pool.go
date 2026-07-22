@@ -33,6 +33,16 @@ const (
 	modeSequential = "sequential"
 	modeRandom     = "random"
 	modeBalance    = "balance"
+	// modeLatency prefers the lowest last_latency_ms among healthy members.
+	modeLatency = "latency"
+
+	// unknownLatencyMs deprioritizes members that have never been successfully probed.
+	// Large enough to lose to any realistic probe RTT, small enough to avoid overflow.
+	unknownLatencyMs int64 = 60_000
+
+	// activeConnLatencyPenaltyMs is added per concurrent connection in balance mode so
+	// a slightly slower idle node can beat an overloaded fast node.
+	activeConnLatencyPenaltyMs int64 = 100
 )
 
 // Options controls pool outbound behaviour.
@@ -169,11 +179,13 @@ func normalizeOptions(options Options) Options {
 	if options.Metadata == nil {
 		options.Metadata = make(map[string]MemberMeta)
 	}
-	switch strings.ToLower(options.Mode) {
+	switch strings.ToLower(strings.TrimSpace(options.Mode)) {
 	case modeRandom:
 		options.Mode = modeRandom
 	case modeBalance:
 		options.Mode = modeBalance
+	case modeLatency:
+		options.Mode = modeLatency
 	default:
 		options.Mode = modeSequential
 	}
@@ -496,30 +508,70 @@ func (p *poolOutbound) releaseIfAllBlacklistedLocked(now time.Time) bool {
 }
 
 func (p *poolOutbound) selectMember(candidates []*memberState) *memberState {
+	if len(candidates) == 0 {
+		return nil
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
 	switch p.mode {
 	case modeRandom:
 		p.rngMu.Lock()
 		idx := p.rng.Intn(len(candidates))
 		p.rngMu.Unlock()
 		return candidates[idx]
+	case modeLatency:
+		// Lowest probe latency wins; break ties with fewer active connections.
+		return selectByScore(candidates, false)
 	case modeBalance:
-		var selected *memberState
-		var minActive int32
-		for _, member := range candidates {
-			var active int32
-			if member.shared != nil {
-				active = member.shared.activeCount()
-			}
-			if selected == nil || active < minActive {
-				selected = member
-				minActive = active
-			}
-		}
-		return selected
+		// Latency-aware least-connections: score = latency_ms + active*penalty.
+		// Keeps load spreading while steering traffic toward faster nodes.
+		return selectByScore(candidates, true)
 	default:
 		idx := int(p.rrCounter.Add(1)-1) % len(candidates)
 		return candidates[idx]
 	}
+}
+
+// memberLatencyMs returns the last successful probe latency for ranking.
+// Untested / unknown members get unknownLatencyMs so probed fast nodes win after health checks.
+func memberLatencyMs(member *memberState) int64 {
+	if member == nil || member.entry == nil {
+		return unknownLatencyMs
+	}
+	snap := member.entry.Snapshot()
+	if snap.LastLatencyMs > 0 {
+		return snap.LastLatencyMs
+	}
+	return unknownLatencyMs
+}
+
+func memberActive(member *memberState) int32 {
+	if member == nil || member.shared == nil {
+		return 0
+	}
+	return member.shared.activeCount()
+}
+
+// selectByScore picks the member with the lowest selection score.
+// When withActivePenalty is true (balance mode), each concurrent connection adds
+// activeConnLatencyPenaltyMs so overloaded fast nodes yield to idle slightly-slower ones.
+func selectByScore(candidates []*memberState, withActivePenalty bool) *memberState {
+	var selected *memberState
+	var bestScore int64
+	for _, member := range candidates {
+		lat := memberLatencyMs(member)
+		active := memberActive(member)
+		score := lat
+		if withActivePenalty {
+			score += int64(active) * activeConnLatencyPenaltyMs
+		}
+		if selected == nil || score < bestScore || (score == bestScore && active < memberActive(selected)) {
+			selected = member
+			bestScore = score
+		}
+	}
+	return selected
 }
 
 func (p *poolOutbound) recordFailure(member *memberState, cause error) {
@@ -613,9 +665,10 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 			return 0, fmt.Errorf("%s: %w", monitor.ProbeStageDial, err)
 		}
 		defer conn.Close()
+		dialDur := time.Since(start)
 
 		// Perform HTTP probe to measure actual latency (TTFB)
-		_, err = httpProbe(conn, destination.AddrString())
+		httpDur, err := httpProbe(conn, destination.AddrString())
 		if err != nil {
 			if member.entry != nil {
 				member.entry.RecordFailureStage(err, monitor.ProbeStageHTTP)
@@ -626,7 +679,7 @@ func (p *poolOutbound) makeProbeFunc(member *memberState) func(ctx context.Conte
 		// Total duration = dial time + HTTP probe
 		duration := time.Since(start)
 		if member.entry != nil {
-			member.entry.RecordSuccessWithLatency(duration)
+			member.entry.RecordSuccessWithLatencyBreakdown(duration, dialDur, httpDur)
 		}
 		// Clear pool blacklist on successful probe — a node that passes
 		// health check should be available for selection immediately,
@@ -680,9 +733,10 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 			return 0, fmt.Errorf("%s: %w", monitor.ProbeStageDial, err)
 		}
 		defer conn.Close()
+		dialDur := time.Since(start)
 
 		// Perform HTTP probe to measure actual latency (TTFB)
-		_, err = httpProbe(conn, destination.AddrString())
+		httpDur, err := httpProbe(conn, destination.AddrString())
 		if err != nil {
 			if member.entry != nil {
 				member.entry.RecordFailureStage(err, monitor.ProbeStageHTTP)
@@ -693,7 +747,7 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 		// Total duration = dial time + TTFB
 		duration := time.Since(start)
 		if member.entry != nil {
-			member.entry.RecordSuccessWithLatency(duration)
+			member.entry.RecordSuccessWithLatencyBreakdown(duration, dialDur, httpDur)
 		}
 		// Clear pool blacklist on successful probe (fixes #8, #9)
 		if member.shared != nil {

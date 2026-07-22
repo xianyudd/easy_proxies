@@ -76,6 +76,8 @@ type Snapshot struct {
 	LastSuccess       time.Time       `json:"last_success,omitempty"`
 	LastProbeLatency  time.Duration   `json:"last_probe_latency,omitempty"`
 	LastLatencyMs     int64           `json:"last_latency_ms"`
+	LastDialMs        int64           `json:"last_dial_ms,omitempty"`
+	LastHTTPMs        int64           `json:"last_http_ms,omitempty"`
 	Available         bool            `json:"available"`
 	InitialCheckDone  bool            `json:"initial_check_done"`
 	Timeline          []TimelineEvent `json:"timeline,omitempty"`
@@ -107,6 +109,8 @@ type entry struct {
 	lastFail         time.Time
 	lastOK           time.Time
 	lastProbe        time.Duration
+	lastDial         time.Duration
+	lastHTTP         time.Duration
 	active           atomic.Int32
 	probe            probeFunc
 	release          releaseFunc
@@ -696,6 +700,20 @@ func (e *entry) snapshot() Snapshot {
 			latencyMs = 1
 		}
 	}
+	dialMs := int64(0)
+	if e.lastDial > 0 {
+		dialMs = e.lastDial.Milliseconds()
+		if dialMs == 0 {
+			dialMs = 1
+		}
+	}
+	httpMs := int64(0)
+	if e.lastHTTP > 0 {
+		httpMs = e.lastHTTP.Milliseconds()
+		if httpMs == 0 {
+			httpMs = 1
+		}
+	}
 
 	var timelineCopy []TimelineEvent
 	if len(e.timeline) > 0 {
@@ -717,6 +735,8 @@ func (e *entry) snapshot() Snapshot {
 		LastSuccess:       e.lastOK,
 		LastProbeLatency:  e.lastProbe,
 		LastLatencyMs:     latencyMs,
+		LastDialMs:        dialMs,
+		LastHTTPMs:        httpMs,
 		Available:         e.available,
 		InitialCheckDone:  e.initialCheckDone,
 		Timeline:          timelineCopy,
@@ -781,17 +801,26 @@ func (e *entry) recordSuccess() {
 }
 
 func (e *entry) recordSuccessWithLatency(latency time.Duration) {
+	e.recordSuccessWithLatencyBreakdown(latency, 0, 0)
+}
+
+func (e *entry) recordSuccessWithLatencyBreakdown(total, dial, httpPart time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.success++
 	e.lastOK = time.Now()
 	e.lastError = ""
 	e.lastErrorStage = ""
-	e.lastProbe = latency
+	if total <= 0 && (dial > 0 || httpPart > 0) {
+		total = dial + httpPart
+	}
+	e.lastProbe = total
+	e.lastDial = dial
+	e.lastHTTP = httpPart
 	e.available = true
 	e.initialCheckDone = true
-	latencyMs := latency.Milliseconds()
-	if latencyMs == 0 && latency > 0 {
+	latencyMs := total.Milliseconds()
+	if latencyMs == 0 && total > 0 {
 		latencyMs = 1
 	}
 	e.appendTimelineLocked(true, latencyMs, "")
@@ -910,6 +939,15 @@ func (h *EntryHandle) RecordSuccessWithLatency(latency time.Duration) {
 		return
 	}
 	h.ref.recordSuccessWithLatency(latency)
+}
+
+// RecordSuccessWithLatencyBreakdown records total/dial/http probe timings.
+// total should be dial+http wall time; dial/http may be zero when unknown.
+func (h *EntryHandle) RecordSuccessWithLatencyBreakdown(total, dial, httpPart time.Duration) {
+	if h == nil || h.ref == nil {
+		return
+	}
+	h.ref.recordSuccessWithLatencyBreakdown(total, dial, httpPart)
 }
 
 // Snapshot returns a consistent copy of the current entry state.
