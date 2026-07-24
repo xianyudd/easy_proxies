@@ -1142,9 +1142,9 @@ adb_status() {
   adb -s "$ADB_SERIAL" shell settings list global | grep -E 'proxy|http_proxy' || true
 }
 
-web_dev() { (cd web && npm run dev); }
-web_typecheck() { (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run typecheck); }
-web_build() { (cd web && npm_config_cache="${NPM_CONFIG_CACHE:-/tmp/easy_proxies-npm-cache}" npm run build); }
+web_dev() { (cd web && pnpm run dev); }
+web_typecheck() { (cd web && PNPM_STORE_DIR="${PNPM_STORE_DIR:-/tmp/easy_proxies-pnpm-store}" pnpm run typecheck); }
+web_build() { (cd web && PNPM_STORE_DIR="${PNPM_STORE_DIR:-/tmp/easy_proxies-pnpm-store}" pnpm run build); }
 
 if [ "${EPCTL_LIB_ONLY:-0}" = "1" ]; then
   if (return 0 2>/dev/null); then
