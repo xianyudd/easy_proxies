@@ -40,7 +40,7 @@ skip_cert_verify: false
 #   upstream_proxy: socks5://127.0.0.1:17890
 # Leave system Clash on 7890 untouched; EP uses the relay only.
 
-upstream_proxy: socks5://127.0.0.1:7890
+# upstream_proxy: socks5://127.0.0.1:7890
 upstream_proxy: ""
 # upstream_proxy_fallback: socks5://127.0.0.1:7890  # used when primary fails health checks
 
