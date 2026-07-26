@@ -10,7 +10,8 @@ import { cancelQualityJob, createQualityJob, getQualityJob, getQualityJobResults
 import { Button } from '../components/ui/Button'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { Badge } from '../components/ui/Badge'
-import { CfDistributionChart, ReputationRiskChart, CfScoreRankChart } from '../components/charts/QualityCharts'
+import { CfDistributionChart, ReputationRiskChart, CfScoreRankChart, rankChartIsLatency } from '../components/charts/QualityCharts'
+import { ChevronDown } from 'lucide-react'
 import { REGION_META, regionMeta } from '../components/charts/region'
 import { useToast } from '../components/ui/Toast'
 import { useAppStore } from '../store/appStore'
@@ -123,6 +124,7 @@ export function QualityPage() {
   const [resultPage, setResultPage] = useState(1)
   const [resultPageSize, setResultPageSize] = useState(20)
   const [filter, setFilter] = useState('all')
+  const [chartsOpen, setChartsOpen] = useState(false)
   const [tierFilter, setTierFilter] = useState('all')
   const [poolFilter, setPoolFilter] = useState('all')
   const [mobileResultPage, setMobileResultPage] = useState(1)
@@ -298,16 +300,23 @@ export function QualityPage() {
     window.history.replaceState(null, '', '#extractor')
     toast('已带入代理提取页', 'ok')
   }
+  const rankIsLatency = rankChartIsLatency(rows.slice(0, 10).map(item => item.row))
   const columns = useMemo<ColumnsType<QualityRow>>(() => [
-    { title: '节点', dataIndex: 'node', width: 220, fixed: 'left', render: (_, item) => <div><strong>{item.row.node_name || item.row.node_tag || '-'}</strong><br/><span className="muted mono">{item.row.node_tag || ''}</span></div> },
-    { title: '地区/端口', width: 110, render: (_, item) => `${regionLabel(item.row.region)}:${item.row.port || '-'}` },
-    { title: '出口 IP', width: 150, render: (_, item) => item.row.exit_ip || '-' },
-    { title: 'CF 分', width: 120, sorter: jobId ? undefined : (a, b) => (Number(a.row.score) || 0) - (Number(b.row.score) || 0), render: (_, item) => <Badge tone={levelTone(item.row.level)}>{item.row.score ?? '-'} / {cfLabel(item.row.level)}</Badge> },
-    { title: 'IP 风险', width: 130, render: (_, item) => <Badge tone={levelTone(item.repRisk)}>{item.repRisk}{item.rep ? ` / ${riskScore(item.rep)}` : ''}</Badge> },
-    { title: 'Tier/池', width: 180, render: (_, item) => <div><Badge tone={qualityTone(item.score)}>{item.tier || '-'}</Badge><br /><span className="muted mono">{item.pool || '-'}</span></div> },
-    { title: '综合质量', width: 140, sorter: jobId ? undefined : (a, b) => a.score - b.score, defaultSortOrder: jobId ? undefined : 'descend', render: (_, item) => <Badge tone={qualityTone(item.score)}>{item.score} / {qualityLabel(item.score)}</Badge> },
-    { title: '延迟', width: 100, sorter: jobId ? undefined : (a, b) => (Number(a.row.latency_ms) || 0) - (Number(b.row.latency_ms) || 0), render: (_, item) => `${item.row.latency_ms || 0} ms` },
-    { title: '操作', width: 190, fixed: 'right', render: (_, item) => <Space size={6}><Button variant="primary" onClick={() => { void copyToClipboard(proxyUrl(item.row), toast, '代理已复制') }}>复制</Button><Button onClick={() => { void copyToClipboard(`curl -x ${proxyUrl(item.row)} http://cp.cloudflare.com/generate_204`, toast, 'curl 已复制') }}>curl</Button><Button onClick={() => extract(item.row)}>提取</Button></Space> },
+    { title: '节点', dataIndex: 'node', width: 210, fixed: 'left', render: (_, item) => <div className="q-node"><strong title={String(item.row.node_name || '')}>{item.row.node_name || item.row.node_tag || '-'}</strong><span className="muted mono">{item.row.node_tag || ''}</span></div> },
+    // Long region names ("中国香港特别行政区") wrap and double the row height.
+    { title: '地区/端口', width: 132, render: (_, item) => <span className="q-region" title={`${regionLabel(item.row.region)}:${item.row.port || '-'}`}>{regionLabel(item.row.region)}<em>:{item.row.port || '-'}</em></span> },
+    // IPv6 exit addresses wrap to three lines and blow up the row height.
+    { title: '出口 IP', width: 140, render: (_, item) => <span className="mono uri-clip q-ip" title={String(item.row.exit_ip || '')}>{item.row.exit_ip || '-'}</span> },
+    { title: 'CF 分', width: 110, sorter: jobId ? undefined : (a, b) => (Number(a.row.score) || 0) - (Number(b.row.score) || 0), render: (_, item) => <Badge tone={levelTone(item.row.level)}>{item.row.score ?? '-'} / {cfLabel(item.row.level)}</Badge> },
+    // Unmeasured cells stay plain text — a badge with a status dot implies a
+    // verdict that was never computed.
+    { title: 'IP 风险', width: 110, render: (_, item) => item.rep ? <Badge tone={levelTone(item.repRisk)}>{item.repRisk} / {riskScore(item.rep)}</Badge> : <span className="muted">未检测</span> },
+    { title: 'Tier/池', width: 150, render: (_, item) => item.tier || item.pool
+      ? <div className="q-tier"><Badge tone={qualityTone(item.score)}>{item.tier || '-'}</Badge>{item.pool ? <span className="muted mono">{item.pool}</span> : null}</div>
+      : <span className="muted">—</span> },
+    { title: '综合质量', width: 130, sorter: jobId ? undefined : (a, b) => a.score - b.score, defaultSortOrder: jobId ? undefined : 'descend', render: (_, item) => <Badge tone={qualityTone(item.score)}>{item.score} / {qualityLabel(item.score)}</Badge> },
+    { title: '延迟', width: 100, sorter: jobId ? undefined : (a, b) => (Number(a.row.latency_ms) || 0) - (Number(b.row.latency_ms) || 0), render: (_, item) => <span className="q-lat">{item.row.latency_ms || 0} ms</span> },
+    { title: '操作', width: 206, fixed: 'right', render: (_, item) => <Space size={6}><Button variant="primary" onClick={() => { void copyToClipboard(proxyUrl(item.row), toast, '代理已复制') }}>复制</Button><Button onClick={() => { void copyToClipboard(`curl -x ${proxyUrl(item.row)} http://cp.cloudflare.com/generate_204`, toast, 'curl 已复制') }}>curl</Button><Button onClick={() => extract(item.row)}>提取</Button></Space> },
   ], [jobId, proxyUrl, toast, extract])
   return <Page
     className="quality-page"
@@ -363,9 +372,6 @@ export function QualityPage() {
         </div>
       </div>}
     </section>
-    <section className="sec">
-      <div className="charts-grid quality-charts"><div className="chart-panel"><div className="chart-title">CF 评分分布 <span>{jobId ? 'Current Page' : 'Compatibility'}</span></div><CfDistributionChart rows={activeCfRows} /></div><div className="chart-panel"><div className="chart-title">IP 风险等级 <span>{jobId ? 'Current Page' : 'Reputation'}</span></div><ReputationRiskChart rows={activeRepRows} /></div><div className="chart-panel wide compact-rank-chart"><div className="chart-title">CF 高分节点排行 <span>{jobId ? 'Current Page' : 'Top Scores'}</span></div><CfScoreRankChart rows={rows.slice(0, 10).map(item => item.row)} /></div></div>
-    </section>
     <section className="sec quality-table-card">
       <div className="ftoolbar">
         <Select className="console-select f-select" aria-label="结果筛选" value={filter} onChange={setFilter} disabled={!!jobId} options={[{ value: 'all', label: jobId ? '后台任务分页结果' : '全部等级' }, { value: 'excellent', label: '优秀' }, { value: 'good', label: '良好' }, { value: 'fair', label: '一般' }, { value: 'poor', label: '较差' }, { value: 'failed', label: '失败' }]} />
@@ -374,7 +380,7 @@ export function QualityPage() {
         <span className="f-end">{jobId ? `当前页 ${rows.length} / 共 ${jobResults.data?.count || 0} 条` : `${rows.length} 条结果`}</span>
       </div>
       <div className="quality-table-desktop">
-        <Table className="quality-table" columns={columns} dataSource={rows} size="middle" scroll={{ x: 1260 }} pagination={jobId ? { current: resultPage, pageSize: resultPageSize, total: jobResults.data?.count || 0, size: 'small', showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`, onChange: (page, pageSize) => { setResultPage(page); setResultPageSize(pageSize) } } : { pageSize: 10, size: 'small', showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条` }} locale={{ emptyText: jobResults.isError ? '任务结果接口失败，请先重试。' : hasCacheError ? '质量缓存加载失败，请先重试。' : '暂无质量数据，请先检测或查看缓存。' }} />
+        <Table className="quality-table" columns={columns} dataSource={rows} size="middle" scroll={{ x: 1300 }} pagination={jobId ? { current: resultPage, pageSize: resultPageSize, total: jobResults.data?.count || 0, size: 'small', showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`, onChange: (page, pageSize) => { setResultPage(page); setResultPageSize(pageSize) } } : { pageSize: 10, size: 'small', showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条` }} locale={{ emptyText: jobResults.isError ? '任务结果接口失败，请先重试。' : hasCacheError ? '质量缓存加载失败，请先重试。' : '暂无质量数据，请先检测或查看缓存。' }} />
       </div>
       <div className="quality-mobile-list" aria-label="移动端质量卡片列表">
         {mobileRows.length ? mobileRows.map(item => (
@@ -420,5 +426,22 @@ export function QualityPage() {
         />
       </div>}
     </section>
+    {(activeCfRows.length > 0 || activeRepRows.length > 0) && <section className="sec quality-charts-sec">
+      <button
+        type="button"
+        className="sec-toggle"
+        onClick={() => setChartsOpen(v => !v)}
+        aria-expanded={chartsOpen}
+      >
+        <ChevronDown size={15} className={chartsOpen ? 'is-open' : ''} />
+        <span className="sec-title">分布概览</span>
+        <span className="sec-desc">{chartsOpen ? '收起图表' : `CF 评分 · IP 风险 · ${rankIsLatency ? '延迟排行' : '高分排行'}`}</span>
+      </button>
+      {chartsOpen && <div className="charts-grid quality-charts">
+        <div className="chart-panel"><div className="chart-title">CF 评分分布 <span>{jobId ? 'Current Page' : 'Compatibility'}</span></div><CfDistributionChart rows={activeCfRows} /></div>
+        <div className="chart-panel"><div className="chart-title">IP 风险等级 <span>{jobId ? 'Current Page' : 'Reputation'}</span></div><ReputationRiskChart rows={activeRepRows} /></div>
+        <div className="chart-panel wide compact-rank-chart"><div className="chart-title">{rankIsLatency ? '最快节点排行' : 'CF 高分节点排行'} <span>{rankIsLatency ? 'By Latency' : 'Top Scores'}</span></div><CfScoreRankChart rows={rows.slice(0, 10).map(item => item.row)} /></div>
+      </div>}
+    </section>}
   </Page>
 }

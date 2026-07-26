@@ -6140,3 +6140,118 @@ body.ep-auth-screen #root {
   font-style: normal;
   color: var(--orange);
 }
+
+/* ===== Quality page polish ===== */
+/* Chart empty state instead of an axis with no series */
+.chart-empty {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+/* Collapsible section header (charts) */
+.sec-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.sec-toggle > svg {
+  align-self: center;
+  color: var(--muted);
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.sec-toggle > svg.is-open { transform: rotate(0deg); }
+
+.sec-toggle:hover .sec-title { color: var(--primary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sec-toggle > svg { transition: none; }
+}
+
+/* Table cells: keep rows single-height even with IPv6 exits */
+.quality-table .q-node {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.quality-table .q-node strong {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quality-table .q-node .mono {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quality-table .q-ip {
+  display: inline-block;
+  max-width: 128px;
+  font-size: 12px;
+}
+
+.quality-table .q-tier {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.quality-table .q-tier .mono {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quality-table .q-lat {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quality-table .ant-table-tbody > tr > td {
+  vertical-align: middle;
+}
+
+/* Region/port cell: one line, port kept legible when the name truncates */
+.quality-table .q-region {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  max-width: 118px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+}
+
+.quality-table .q-region em {
+  font-style: normal;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
