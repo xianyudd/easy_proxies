@@ -66,3 +66,6 @@ createRoot(rootElement).render(
     </QueryClientProvider>
   </React.StrictMode>,
 )
+
+// Hand off from the inline pre-boot markup once React owns the screen.
+document.getElementById('ep-preboot')?.remove()

@@ -5,9 +5,75 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Easy Proxies</title>
+    <script>
+      // Paint in the stored theme before any CSS/JS loads, otherwise a reload
+      // flashes white on the way to a dark console.
+      (function () {
+        try {
+          var t = localStorage.getItem('easy-proxies-theme') === 'light' ? 'light' : 'dark'
+          document.documentElement.dataset.theme = t
+        } catch (e) {
+          document.documentElement.dataset.theme = 'dark'
+        }
+      })()
+    </script>
+    <style>
+      /* Inline pre-boot: the bundle is ~1.2MB, so #root stays empty for a
+         moment on reload. Mirrors .ep-boot in globals.css. */
+      html[data-theme='dark'] { background: #101113; color-scheme: dark }
+      html[data-theme='light'] { background: #f7f8fa; color-scheme: light }
+      #ep-preboot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font-family: "Inter", "Segoe UI", "PingFang SC", system-ui, sans-serif;
+      }
+      #ep-preboot .m {
+        width: 30px;
+        height: 30px;
+        display: grid;
+        place-items: center;
+        border-radius: 7px;
+        background: #5661d6;
+        color: #fff;
+        font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      html[data-theme='dark'] #ep-preboot .m { background: #7c85e8; color: #101114 }
+      #ep-preboot .b {
+        width: 128px;
+        height: 3px;
+        margin-top: 14px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(127, 127, 127, 0.22);
+      }
+      #ep-preboot .b i {
+        display: block;
+        width: 40%;
+        height: 100%;
+        border-radius: 999px;
+        background: #5661d6;
+        animation: ep-preboot-run 1.05s ease-in-out infinite;
+      }
+      html[data-theme='dark'] #ep-preboot .b i { background: #7c85e8 }
+      @keyframes ep-preboot-run {
+        0% { transform: translateX(-120%) }
+        100% { transform: translateX(320%) }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #ep-preboot .b i { animation: none }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="ep-preboot">
+      <div style="display: grid; justify-items: center">
+        <div class="m">EP</div>
+        <div class="b"><i></i></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

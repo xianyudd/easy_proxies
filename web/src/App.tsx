@@ -7,6 +7,7 @@ import { UNAUTHORIZED_EVENT } from './api/client'
 import { Button } from './components/ui/Button'
 import { Toast, useToast } from './components/ui/Toast'
 import { hashForTab, tabFromHash, type AppTab } from './app/routes'
+import { BootScreen } from './components/motion/BootScreen'
 import { ExtractorPage } from './pages/ExtractorPage'
 import { NodeOverviewPage } from './pages/NodeOverviewPage'
 import { RegionReviewPage } from './pages/RegionReviewPage'
@@ -29,7 +30,7 @@ const PAGE_BY_TAB: Record<AppTab, () => ReactElement> = {
   diagnostics: DiagnosticsPage,
 }
 
-function LoginPage({ mode }: { mode: 'boot' | 'login' }) {
+function LoginPage() {
   const [password, setPassword] = useState('')
   const setAuthed = useAppStore(s => s.setAuthenticated)
   const setActiveTab = useAppStore(s => s.setActiveTab)
@@ -61,7 +62,7 @@ function LoginPage({ mode }: { mode: 'boot' | 'login' }) {
   })
 
   return (
-    <div className="ep-login" data-mode={mode}>
+    <div className="ep-login">
       <form
         className="login-box ep-login-box"
         onSubmit={(e) => {
@@ -78,7 +79,7 @@ function LoginPage({ mode }: { mode: 'boot' | 'login' }) {
           </div>
         </div>
         <p className="muted">
-          {mode === 'boot' ? '正在校验会话…若需要请输入本地管理密码。' : '请输入本地管理密码以进入控制台。'}
+          请输入本地管理密码以进入控制台。
         </p>
         <label htmlFor="login-password" className="sr-only">管理密码</label>
         <input
@@ -144,9 +145,11 @@ export default function App() {
     }
   }, [authProbe.data?.authenticated, authProbe.isError, authProbe.isSuccess, authenticated, setAuthenticated])
 
-  // Strict: no Sidebar/Topbar until authenticated. Full-screen auth only.
-  if (bootstrappingAuth) return <LoginPage mode="boot" />
-  if (authenticated === 'unauthenticated') return <LoginPage mode="login" />
+  // Strict: no app chrome until authenticated. While the session probe is in
+  // flight we don't yet know whether a password is required — show the boot
+  // screen instead of flashing the login form on every reload.
+  if (bootstrappingAuth) return <BootScreen />
+  if (authenticated === 'unauthenticated') return <LoginPage />
 
   const ActivePage = PAGE_BY_TAB[activeTab] || ExtractorPage
   return (
