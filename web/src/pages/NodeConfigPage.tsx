@@ -209,7 +209,7 @@ export function NodeConfigPage() {
     ]}
     actions={
       <>
-        <Button onClick={() => { void nodesQuery.refetch() }} disabled={nodesQuery.isFetching}><RefreshCw size={16} />{nodesQuery.isFetching ? '刷新中...' : '刷新'}</Button>
+        <Button onClick={() => { void nodesQuery.refetch() }} disabled={nodesQuery.isFetching}><RefreshCw size={16} className={nodesQuery.isFetching ? 'spin' : undefined} />{nodesQuery.isFetching ? '刷新中...' : '刷新'}</Button>
         <Button onClick={() => startReload.mutate()} disabled={!needReload || startReload.isPending || isReloading}><ServerCog size={16} />{isReloading ? '重载中...' : '手动重载'}</Button>
         <Button variant="primary" onClick={() => { if (editorOpen && !editingName) { resetDraft() } else { setEditingName(null); setDraft(emptyDraft); setEditorOpen(true) } }}><Plus size={16} />{editorOpen && !editingName ? '收起表单' : '新增节点'}</Button>
       </>

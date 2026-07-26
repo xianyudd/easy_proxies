@@ -239,7 +239,7 @@ export function RegionReviewPage() {
     ]}
     actions={
       <>
-        <Button onClick={() => { void nodes.refetch() }} disabled={nodes.isFetching}><RefreshCw size={16} />{nodes.isFetching ? '刷新中...' : '刷新'}</Button>
+        <Button onClick={() => { void nodes.refetch() }} disabled={nodes.isFetching}><RefreshCw size={16} className={nodes.isFetching ? 'spin' : undefined} />{nodes.isFetching ? '刷新中...' : '刷新'}</Button>
         <Button onClick={() => startReload.mutate()} disabled={!needReload || startReload.isPending || isReloading}><ServerCog size={16} />{isReloading ? '重载中...' : '重载入池'}</Button>
         <Button variant="primary" title={selectedConfirmations.length ? `批量确认 ${selectedConfirmations.length} 个节点的地区` : '先在列表中为节点选择地区'} onClick={confirmBatch} disabled={!selectedConfirmations.length || batchConfirmRegions.isPending || confirmRegion.isPending}>{batchConfirmRegions.isPending ? '确认中...' : `确认已选${selectedConfirmations.length ? `（${selectedConfirmations.length}）` : ''}`}</Button>
       </>

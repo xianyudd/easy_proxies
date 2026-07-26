@@ -725,7 +725,7 @@ export function ApiKeysPage() {
       description="为脚本与服务签发访问凭证；明文仅在创建/轮换时显示一次。"
       actions={
         <Button onClick={() => { void keysQuery.refetch(); void settings.refetch() }} disabled={keysQuery.isFetching}>
-          <RefreshCw size={15} />刷新
+          <RefreshCw size={15} className={keysQuery.isFetching ? 'spin' : undefined} />刷新
         </Button>
       }
       stats={headerStats}
