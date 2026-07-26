@@ -33,6 +33,10 @@ func Build(cfg *config.Config) (option.Options, error) {
 	var failedNodes []string
 	usedTags := make(map[string]int) // Track tag usage for uniqueness
 
+	// Prefetch ECH configs for all nodes up front (parallel, disk-backed).
+	// buildTLSOptions then injects Config so handshakes skip live DoH.
+	prefetchECHForNodes(cfg.Nodes)
+
 	// Initialize GeoIP lookup if enabled. Free-proxy nodes usually arrive as
 	// bare IP:port entries without country hints, so when a local database is
 	// already present we also use it for classification even if the GeoIP HTTP
@@ -421,8 +425,44 @@ func Build(cfg *config.Config) (option.Options, error) {
 		}
 	}
 
+	// DNS topology deliberately avoids upstream_proxy:
+	//   1. local  — host stub/UDP (works on WSL + host-net container)
+	//   2. udp-1.1.1.1 / udp-8.8.8.8 — direct public resolvers, no detour
+	// DoH-via-7890 was removed: health checks + ECH handshakes stampeded the
+	// upstream and turned every ECH dial into "fetch ECH config list: 7890 timeout".
+	// ECH configs are prefetched into OutboundECHOptions.Config (see ech_cache.go),
+	// so runtime DNS is only a last-resort fallback.
+	dnsFinal := "local"
+	dnsServers := []option.DNSServerOptions{
+		{
+			Type:    C.DNSTypeLocal,
+			Tag:     "local",
+			Options: &option.LocalDNSServerOptions{},
+		},
+		{
+			Type: C.DNSTypeUDP,
+			Tag:  "udp-cloudflare",
+			Options: &option.RemoteDNSServerOptions{
+				DNSServerAddressOptions: option.DNSServerAddressOptions{
+					Server: "1.1.1.1",
+				},
+			},
+		},
+		{
+			Type: C.DNSTypeUDP,
+			Tag:  "udp-google",
+			Options: &option.RemoteDNSServerOptions{
+				DNSServerAddressOptions: option.DNSServerAddressOptions{
+					Server: "8.8.8.8",
+				},
+			},
+		},
+	}
+	route.DefaultDomainResolver = &option.DomainResolveOptions{Server: dnsFinal}
+
 	opts := option.Options{
 		Log:       &option.LogOptions{Level: strings.ToLower(cfg.LogLevel)},
+		DNS:       &option.DNSOptions{RawDNSOptions: option.RawDNSOptions{Servers: dnsServers, Final: dnsFinal}},
 		Inbounds:  inbounds,
 		Outbounds: outbounds,
 		Route:     &route,
@@ -699,6 +739,23 @@ func hysteriaTLSOptions(host string, query url.Values, skipCertVerify bool) *opt
 	return tlsOptions
 }
 
+// isECHEnabled reports whether the share-link / Clash-derived query enables ECH.
+// Accepts: "1"/"true"/"yes"/"on", or any non-empty value that is not an explicit
+// disable token. Share links may carry mihomo-style payloads such as
+// "cloudflare-ech.com+https://doh.pub/dns-query"; sing-box only needs Enabled.
+func isECHEnabled(query url.Values) bool {
+	v := strings.TrimSpace(query.Get("ech"))
+	if v == "" {
+		return false
+	}
+	switch strings.ToLower(v) {
+	case "0", "false", "no", "off", "disable", "disabled":
+		return false
+	default:
+		return true
+	}
+}
+
 func buildTLSOptions(query url.Values, skipCertVerify bool) (*option.OutboundTLSOptions, error) {
 	security := strings.ToLower(query.Get("security"))
 	if security == "" || security == "none" {
@@ -721,6 +778,24 @@ func buildTLSOptions(query url.Values, skipCertVerify bool) (*option.OutboundTLS
 	fp := query.Get("fp")
 	if fp != "" {
 		tlsOptions.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fp}
+	}
+	if isECHEnabled(query) {
+		// Prefer a pre-fetched PEM config so handshake never depends on live
+		// DoH through upstream_proxy. Empty Config remains as a last-resort
+		// fallback when cache miss + offline DNS both fail.
+		echOpts := &option.OutboundECHOptions{Enabled: true}
+		sni := tlsOptions.ServerName
+		if sni == "" {
+			sni = echSNIFromQuery(query, "")
+		}
+		if sni != "" {
+			if pemBody, err := getECHCache().GetOrFetch(sni); err == nil && pemBody != "" {
+				echOpts.Config = pemToConfigLines(pemBody)
+			} else if err != nil {
+				log.Printf("[ech] cache miss for sni=%s: %v (runtime DNS fallback)", sni, err)
+			}
+		}
+		tlsOptions.ECH = echOpts
 	}
 	if security == "reality" {
 		pbk := query.Get("pbk")
@@ -1234,6 +1309,22 @@ func buildTrojanTLSOptions(query url.Values, skipCertVerify bool) (*option.Outbo
 
 	if fp := query.Get("fp"); fp != "" {
 		tlsOptions.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fp}
+	}
+
+	if isECHEnabled(query) {
+		echOpts := &option.OutboundECHOptions{Enabled: true}
+		sni := tlsOptions.ServerName
+		if sni == "" {
+			sni = echSNIFromQuery(query, "")
+		}
+		if sni != "" {
+			if pemBody, err := getECHCache().GetOrFetch(sni); err == nil && pemBody != "" {
+				echOpts.Config = pemToConfigLines(pemBody)
+			} else if err != nil {
+				log.Printf("[ech] cache miss for sni=%s: %v (runtime DNS fallback)", sni, err)
+			}
+		}
+		tlsOptions.ECH = echOpts
 	}
 
 	return tlsOptions, nil

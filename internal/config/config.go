@@ -1582,6 +1582,8 @@ type clashProxy struct {
 	ALPN                 []string `yaml:"alpn"`
 	CongestionController string   `yaml:"congestion-controller"`
 	UDPRelayMode         string   `yaml:"udp-relay-mode"`
+	// ECH (Encrypted Client Hello) — Clash Meta / mihomo
+	ECHOpts *clashECHOptions `yaml:"ech-opts"`
 }
 
 type clashWSOptions struct {
@@ -1596,6 +1598,21 @@ type clashGrpcOptions struct {
 type clashRealityOptions struct {
 	PublicKey string `yaml:"public-key"`
 	ShortID   string `yaml:"short-id"`
+}
+
+// clashECHOptions maps Clash Meta / mihomo ech-opts.
+// sing-box resolves ECH config via DNS HTTPS on the TLS SNI; QueryServerName is
+// a mihomo-only dial hint and is intentionally not propagated into the URI.
+type clashECHOptions struct {
+	Enable          bool   `yaml:"enable"`
+	QueryServerName string `yaml:"query-server-name"`
+}
+
+// applyECHParams writes ech=1 when Clash ech-opts.enable is true.
+func applyECHParams(params url.Values, p clashProxy) {
+	if p.ECHOpts != nil && p.ECHOpts.Enable {
+		params.Set("ech", "1")
+	}
 }
 
 func clashClientFingerprint(p clashProxy) string {
@@ -1675,6 +1692,7 @@ func buildVMessURI(p clashProxy) string {
 	if fingerprint := clashClientFingerprint(p); fingerprint != "" {
 		params.Set("fp", fingerprint)
 	}
+	applyECHParams(params, p)
 
 	query := ""
 	if len(params) > 0 {
@@ -1736,6 +1754,7 @@ func buildVLESSURI(p clashProxy) string {
 	if fingerprint := clashClientFingerprint(p); fingerprint != "" {
 		params.Set("fp", fingerprint)
 	}
+	applyECHParams(params, p)
 
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s", p.UUID, p.Server, int(p.Port), params.Encode(), url.QueryEscape(p.Name))
 }
@@ -1764,6 +1783,7 @@ func buildTrojanURI(p clashProxy) string {
 	if fingerprint := clashClientFingerprint(p); fingerprint != "" {
 		params.Set("fp", fingerprint)
 	}
+	applyECHParams(params, p)
 
 	query := ""
 	if len(params) > 0 {
@@ -1789,6 +1809,7 @@ func buildAnyTLSURI(p clashProxy) string {
 	if len(p.ALPN) > 0 {
 		params.Set("alpn", strings.Join(p.ALPN, ","))
 	}
+	applyECHParams(params, p)
 
 	query := ""
 	if len(params) > 0 {
