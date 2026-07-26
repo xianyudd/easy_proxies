@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Rollback EP upstream_proxy to system Clash SOCKS (default 192.168.8.6:7890).
+# Rollback EP upstream_proxy to system Clash SOCKS (default 127.0.0.1:7890).
 # Usage:
 #   scripts/upstream_relay_rollback.sh
 #   UPSTREAM=socks5://127.0.0.1:7890 scripts/upstream_relay_rollback.sh
 set -euo pipefail
 
-UPSTREAM="${UPSTREAM:-socks5://192.168.8.6:7890}"
+UPSTREAM="${UPSTREAM:-socks5://127.0.0.1:7890}"
 UNIT_MAIN="${UNIT_MAIN:-easy_proxies_main.service}"
 CONTAINER="${CONTAINER:-easy_proxies_main}"
 STOP_RELAY="${STOP_RELAY:-0}"

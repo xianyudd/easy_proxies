@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,9 +60,11 @@ type Manager struct {
 func New(cfg *config.Config, boxMgr *boxmgr.Manager, opts ...Option) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create optimized HTTP client with connection pooling
+	// Create optimized HTTP client with connection pooling.
+	// Prefer free_proxy_download_proxy (same download egress as free-proxy sources),
+	// then process env (HTTP_PROXY/HTTPS_PROXY), then direct.
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		Proxy: subscriptionProxyFunc(cfg.FreeProxyDownloadProxy),
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -95,6 +98,20 @@ func New(cfg *config.Config, boxMgr *boxmgr.Manager, opts ...Option) *Manager {
 		m.logger = defaultLogger{}
 	}
 	return m
+}
+
+// subscriptionProxyFunc routes subscription fetches through an explicit proxy when set.
+// Empty proxyURL falls back to HTTP(S)_PROXY env (same as before this fix).
+func subscriptionProxyFunc(proxyURL string) func(*http.Request) (*url.URL, error) {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return http.ProxyFromEnvironment
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return http.ProxyFromEnvironment
+	}
+	return http.ProxyURL(u)
 }
 
 // Start begins the periodic refresh loop.

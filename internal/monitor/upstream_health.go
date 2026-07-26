@@ -3,7 +3,9 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -119,7 +121,7 @@ func (s *Server) checkUpstreamOnce() {
 	}
 	s.cfgMu.RUnlock()
 	if fallback == "" {
-		fallback = "socks5://192.168.8.6:7890"
+		fallback = "socks5://127.0.0.1:7890"
 	}
 
 	s.upstreamHealth.mu.Lock()
@@ -160,17 +162,10 @@ func (s *Server) checkUpstreamOnce() {
 		return
 	}
 
-	host, port, err := parseUpstreamHostPort(target)
-	if err != nil {
-		h.OK = false
-		h.Error = err.Error()
-		s.storeUpstreamHealth(h, false)
-		s.maybeFailover(primary, fallback, "parse_error: "+err.Error())
-		return
-	}
-	addr := net.JoinHostPort(host, port)
+	// Probe real proxy capability (not just TCP open on listen port).
+	// A local relay can accept connections while all its outbounds are dead.
 	start := time.Now()
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	err := probeUpstreamProxy(target, 5*time.Second)
 	h.LatencyMs = time.Since(start).Milliseconds()
 	if err != nil {
 		h.OK = false
@@ -182,7 +177,6 @@ func (s *Server) checkUpstreamOnce() {
 		s.maybeFailover(primary, fallback, err.Error())
 		return
 	}
-	_ = conn.Close()
 	h.OK = true
 	s.storeUpstreamHealth(h, true)
 	if usingFallback {
@@ -328,4 +322,68 @@ func parseUpstreamHostPort(raw string) (host, port string, err error) {
 		}
 	}
 	return host, port, nil
+}
+
+// probeUpstreamProxy verifies the proxy can actually forward traffic.
+// TCP-only checks miss the common failure mode: local relay listening but all
+// outbounds dead (port open, every dial times out).
+func probeUpstreamProxy(proxyURL string, timeout time.Duration) error {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return fmt.Errorf("empty upstream")
+	}
+	if !strings.Contains(proxyURL, "://") {
+		proxyURL = "socks5://" + proxyURL
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return err
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("missing host in upstream %q", proxyURL)
+	}
+
+	// Fast path: refuse if the listen port itself is closed.
+	host, port, err := parseUpstreamHostPort(proxyURL)
+	if err != nil {
+		return err
+	}
+	addr := net.JoinHostPort(host, port)
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(u),
+		DialContext: (&net.Dialer{
+			Timeout: 3 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   3 * time.Second,
+		ResponseHeaderTimeout: 3 * time.Second,
+		DisableKeepAlives:     true,
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	// Plain HTTP probe avoids TLS issues and matches sing-box urltest targets.
+	resp, err := client.Get("http://www.gstatic.com/generate_204")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	// 204 is ideal; any 2xx/3xx means the proxy forwarded successfully.
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return nil
+	}
+	return fmt.Errorf("probe status %d", resp.StatusCode)
 }
