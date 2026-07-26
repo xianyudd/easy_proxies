@@ -26,6 +26,7 @@ function safeArray<T>(value: unknown): T[] {
 export function ExtractorPage() {
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const params = useExtractorStore(s => s.params)
+  const resultParams = useExtractorStore(s => s.resultParams)
   const entries = useExtractorStore(s => s.entries)
   const meta = useExtractorStore(s => s.meta)
   const warnings = useExtractorStore(s => s.warnings)
@@ -54,29 +55,48 @@ export function ExtractorPage() {
     } catch { /* ignore */ }
   }, [setParams])
 
+  // Set when a run is triggered by toggling reveal rather than by the user
+  // pressing generate — those runs shouldn't hijack the clipboard.
+  const implicitRunRef = useRef(false)
+
   const mutation = useMutation({
     mutationFn: getExtractor,
     onSuccess: async (data, vars) => {
-      setResult(data)
+      setResult(data, vars)
       setRunId(n => n + 1)
       const generated = safeArray<ExtractorEntry>(data.entries)
       const out = entriesToText(generated)
-      if (copyAlso && out) {
+      const implicit = implicitRunRef.current
+      implicitRunRef.current = false
+      if (implicit) {
+        toast(vars.reveal ? '已重新生成 · 显示真实凭据' : '已重新生成 · 凭据已脱敏', 'ok')
+      } else if (copyAlso && out) {
         await copyToClipboard(out, toast, '已生成并复制')
       } else {
         toast(generated.length ? `已生成 ${generated.length} 条` : '已生成', 'ok')
       }
       // Auto-expand raw only when output is not a simple line list
       if (generated.some(e => typeof e !== 'string')) setRawOpen(true)
-      void vars
     },
-    onError: (e) => toast(e instanceof Error ? e.message : '提取失败', 'error'),
+    onError: (e) => {
+      implicitRunRef.current = false
+      toast(e instanceof Error ? e.message : '提取失败', 'error')
+    },
   })
 
   const busy = mutation.isPending
   const resultCount = entries.length
   const text = entriesToText(entries)
-  const formatLabel = formats.find(([value]) => value === params.format)?.[1] || params.format
+  // The result header must describe what was generated, not what the form
+  // currently holds — otherwise changing a control relabels stale output.
+  const shownParams = resultParams || params
+  const formatLabel = formats.find(([value]) => value === shownParams.format)?.[1] || shownParams.format
+  const paramsChanged = !!resultParams && (
+    resultParams.mode !== params.mode
+    || resultParams.format !== params.format
+    || resultParams.region !== params.region
+    || resultParams.count !== params.count
+  )
 
   const run = (patch?: Partial<ExtractorParams>) => {
     if (busy) return
@@ -148,7 +168,16 @@ export function ExtractorPage() {
                   size="small"
                   aria-label="显示真实凭据"
                   checked={params.reveal}
-                  onChange={v => setParams({ reveal: v })}
+                  onChange={v => {
+                    setParams({ reveal: v })
+                    // Masking happens server-side, so existing output has to be
+                    // re-fetched — otherwise the label flips while plaintext
+                    // credentials stay on screen.
+                    if (resultCount && !busy) {
+                      implicitRunRef.current = true
+                      run({ reveal: v })
+                    }
+                  }}
                   disabled={busy}
                 />
               </div>
@@ -223,7 +252,10 @@ export function ExtractorPage() {
                 <span>
                   <em>{resultCount}</em> 条 · {formatLabel}
                 </span>
-                <span>{params.reveal ? '明文凭据' : '凭据已隐藏'}</span>
+                <span className="extractor-output-flags">
+                  {paramsChanged ? <em className="is-stale">参数已改，重新生成后生效</em> : null}
+                  <span>{shownParams.reveal ? '明文凭据' : '凭据已脱敏'}</span>
+                </span>
               </div>
             ) : null}
 

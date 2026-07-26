@@ -3,11 +3,13 @@ import type { ExtractorEntry, ExtractorParams, ExtractorResponse } from '../type
 
 interface ExtractorState {
   params: ExtractorParams
+  /** Params the current entries were actually generated with (null before any run). */
+  resultParams: ExtractorParams | null
   entries: ExtractorEntry[]
   meta: string
   warnings: string[]
   setParams: (patch: Partial<ExtractorParams>) => void
-  setResult: (data: ExtractorResponse) => void
+  setResult: (data: ExtractorResponse, usedParams: ExtractorParams) => void
   clear: () => void
 }
 
@@ -25,14 +27,16 @@ function safeArray<T>(value: unknown): T[] {
 
 export const useExtractorStore = create<ExtractorState>((set) => ({
   params: defaultExtractorParams,
+  resultParams: null,
   entries: [],
   meta: '尚未生成',
   warnings: [],
   setParams: (patch) => set((state) => ({ params: { ...state.params, ...patch } })),
-  setResult: (data) => set({
+  setResult: (data, usedParams) => set({
     entries: safeArray<ExtractorEntry>(data.entries),
     warnings: safeArray<string>(data.warnings),
+    resultParams: { ...usedParams },
     meta: `模式: ${data.mode} | 区域: ${data.region} | 格式: ${data.effective_format} | 输出: ${data.output_count}/${data.requested_count} | ${data.masked ? '已脱敏' : '真实凭据'}`,
   }),
-  clear: () => set({ entries: [], warnings: [], meta: '尚未生成' }),
+  clear: () => set({ entries: [], warnings: [], meta: '尚未生成', resultParams: null }),
 }))

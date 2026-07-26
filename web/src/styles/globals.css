@@ -5983,3 +5983,160 @@ body.ep-auth-screen #root {
     animation: none;
   }
 }
+
+/* ============================================================
+   Extractor results: dense terminal-style list.
+   One row per proxy, quiet gutter index, hover-revealed actions,
+   click-anywhere-to-copy.
+   ============================================================ */
+.px-results {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.px-result-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.px-result-row {
+  display: flex;
+  align-items: stretch;
+  min-height: 34px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  transition: background 0.12s ease;
+}
+
+.px-result-row:last-child { border-bottom: 0; }
+.px-result-row:hover { background: var(--panel-hover); }
+.px-result-row.is-copied { background: color-mix(in srgb, var(--green) 12%, transparent); }
+
+.px-result-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px 0 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.px-result-main:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  outline-offset: -2px;
+}
+
+.px-result-idx {
+  flex: 0 0 auto;
+  width: 22px;
+  text-align: right;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.px-result-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.px-result-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.px-result-row:hover .px-result-actions,
+.px-result-row:focus-within .px-result-actions,
+.px-result-row.is-copied .px-result-actions {
+  opacity: 1;
+}
+
+.px-result-act {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.px-result-act:hover {
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  color: var(--text);
+}
+
+.px-result-row.is-copied .px-result-act { color: var(--green); }
+
+.px-results.is-block .px-result-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.px-results.is-block .px-result-main {
+  align-items: flex-start;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.px-results.is-block .px-result-idx { padding-top: 2px; }
+
+.px-result-more {
+  margin: 0;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (hover: none) {
+  .px-result-actions { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .px-result-row,
+  .px-result-actions,
+  .px-result-act { transition: none; }
+}
+
+/* Result meta flags: stale-params warning next to the credential state */
+.extractor-output-flags {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.extractor-output-flags .is-stale {
+  font-style: normal;
+  color: var(--orange);
+}
