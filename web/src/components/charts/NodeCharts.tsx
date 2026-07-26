@@ -169,20 +169,28 @@ export function LatencyTopChart({ nodes }: { nodes: unknown }) {
 }
 
 export function FailureRankChart({ nodes }: { nodes: unknown }) {
-  const option = useMemo<EChartsOption>(() => {
-    const chartNodes = safeRows<NodeSnapshot>(nodes)
-    const sorted = chartNodes.filter(n => Number(n.failure_count) > 0).sort((a, b) => Number(b.failure_count) - Number(a.failure_count)).slice(0, 10)
-    return {
-      backgroundColor: 'transparent',
-      tooltip: { trigger: 'axis', backgroundColor: chartPanel(), borderColor: chartBorder(), textStyle: { color: chartText() } },
-      grid: { left: 10, right: 18, bottom: 70, top: 24, containLabel: true },
-      xAxis: { type: 'category', data: sorted.map(n => String(n.name || n.tag || '-')), axisLabel: { color: chartMuted(), width: 80, overflow: 'truncate', rotate: 28 } },
-      yAxis: { type: 'value', splitLine: { lineStyle: { color: chartBorder(), type: 'dashed' } }, axisLabel: { color: chartMuted() } },
-      series: [{ name: '失败次数', type: 'bar', data: sorted.map(n => Number(n.failure_count) || 0), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#f43f5e' }, { offset: 1, color: '#9f1239' }]), borderRadius: [6, 6, 0, 0] } }],
-    }
-  }, [nodes])
+  const chartNodes = safeRows<NodeSnapshot>(nodes)
+  // Horizontal bars: node names are long enough that rotated category labels
+  // on an x-axis truncate to "AWS…" and identify nothing.
+  const sorted = useMemo(
+    () => chartNodes
+      .filter(n => Number(n.failure_count) > 0)
+      .sort((a, b) => Number(b.failure_count) - Number(a.failure_count))
+      .slice(0, 10)
+      .reverse(),
+    [chartNodes],
+  )
+  const option = useMemo<EChartsOption>(() => ({
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis', backgroundColor: chartPanel(), borderColor: chartBorder(), textStyle: { color: chartText() } },
+    grid: { left: 10, right: 22, bottom: 8, top: 16, containLabel: true },
+    xAxis: { type: 'value', minInterval: 1, splitLine: { lineStyle: { color: chartBorder(), type: 'dashed' } }, axisLabel: { color: chartMuted() } },
+    yAxis: { type: 'category', data: sorted.map(n => String(n.name || n.tag || '-')), axisLabel: { color: chartMuted(), width: 150, overflow: 'truncate' } },
+    series: [{ name: '失败次数', type: 'bar', data: sorted.map(n => Number(n.failure_count) || 0), itemStyle: { color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [{ offset: 0, color: '#f43f5e' }, { offset: 1, color: '#9f1239' }]), borderRadius: [0, 6, 6, 0] } }],
+  }), [sorted])
 
-  return <EChart option={option} height={300} />
+  if (!sorted.length) return <div className="chart-empty" style={{ height: 200 }}>暂无掉线记录 · 所有节点探测正常</div>
+  return <EChart option={option} height={Math.max(160, sorted.length * 26 + 40)} />
 }
 
 export function TrafficTrendChart() {
@@ -233,6 +241,10 @@ export function TrafficTrendChart() {
     ],
   }), [visiblePoints])
 
+  // A stream that is connected but idle plots a flat zero line across a
+  // few seconds of axis — say so instead of drawing an empty grid.
+  const hasTraffic = visiblePoints.some(p => p.up > 0 || p.down > 0)
+
   return <div>
     <div className="toolbar" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
       <div className={`chart-status ${connected ? 'ok' : 'warn'}`}>
@@ -245,6 +257,10 @@ export function TrafficTrendChart() {
         ))}
       </div>
     </div>
-    <EChart option={option} height={300} />
+    {hasTraffic
+      ? <EChart option={option} height={240} />
+      : <div className="chart-empty" style={{ height: 160 }}>
+          {connected ? '当前窗口没有流量 · 有代理请求经过时这里会实时绘制上下行' : '未连接流量流 · 检查 Clash API 是否可用'}
+        </div>}
   </div>
 }

@@ -93,7 +93,12 @@ export function StatusPage() {
   }), [data, dataUnavailable, debug.data, debug.isError, healthyTotal, totalNodes])
   const healthRate = stats.total && stats.healthy !== null ? Math.round((stats.healthy / stats.total) * 100) : null
   const regions = Object.entries(Object.keys(regionStats).length ? regionStats : data.reduce((m,n)=>{ const r=String(n.region||'other'); m[r]=(m[r]||0)+1; return m }, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1])
-  const recentBad = data.filter(n=>n.blacklisted || (Number(n.failure_count)||0)>0).slice(0,8)
+  // Blacklisted first, then by failure count — a long tail of single failures
+  // shouldn't push the nodes that are actually out of the pool off the list.
+  const recentBad = data
+    .filter(n => n.blacklisted || (Number(n.failure_count) || 0) > 0)
+    .sort((a, b) => Number(!!b.blacklisted) - Number(!!a.blacklisted) || (Number(b.failure_count) || 0) - (Number(a.failure_count) || 0))
+    .slice(0, 12)
   return <Page
     title="运行状态"
     description="健康度、趋势与异常节点的监控视图。"
@@ -118,8 +123,41 @@ export function StatusPage() {
         <div className="chart-panel wide"><div className="chart-title">实时流量带宽 <span>Real-time Traffic</span></div><TrafficTrendChart /></div>
       </div>
       <div className="dashboard-stack">
-        <div className="card"><div className="section-title">地区分布</div>{regions.map(([r,c])=><div key={r} className="region-row"><span>{regionLabel(r)}</span><strong>{c}</strong></div>)}</div>
-        <div className="card"><div className="section-title">最近异常</div>{recentBad.length ? recentBad.map(n=>{ const tag = String(n.tag||''); const releasing = releaseMut.isPending && releaseMut.variables === tag; return <div key={String(n.tag||n.name)} className="issue-row"><div><strong>{String(n.name||n.tag||'-')}</strong><span>{regionLabel(n.region)} · {latencyLabel(n.last_latency_ms)}</span></div><div className="issue-row-actions"><Badge tone={n.blacklisted?'bad':'warn'}>{n.blacklisted?'拉黑':'失败 '+(n.failure_count||0)}</Badge>{n.blacklisted && tag && <Button size="small" disabled={releasing} onClick={() => releaseMut.mutate(tag)}>{releasing ? '解封中' : '解封'}</Button>}</div></div> }) : <div className="hint">暂无异常节点</div>}</div>
+        <div className="card region-card">
+          <div className="section-title">
+            地区分布
+            <span className="muted">{regions.length} 个地区</span>
+          </div>
+          <div className="region-scroll">
+            {regions.map(([r, c]) => {
+              const healthy = safeCount(regionHealthy[r])
+              return <div key={r} className="region-row">
+                <span title={regionLabel(r)}>{regionLabel(r)}</span>
+                <strong>{healthy ? <em className="region-ok">{healthy}</em> : null}{healthy ? '/' : ''}{c}</strong>
+              </div>
+            })}
+          </div>
+        </div>
+        <div className="card issue-card">
+          <div className="section-title">
+            最近异常
+            {recentBad.length ? <span className="muted">前 {recentBad.length} 个</span> : null}
+          </div>
+          {recentBad.length ? recentBad.map(n => {
+            const tag = String(n.tag || '')
+            const releasing = releaseMut.isPending && releaseMut.variables === tag
+            return <div key={String(n.tag || n.name)} className="issue-row">
+              <div>
+                <strong title={String(n.name || n.tag || '-')}>{String(n.name || n.tag || '-')}</strong>
+                <span>{regionLabel(n.region)} · {latencyLabel(n.last_latency_ms)}</span>
+              </div>
+              <div className="issue-row-actions">
+                <Badge tone={n.blacklisted ? 'bad' : 'warn'}>{n.blacklisted ? '拉黑' : '失败 ' + (n.failure_count || 0)}</Badge>
+                {n.blacklisted && tag && <Button size="small" disabled={releasing} onClick={() => releaseMut.mutate(tag)}>{releasing ? '解封中' : '解封'}</Button>}
+              </div>
+            </div>
+          }) : <div className="hint">暂无异常节点 · 所有节点探测正常</div>}
+        </div>
       </div>
     </div>
   </Page>

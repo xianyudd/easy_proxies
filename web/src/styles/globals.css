@@ -6255,3 +6255,50 @@ body.ep-auth-screen #root {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* ===== Status page polish ===== */
+.section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.section-title .muted {
+  font-size: 11.5px;
+  font-weight: var(--fw-normal);
+}
+
+/* Region list: scrolls inside the card with a fade hinting at more rows */
+.region-card .region-scroll {
+  max-height: 300px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(180deg, #000 calc(100% - 20px), transparent);
+}
+
+.region-card .region-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.region-card .region-row strong {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.region-ok {
+  font-style: normal;
+  color: var(--green);
+}
+
+.issue-card .issue-row strong {
+  display: block;
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
