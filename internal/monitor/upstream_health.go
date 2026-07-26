@@ -119,6 +119,9 @@ func (s *Server) checkUpstreamOnce() {
 		configured = strings.TrimSpace(s.cfgSrc.UpstreamProxy)
 		fallback = strings.TrimSpace(s.cfgSrc.UpstreamProxyFallback)
 	}
+	// Reuse the node probe target: a host reachable for node health checks is
+	// the right reachability bar for the proxy carrying those same dials.
+	probeTarget := s.cfg.ProbeTarget
 	s.cfgMu.RUnlock()
 	if fallback == "" {
 		fallback = "socks5://127.0.0.1:7890"
@@ -165,7 +168,7 @@ func (s *Server) checkUpstreamOnce() {
 	// Probe real proxy capability (not just TCP open on listen port).
 	// A local relay can accept connections while all its outbounds are dead.
 	start := time.Now()
-	err := probeUpstreamProxy(target, 5*time.Second)
+	err := probeUpstreamProxy(target, upstreamProbeTimeout, probeTarget)
 	h.LatencyMs = time.Since(start).Milliseconds()
 	if err != nil {
 		h.OK = false
@@ -324,10 +327,39 @@ func parseUpstreamHostPort(raw string) (host, port string, err error) {
 	return host, port, nil
 }
 
+// defaultUpstreamProbeTarget is the fallback when management.probe_target is
+// unset. Plain HTTP avoids TLS issues and matches sing-box urltest targets.
+const defaultUpstreamProbeTarget = "http://www.gstatic.com/generate_204"
+
+// upstreamProbeTimeout bounds one probe end to end. It must exceed the
+// transport's per-stage deadlines below, otherwise the client aborts before a
+// slow-but-working chain can answer.
+const upstreamProbeTimeout = 8 * time.Second
+
+// upstreamProbeTarget normalizes a configured probe target for the upstream
+// check. HTTPS targets are downgraded to plain HTTP: the probe only proves the
+// proxy forwards, and a TLS handshake adds failure modes unrelated to that.
+func upstreamProbeTarget(configured string) string {
+	target := strings.TrimSpace(configured)
+	if target == "" {
+		return defaultUpstreamProbeTarget
+	}
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" {
+		return defaultUpstreamProbeTarget
+	}
+	if u.Scheme == "https" {
+		u.Scheme = "http"
+	} else if u.Scheme != "http" {
+		return defaultUpstreamProbeTarget
+	}
+	return u.String()
+}
+
 // probeUpstreamProxy verifies the proxy can actually forward traffic.
 // TCP-only checks miss the common failure mode: local relay listening but all
 // outbounds dead (port open, every dial times out).
-func probeUpstreamProxy(proxyURL string, timeout time.Duration) error {
+func probeUpstreamProxy(proxyURL string, timeout time.Duration, probeTarget string) error {
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {
 		return fmt.Errorf("empty upstream")
@@ -356,15 +388,18 @@ func probeUpstreamProxy(proxyURL string, timeout time.Duration) error {
 	_ = conn.Close()
 
 	if timeout <= 0 {
-		timeout = 5 * time.Second
+		timeout = upstreamProbeTimeout
 	}
+	// The probe traverses a proxy chain (relay -> upstream -> target), so the
+	// per-stage budgets have to fit inside the overall timeout rather than
+	// cutting it short — a 3s header deadline reported slow chains as dead.
 	transport := &http.Transport{
 		Proxy: http.ProxyURL(u),
 		DialContext: (&net.Dialer{
-			Timeout: 3 * time.Second,
+			Timeout: 4 * time.Second,
 		}).DialContext,
-		TLSHandshakeTimeout:   3 * time.Second,
-		ResponseHeaderTimeout: 3 * time.Second,
+		TLSHandshakeTimeout:   4 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
 		DisableKeepAlives:     true,
 	}
 	client := &http.Client{
@@ -374,8 +409,7 @@ func probeUpstreamProxy(proxyURL string, timeout time.Duration) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	// Plain HTTP probe avoids TLS issues and matches sing-box urltest targets.
-	resp, err := client.Get("http://www.gstatic.com/generate_204")
+	resp, err := client.Get(upstreamProbeTarget(probeTarget))
 	if err != nil {
 		return err
 	}
