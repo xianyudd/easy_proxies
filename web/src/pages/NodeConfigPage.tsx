@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Input, InputNumber, Pagination, Select } from 'antd'
+import { Input, InputNumber, Modal, Pagination, Select } from 'antd'
 import { Clock3, Plus, RefreshCw, Save, ServerCog, Trash2, X } from 'lucide-react'
-import { createConfigNode, deleteConfigNode, getConfigNodes, getReloadStatus, reloadCore, updateConfigNode } from '../api/configNodes'
+import { createConfigNode, deleteConfigNode, getConfigNodes, updateConfigNode } from '../api/configNodes'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { DataTable } from '../components/ui/DataTable'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { useToast } from '../components/ui/Toast'
+import { useReload } from '../hooks/useReload'
 import type { ConfigNode } from '../types/configNode'
+import { Page } from '../components/layout/Page'
 
 const emptyDraft: ConfigNode = { name: '', uri: '', port: 0, username: '', password: '' }
 
@@ -44,21 +46,21 @@ export function NodeConfigPage() {
   const toast = useToast(s => s.show)
   const [editingName, setEditingName] = useState<string | null>(null)
   const [draft, setDraft] = useState<ConfigNode>(emptyDraft)
-  const [needReload, setNeedReload] = useState(false)
-  const [confirmDeleteName, setConfirmDeleteName] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [sourceFilter, setSourceFilter] = useState('all')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
-  const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const editorRef = useRef<HTMLElement | null>(null)
 
   const nodesQuery = useQuery({ queryKey: ['config-nodes'], queryFn: getConfigNodes })
-  const reloadStatus = useQuery({
-    queryKey: ['config-reload-status'],
-    queryFn: getReloadStatus,
-    enabled: reloadState === 'reloading',
-    refetchInterval: reloadState === 'reloading' ? 800 : false,
+  const { needReload, setNeedReload, reloadState, isReloading, startReload, status: reloadStatusData, reloadStatusError, refetchReloadStatus } = useReload({
+    scope: 'config',
+    successMessage: status => status?.duration_ms ? `节点配置已生效（${status.duration_ms}ms）` : '节点配置已生效',
+    onSucceeded: () => {
+      void nodesQuery.refetch()
+      void queryClient.invalidateQueries({ queryKey: ['nodes-page'] })
+      void queryClient.invalidateQueries({ queryKey: ['nodes-summary'] })
+    },
   })
 
   const rows = useMemo(() => safeRows<ConfigNode>(nodesQuery.data?.nodes), [nodesQuery.data?.nodes])
@@ -92,26 +94,9 @@ export function NodeConfigPage() {
     if (page > totalPages) setPage(totalPages)
   }, [filteredRows.length, page, pageSize])
 
-  useEffect(() => {
-    const state = String(reloadStatus.data?.state || '')
-    if (state === 'succeeded') {
-      setReloadState('idle')
-      setNeedReload(false)
-      toast(reloadStatus.data?.duration_ms ? `节点配置已生效（${reloadStatus.data.duration_ms}ms）` : '节点配置已生效', 'ok')
-      void nodesQuery.refetch()
-      void queryClient.invalidateQueries({ queryKey: ['nodes-page'] })
-      void queryClient.invalidateQueries({ queryKey: ['nodes-summary'] })
-    } else if (state === 'failed') {
-      setReloadState('failed')
-      toast(reloadStatus.data?.error ? `重载失败：${reloadStatus.data.error}` : '重载失败', 'error')
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadStatus.data?.state, reloadStatus.data?.duration_ms, reloadStatus.data?.error])
-
   const resetDraft = () => {
     setEditingName(null)
     setDraft(emptyDraft)
-    setConfirmDeleteName(null)
   }
   const editNode = (node: ConfigNode) => {
     setEditingName(String(node.name || ''))
@@ -147,40 +132,39 @@ export function NodeConfigPage() {
       toast(res.message || '节点已删除', 'ok')
       if (res.need_reload) setNeedReload(true)
       if (editingName) resetDraft()
-      setConfirmDeleteName(null)
       void nodesQuery.refetch()
     },
     onError: e => toast(e instanceof Error ? e.message : '节点删除失败', 'error'),
   })
 
-  const startReload = useMutation({
-    mutationFn: reloadCore,
-    onSuccess: res => {
-      toast(res.message || '重载已在后台启动', 'ok')
-      setReloadState('reloading')
-      if (res.reload_status?.state === 'succeeded') setNeedReload(false)
-      void reloadStatus.refetch()
-    },
-    onError: e => {
-      setReloadState('failed')
-      toast(e instanceof Error ? e.message : '重载启动失败', 'error')
-    },
-  })
+  const confirmDelete = (name: string) => {
+    Modal.confirm({
+      title: `删除节点「${name}」？`,
+      content: '该节点会从配置文件移除；确认后需手动重载才会让端口映射生效。此操作不可撤销。',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      centered: true,
+      onOk: () => removeNode.mutateAsync(name),
+    })
+  }
 
-  return <div className="page node-config-page settings-page">
-    <div className="page-header settings-hero">
-      <div>
-        <h1>节点配置</h1>
-        <p>维护写入配置文件的节点。新增、编辑、删除后不会立刻打断代理核心；确认后手动重载，让端口映射稳定生效。</p>
-      </div>
-      <div className="toolbar">
+  return <Page
+    className="node-config-page settings-page"
+    headerClassName="settings-hero"
+    eyebrow="Config"
+    title="节点配置"
+    description="维护写入配置文件的节点。新增、编辑、删除后不会立刻打断代理核心；确认后手动重载，让端口映射稳定生效。"
+    actions={
+      <>
         <Button onClick={() => { void nodesQuery.refetch() }} disabled={nodesQuery.isFetching}><RefreshCw size={16} />{nodesQuery.isFetching ? '刷新中...' : '刷新'}</Button>
-        <Button variant="primary" onClick={() => startReload.mutate()} disabled={!needReload || startReload.isPending || reloadState === 'reloading'}><ServerCog size={16} />{reloadState === 'reloading' ? '重载中...' : '手动重载'}</Button>
-      </div>
-    </div>
+        <Button variant="primary" onClick={() => startReload.mutate()} disabled={!needReload || startReload.isPending || isReloading}><ServerCog size={16} />{isReloading ? '重载中...' : '手动重载'}</Button>
+      </>
+    }
+  >
 
     {nodesQuery.isError && <QueryErrorBanner title="节点配置加载失败" error={nodesQuery.error} onRetry={() => { void nodesQuery.refetch() }} />}
-    {reloadStatus.isError && <QueryErrorBanner title="重载状态加载失败" error={reloadStatus.error} onRetry={() => { void reloadStatus.refetch() }} />}
+    {reloadStatusError && <QueryErrorBanner title="重载状态加载失败" error={reloadStatusError} onRetry={refetchReloadStatus} />}
 
     {needReload && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status">
       <Clock3 size={18} />
@@ -193,7 +177,7 @@ export function NodeConfigPage() {
       <Clock3 size={18} />
       <div>
         <strong>{reloadState === 'reloading' ? '代理核心正在后台重载' : '代理核心重载失败'}</strong>
-        <span>{reloadState === 'reloading' ? `已运行 ${Math.floor(Number(reloadStatus.data?.elapsed_ms || 0) / 1000)} 秒，完成后会自动清除待重载状态。` : reloadStatus.data?.error || '请检查日志后重试。'}</span>
+        <span>{reloadState === 'reloading' ? `已运行 ${Math.floor(Number(reloadStatusData?.elapsed_ms || 0) / 1000)} 秒，完成后会自动清除待重载状态。` : reloadStatusData?.error || '请检查日志后重试。'}</span>
       </div>
     </div>}
 
@@ -202,7 +186,7 @@ export function NodeConfigPage() {
       <div className="metric"><div className="label">可编辑节点</div><div className="value success">{nodesQuery.isError ? '-' : countText(editableRows.length)}</div></div>
       <div className="metric"><div className="label">筛选结果</div><div className="value">{nodesQuery.isError ? '-' : countText(filteredRows.length)}</div></div>
       <div className="metric"><div className="label">待重载</div><div className="value">{needReload ? '是' : '否'}</div></div>
-      <div className="metric"><div className="label">重载状态</div><div className="value">{reloadText(reloadState === 'reloading' ? reloadStatus.data?.state : reloadState)}</div></div>
+      <div className="metric"><div className="label">重载状态</div><div className="value">{reloadText(reloadState === 'reloading' ? reloadStatusData?.state : reloadState)}</div></div>
     </div>
 
     <section ref={editorRef} className="card settings-section settings-section-featured">
@@ -242,14 +226,11 @@ export function NodeConfigPage() {
               <td><div className="toolbar">
                 <Button aria-label={`编辑节点 ${name}`} disabled={!canEdit} onClick={() => editNode(node)}>编辑</Button>
                 <Button
-                  aria-label={confirmDeleteName === name ? `确认删除节点 ${name}` : `删除节点 ${name}`}
+                  aria-label={`删除节点 ${name}`}
                   variant="danger"
                   disabled={!canEdit || removeNode.isPending}
-                  onClick={() => {
-                    if (confirmDeleteName === name) removeNode.mutate(name)
-                    else setConfirmDeleteName(name)
-                  }}
-                ><Trash2 size={15} />{confirmDeleteName === name ? '确认删除' : '删除'}</Button>
+                  onClick={() => confirmDelete(name)}
+                ><Trash2 size={15} />删除</Button>
               </div></td>
             </tr>
           })}
@@ -282,14 +263,11 @@ export function NodeConfigPage() {
               <div className="quality-card-actions">
                 <Button aria-label={`编辑节点 ${name}`} disabled={!canEdit} onClick={() => editNode(node)}>编辑</Button>
                 <Button
-                  aria-label={confirmDeleteName === name ? `确认删除节点 ${name}` : `删除节点 ${name}`}
+                  aria-label={`删除节点 ${name}`}
                   variant="danger"
                   disabled={!canEdit || removeNode.isPending}
-                  onClick={() => {
-                    if (confirmDeleteName === name) removeNode.mutate(name)
-                    else setConfirmDeleteName(name)
-                  }}
-                ><Trash2 size={15} />{confirmDeleteName === name ? '确认删除' : '删除'}</Button>
+                  onClick={() => confirmDelete(name)}
+                ><Trash2 size={15} />删除</Button>
               </div>
             </div>
           </article>
@@ -309,5 +287,5 @@ export function NodeConfigPage() {
         />
       </div>
     </section>
-  </div>
+  </Page>
 }

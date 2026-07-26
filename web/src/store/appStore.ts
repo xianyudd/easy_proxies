@@ -1,8 +1,8 @@
 import { create } from 'zustand'
+import type { AppTab } from '../app/routes'
 
-type Tab = 'extractor'|'overview'|'review'|'config'|'quality'|'status'|'api-keys'|'settings'|'diagnostics'
-type Theme = 'dark'|'light'
-type AuthState = 'unknown'|'authenticated'|'unauthenticated'
+type Theme = 'dark' | 'light'
+type AuthState = 'unknown' | 'authenticated' | 'unauthenticated'
 
 const THEME_STORAGE_KEY = 'easy-proxies-theme'
 
@@ -25,10 +25,10 @@ function persistTheme(theme: Theme) {
 }
 
 interface AppState {
-  activeTab: Tab
+  activeTab: AppTab
   theme: Theme
   authenticated: AuthState
-  setActiveTab: (tab: Tab) => void
+  setActiveTab: (tab: AppTab) => void
   setTheme: (theme: Theme) => void
   setAuthenticated: (value: AuthState) => void
 }

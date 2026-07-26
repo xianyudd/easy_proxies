@@ -4,7 +4,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { getNodes, getNodesSummary } from '../api/nodes'
 import { getCloudflareCache, checkCloudflare } from '../api/cloudflare'
-import { getReloadStatus, getSettings, reloadCore } from '../api/settings'
+import { getSettings } from '../api/settings'
 import { checkReputation, getReputationCache } from '../api/reputation'
 import { cancelQualityJob, createQualityJob, getQualityJob, getQualityJobResults } from '../api/qualityJobs'
 import { Button } from '../components/ui/Button'
@@ -15,10 +15,12 @@ import { REGION_META, regionMeta } from '../components/charts/region'
 import { useToast } from '../components/ui/Toast'
 import { useAppStore } from '../store/appStore'
 import { useExtractorStore } from '../store/extractorStore'
+import { useReload } from '../hooks/useReload'
 import { copyToClipboard } from '../lib/clipboard'
 import type { CloudflareResult } from '../types/cloudflare'
 import type { ReputationRegionUpdateSummary, ReputationResult } from '../types/reputation'
 import type { QualityJobResult, QualityJobSnapshot } from '../types/qualityJob'
+import { Page } from '../components/layout/Page'
 
 function levelTone(level?: string) { return level === 'excellent' || level === 'low' ? 'good' : level === 'good' || level === 'medium' ? 'warn' : level ? 'bad' : 'neutral' }
 function cfLabel(level?: string) { return ({excellent:'优秀',good:'良好',fair:'一般',poor:'较差',failed:'失败'} as Record<string,string>)[level || ''] || '-' }
@@ -114,8 +116,6 @@ export function QualityPage() {
   const [source, setSource] = useState('all')
   const [count, setCount] = useState(20)
   const [regionUpdateSummary, setRegionUpdateSummary] = useState<ReputationRegionUpdateSummary | null>(null)
-  const [needRegionReload, setNeedRegionReload] = useState(false)
-  const [regionReloadState, setRegionReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const [cfRows, setCfRows] = useState<CloudflareResult[]>([])
   const [repRows, setRepRows] = useState<ReputationResult[]>([])
   const [jobId, setJobId] = useState('')
@@ -135,7 +135,18 @@ export function QualityPage() {
   const nodesSummary = useQuery({ queryKey: ['nodes-summary'], queryFn: getNodesSummary })
   const cfCache = useQuery({ queryKey: ['cf-cache'], queryFn: getCloudflareCache, enabled: false })
   const repCache = useQuery({ queryKey: ['rep-cache'], queryFn: getReputationCache, enabled: false })
-  const regionReloadStatus = useQuery({ queryKey: ['quality-region-reload-status'], queryFn: getReloadStatus, enabled: regionReloadState === 'reloading', refetchInterval: regionReloadState === 'reloading' ? 800 : false })
+  const {
+    needReload: needRegionReload,
+    setNeedReload: setNeedRegionReload,
+    reloadState: regionReloadState,
+    startReload: regionReload,
+    status: regionReloadStatusData,
+  } = useReload({
+    scope: 'quality-region',
+    successMessage: status => status?.duration_ms ? `地区校准已重载入池（${status.duration_ms}ms）` : '地区校准已重载入池',
+    startMessage: res => res.started ? '地区校准重载已启动' : '已有重载任务在运行',
+    onSucceeded: () => { void nodesSummary.refetch() },
+  })
   const jobQuery = useQuery({ queryKey: ['quality-job', jobId], queryFn: () => getQualityJob(jobId), enabled: !!jobId })
   const jobResults = useQuery({ queryKey: ['quality-job-results', jobId, resultPage, resultPageSize], queryFn: () => getQualityJobResults(jobId, { page: resultPage, page_size: resultPageSize }), enabled: !!jobId })
   const sourceStats = (nodesSummary.data?.source_stats || {}) as Record<string, number>
@@ -175,19 +186,6 @@ export function QualityPage() {
       toast(d.region_updates?.need_reload ? '出口地区校准完成，需要重载入池' : '出口地区校准完成', 'ok')
     },
     onError: e => toast(e instanceof Error ? e.message : '出口地区校准失败', 'error'),
-  })
-  const regionReload = useMutation({
-    mutationFn: reloadCore,
-    onSuccess: res => {
-      setRegionReloadState('reloading')
-      if (res.reload_status?.state === 'succeeded') {
-        setNeedRegionReload(false)
-        setRegionReloadState('idle')
-      }
-      void regionReloadStatus.refetch()
-      toast(res.started ? '地区校准重载已启动' : '已有重载任务在运行', 'ok')
-    },
-    onError: e => { setRegionReloadState('failed'); toast(e instanceof Error ? e.message : '重载启动失败', 'error') },
   })
   const fullScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: pipelineCount, include_unavailable: true }) })
   const retryScan = useMutation({ mutationFn: () => createQualityJob({ kind: 'pipeline', region, mode: 'multi-port', source: qualitySource, count: pipelineCount, include_unavailable: true, retry_failed: true, replace: true }) })
@@ -241,20 +239,6 @@ export function QualityPage() {
       .catch(e => toast(e instanceof Error ? `质量缓存同步失败：${e.message}` : '质量缓存同步失败', 'error'))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, terminalSyncedJobId, jobQuery.data?.status])
-
-  useEffect(() => {
-    const state = String(regionReloadStatus.data?.state || '')
-    if (regionReloadState !== 'reloading' || !state) return
-    if (state === 'succeeded') {
-      setNeedRegionReload(false)
-      setRegionReloadState('idle')
-      void nodesSummary.refetch()
-      toast(regionReloadStatus.data?.duration_ms ? `地区校准已重载入池（${regionReloadStatus.data.duration_ms}ms）` : '地区校准已重载入池', 'ok')
-    } else if (state === 'failed') {
-      setRegionReloadState('failed')
-      toast(regionReloadStatus.data?.error ? `地区校准重载失败：${regionReloadStatus.data.error}` : '地区校准重载失败', 'error')
-    }
-  }, [regionReloadState, regionReloadStatus.data?.state, regionReloadStatus.data?.duration_ms, regionReloadStatus.data?.error])
 
   const jobRows = useMemo(() => safeRows<QualityJobResult>(jobResults.data?.data), [jobResults.data?.data])
   const jobCfRows = useMemo(() => jobRows.map(cfFromJobRow), [jobRows])
@@ -325,8 +309,7 @@ export function QualityPage() {
     { title: '延迟', width: 100, sorter: jobId ? undefined : (a, b) => (Number(a.row.latency_ms) || 0) - (Number(b.row.latency_ms) || 0), render: (_, item) => `${item.row.latency_ms || 0} ms` },
     { title: '操作', width: 190, fixed: 'right', render: (_, item) => <Space size={6}><Button variant="primary" onClick={() => { void copyToClipboard(proxyUrl(item.row), toast, '代理已复制') }}>复制</Button><Button onClick={() => { void copyToClipboard(`curl -x ${proxyUrl(item.row)} http://cp.cloudflare.com/generate_204`, toast, 'curl 已复制') }}>curl</Button><Button onClick={() => extract(item.row)}>提取</Button></Space> },
   ], [jobId, proxyUrl, toast, extract])
-  return <div className="page quality-page">
-    <div className="page-header"><div><h1>节点质量</h1><p>自动加载缓存，一键全量扫描，并按 CF 评分、IP 风险和综合质量筛选可用节点。</p></div></div>
+  return <Page className="quality-page" eyebrow="Quality" title="节点质量" description="自动加载缓存，一键全量扫描，并按 CF 评分、IP 风险和综合质量筛选可用节点。">
     {settings.isError && <QueryErrorBanner title="设置加载失败" error={settings.error} onRetry={() => { void settings.refetch() }} />}
     {nodesQuery.isError && <QueryErrorBanner title="节点清单加载失败" error={nodesQuery.error} onRetry={() => { void nodesQuery.refetch() }} />}
     {nodesSummary.isError && <QueryErrorBanner title="节点统计加载失败" error={nodesSummary.error} onRetry={() => { void nodesSummary.refetch() }} />}
@@ -367,34 +350,44 @@ export function QualityPage() {
           </div>
         </section>
       </div>
-      <div className="quality-filter-grid modern-filter-grid">
-        <div className="field console-field">
-          <label>地区范围</label>
-          <Select className="console-select" aria-label="地区范围" value={region} onChange={setRegion} options={QUALITY_REGION_OPTIONS} />
+      <div className="quality-filter-groups">
+        <div className="quality-filter-group">
+          <div className="quality-filter-group-title">扫描参数<span>决定检测范围与样本量</span></div>
+          <div className="quality-filter-grid modern-filter-grid">
+            <div className="field console-field">
+              <label>地区范围</label>
+              <Select className="console-select" aria-label="地区范围" value={region} onChange={setRegion} options={QUALITY_REGION_OPTIONS} />
+            </div>
+            <div className="field console-field">
+              <label>节点来源</label>
+              <Select className="console-select" aria-label="节点来源" value={source} onChange={setSource} options={[{ value: 'all', label: `全部来源 (${sourceTotalLabel})` }, { value: 'free_proxy', label: `免费源 (${sourceCountLabel('free_proxy')})` }, { value: 'subscription', label: `订阅源 (${sourceCountLabel('subscription')})` }, { value: 'inline', label: `内联 (${sourceCountLabel('inline')})` }, { value: 'nodes_file', label: `节点文件 (${sourceCountLabel('nodes_file')})` }]} />
+            </div>
+            <div className="field console-field">
+              <label>样本数</label>
+              <InputNumber className="console-number" aria-label="样本数" min={1} max={50} value={count} onChange={value=>setCount(Math.min(50, Math.max(1, Number(value)||10)))} />
+            </div>
+          </div>
         </div>
-        <div className="field console-field">
-          <label>节点来源</label>
-          <Select className="console-select" aria-label="节点来源" value={source} onChange={setSource} options={[{ value: 'all', label: `全部来源 (${sourceTotalLabel})` }, { value: 'free_proxy', label: `免费源 (${sourceCountLabel('free_proxy')})` }, { value: 'subscription', label: `订阅源 (${sourceCountLabel('subscription')})` }, { value: 'inline', label: `内联 (${sourceCountLabel('inline')})` }, { value: 'nodes_file', label: `节点文件 (${sourceCountLabel('nodes_file')})` }]} />
-        </div>
-        <div className="field console-field">
-          <label>样本数</label>
-          <InputNumber className="console-number" aria-label="样本数" min={1} max={50} value={count} onChange={value=>setCount(Math.min(50, Math.max(1, Number(value)||10)))} />
-        </div>
-        <div className="field console-field">
-          <label>结果筛选</label>
-          <Select className="console-select" aria-label="结果筛选" value={filter} onChange={setFilter} disabled={!!jobId} options={[{ value: 'all', label: jobId ? '后台任务分页结果' : '全部等级' }, { value: 'excellent', label: '优秀' }, { value: 'good', label: '良好' }, { value: 'fair', label: '一般' }, { value: 'poor', label: '较差' }, { value: 'failed', label: '失败' }]} />
-        </div>
-        <div className="field console-field">
-          <label>Tier 筛选</label>
-          <Select className="console-select" aria-label="Tier 筛选" value={tierFilter} onChange={setTierFilter} options={[{ value: 'all', label: '全部 Tier' }, { value: 'reject', label: 'T0 Reject' }, { value: 'rescue', label: 'T1 Rescue' }, { value: 'http_only', label: 'T2 HTTP-only' }, { value: 'simple_web', label: 'T3 Simple Web' }, { value: 'recommended', label: 'T4 Recommended' }, { value: 'premium', label: 'T5 Premium' }]} />
-        </div>
-        <div className="field console-field">
-          <label>池筛选</label>
-          <Select className="console-select" aria-label="池筛选" value={poolFilter} onChange={setPoolFilter} options={[{ value: 'all', label: '全部池' }, { value: 'reject_pool', label: 'reject_pool' }, { value: 'rescue_pool', label: 'rescue_pool' }, { value: 'http_pool', label: 'http_pool' }, { value: 'web_pool', label: 'web_pool' }, { value: 'recommended_pool', label: 'recommended_pool' }, { value: 'strict_pool', label: 'strict_pool' }]} />
+        <div className="quality-filter-group">
+          <div className="quality-filter-group-title">结果筛选<span>仅影响下方列表视图</span></div>
+          <div className="quality-filter-grid modern-filter-grid">
+            <div className="field console-field">
+              <label>结果等级</label>
+              <Select className="console-select" aria-label="结果筛选" value={filter} onChange={setFilter} disabled={!!jobId} options={[{ value: 'all', label: jobId ? '后台任务分页结果' : '全部等级' }, { value: 'excellent', label: '优秀' }, { value: 'good', label: '良好' }, { value: 'fair', label: '一般' }, { value: 'poor', label: '较差' }, { value: 'failed', label: '失败' }]} />
+            </div>
+            <div className="field console-field">
+              <label>Tier 筛选</label>
+              <Select className="console-select" aria-label="Tier 筛选" value={tierFilter} onChange={setTierFilter} options={[{ value: 'all', label: '全部 Tier' }, { value: 'reject', label: 'T0 Reject' }, { value: 'rescue', label: 'T1 Rescue' }, { value: 'http_only', label: 'T2 HTTP-only' }, { value: 'simple_web', label: 'T3 Simple Web' }, { value: 'recommended', label: 'T4 Recommended' }, { value: 'premium', label: 'T5 Premium' }]} />
+            </div>
+            <div className="field console-field">
+              <label>池筛选</label>
+              <Select className="console-select" aria-label="池筛选" value={poolFilter} onChange={setPoolFilter} options={[{ value: 'all', label: '全部池' }, { value: 'reject_pool', label: 'reject_pool' }, { value: 'rescue_pool', label: 'rescue_pool' }, { value: 'http_pool', label: 'http_pool' }, { value: 'web_pool', label: 'web_pool' }, { value: 'recommended_pool', label: 'recommended_pool' }, { value: 'strict_pool', label: 'strict_pool' }]} />
+            </div>
+          </div>
         </div>
       </div>
       {regionUpdateSummary && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status" style={{ marginTop: 16 }}><div><strong>出口地区校准结果</strong><span>{regionUpdateText(regionUpdateSummary)}{needRegionReload ? '；需要重载入池后地区池才完全生效。' : '；当前无需重载。'}</span></div>{needRegionReload && <Button variant="primary" disabled={regionReload.isPending || regionReloadState === 'reloading'} onClick={() => regionReload.mutate()}>{regionReloadState === 'reloading' ? '重载中...' : '立即重载入池'}</Button>}</div>}
-      {regionReloadState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status" style={{ marginTop: 12 }}><div><strong>{regionReloadState === 'reloading' ? '代理核心正在后台重载' : '代理核心重载失败'}</strong><span>{regionReloadState === 'reloading' ? `已运行 ${Math.floor(Number(regionReloadStatus.data?.elapsed_ms || 0) / 1000)} 秒，完成后会自动清除待重载状态。` : regionReloadStatus.data?.error || '请检查日志后重试。'}</span></div></div>}
+      {regionReloadState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status" style={{ marginTop: 12 }}><div><strong>{regionReloadState === 'reloading' ? '代理核心正在后台重载' : '代理核心重载失败'}</strong><span>{regionReloadState === 'reloading' ? `已运行 ${Math.floor(Number(regionReloadStatusData?.elapsed_ms || 0) / 1000)} 秒，完成后会自动清除待重载状态。` : regionReloadStatusData?.error || '请检查日志后重试。'}</span></div></div>}
       {jobId && <div className="card" style={{ marginTop: 16 }}>
         <div className="panel-header"><div><div className="panel-title">后台质量检测任务</div><div className="panel-subtitle">{jobId} · {jobQuery.data?.status || 'queued'} · {jobQuery.data?.completed || 0}/{jobQuery.data?.total || 0}</div></div><div className="toolbar"><Button disabled={isTerminalJob(jobQuery.data) || cancelScan.isPending} onClick={() => cancelScan.mutate()}>{cancelScan.isPending ? '取消中...' : '取消任务'}</Button><Button disabled={jobProgressLoading} onClick={() => { void jobQuery.refetch(); void jobResults.refetch() }}>{jobProgressLoading ? '刷新中...' : '刷新进度'}</Button></div></div>
         <Progress percent={Math.round(jobQuery.data?.percent || 0)} status={jobQuery.data?.status === 'failed' ? 'exception' : jobQuery.data?.status === 'completed' ? 'success' : 'active'} />
@@ -450,5 +443,5 @@ export function QualityPage() {
         />
       </div>}
     </div>
-  </div>
+  </Page>
 }

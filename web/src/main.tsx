@@ -9,37 +9,44 @@ import './styles/globals.css'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } })
 
+/** Align antd with theme.css tokens (teal brand, not default blue). */
 function ThemedApp() {
   const currentTheme = useAppStore(s => s.theme)
   const isDark = currentTheme === 'dark'
-  return <ConfigProvider
-    locale={zhCN}
-    button={{ autoInsertSpace: false }}
-    theme={{
-      algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
-      token: {
-        colorPrimary: '#2563eb',
-        colorSuccess: '#059669',
-        colorWarning: '#d97706',
-        colorError: '#dc2626',
-        colorBgBase: isDark ? '#0b1220' : '#f6f8fb',
-        colorTextBase: isDark ? '#e5e7eb' : '#111827',
-        borderRadius: 10,
-        fontFamily: '"IBM Plex Sans", "Noto Sans SC", system-ui, sans-serif',
-      },
-      components: {
-        Button: { controlHeight: 38, borderRadius: 11 },
-        Input: { controlHeight: 40, borderRadius: 12, paddingInline: 14 },
-        Checkbox: { borderRadiusSM: 5 },
-        Table: { headerBorderRadius: 10, cellPaddingBlock: 12, cellPaddingInline: 14 },
-        Tag: { borderRadiusSM: 999 },
-      },
-    }}
-  >
-    <AntApp>
-      <App />
-    </AntApp>
-  </ConfigProvider>
+  return (
+    <ConfigProvider
+      locale={zhCN}
+      button={{ autoInsertSpace: false }}
+      theme={{
+        algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        token: {
+          colorPrimary: isDark ? '#5bc0be' : '#2f9c9a',
+          colorSuccess: isDark ? '#34d399' : '#10b981',
+          colorWarning: isDark ? '#fbbf24' : '#f59e0b',
+          colorError: isDark ? '#fb7185' : '#ef4444',
+          colorInfo: isDark ? '#60a5fa' : '#3b82f6',
+          colorBgBase: isDark ? '#070d1a' : '#f5f7f8',
+          colorTextBase: isDark ? '#f5f7fb' : '#0b132b',
+          borderRadius: 10,
+          fontFamily: '"Aptos", "Segoe UI Variable", "Helvetica Neue", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif',
+          fontFamilyCode: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+        },
+        components: {
+          Button: { controlHeight: 38, borderRadius: 10 },
+          Input: { controlHeight: 40, borderRadius: 10, paddingInline: 14 },
+          Select: { controlHeight: 40, borderRadius: 10 },
+          Checkbox: { borderRadiusSM: 6 },
+          Table: { headerBorderRadius: 10, cellPaddingBlock: 12, cellPaddingInline: 14 },
+          Tag: { borderRadiusSM: 999 },
+          Modal: { borderRadiusLG: 14 },
+        },
+      }}
+    >
+      <AntApp>
+        <App />
+      </AntApp>
+    </ConfigProvider>
+  )
 }
 
 const rootElement = document.getElementById('root')

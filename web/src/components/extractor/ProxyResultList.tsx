@@ -27,16 +27,19 @@ export function entriesToText(entries: ExtractorEntry[]) {
   if (entries.some(e => typeof e !== 'string')) return JSON.stringify(entries, null, 2)
   return entries.map(String).join('\n')
 }
+const RESULT_PREVIEW_LIMIT = 50
+
 export function ProxyResultList({ entries }: {entries: ExtractorEntry[]}) {
   const toast = useToast(s => s.show)
   const copy = async (text: string, label = '已复制') => { await copyToClipboard(text, toast, label) }
   if (!entries.length) return <div className="empty-cell">还没有结果。请选择参数后点击生成。</div>
-  return <div className="result-list">{entries.slice(0, 50).map((entry, idx) => {
+  const hidden = entries.length - RESULT_PREVIEW_LIMIT
+  return <div className="result-list">{entries.slice(0, RESULT_PREVIEW_LIMIT).map((entry, idx) => {
     const main = entryForCopy(entry)
     const curl = curlFor(entry)
     return <div className="result-card" key={idx}>
       <div className="result-card-head"><span className="badge badge-info">#{idx + 1}</span><div className="toolbar"><Button onClick={() => copy(main, '单条已复制')}>复制</Button>{curl && <Button onClick={() => copy(curl, 'curl 已复制')}>curl</Button>}</div></div>
       <div className="result-text">{stringifyEntry(entry)}</div>
     </div>
-  })}</div>
+  })}{hidden > 0 && <div className="result-more-hint" role="note">已展开前 {RESULT_PREVIEW_LIMIT} 条，另有 {hidden} 条未显示 · 用上方「复制全部」或「下载」获取完整 {entries.length} 条结果。</div>}</div>
 }

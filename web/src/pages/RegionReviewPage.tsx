@@ -1,16 +1,17 @@
-import { Input, Pagination, Select } from 'antd'
+import { Input, Modal, Pagination, Select } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, RefreshCw, ServerCog } from 'lucide-react'
-import { confirmNodeRegion, getNodesPage } from '../api/nodes'
-import { getReloadStatus, reloadCore } from '../api/configNodes'
+import { bulkConfirmRegions, confirmNodeRegion, getNodesPage } from '../api/nodes'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { DataTable } from '../components/ui/DataTable'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { useToast } from '../components/ui/Toast'
+import { useReload } from '../hooks/useReload'
 import { MANUAL_REGION_OPTIONS } from '../components/charts/region'
 import type { NodeSnapshot } from '../types/node'
+import { Page } from '../components/layout/Page'
 
 const SOURCE_LABELS: Record<string, string> = {
   all: '全部来源',
@@ -68,8 +69,6 @@ export function RegionReviewPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
   const [selectedRegions, setSelectedRegions] = useState<Record<string, string>>({})
-  const [needReload, setNeedReload] = useState(false)
-  const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
 
   const queryParams = { page, page_size: pageSize, region: 'other', source, availability, q: search, sort: 'latency' }
   const nodes = useQuery({
@@ -77,11 +76,14 @@ export function RegionReviewPage() {
     queryFn: () => getNodesPage(queryParams),
     refetchInterval: 10000,
   })
-  const reloadStatus = useQuery({
-    queryKey: ['region-review-reload-status'],
-    queryFn: getReloadStatus,
-    enabled: reloadState === 'reloading',
-    refetchInterval: reloadState === 'reloading' ? 800 : false,
+  const { needReload, setNeedReload, isReloading, startReload, reloadStatusError, refetchReloadStatus } = useReload({
+    scope: 'region-review',
+    successMessage: '地区确认已进入运行池',
+    onSucceeded: () => {
+      void queryClient.invalidateQueries({ queryKey: ['nodes-page'] })
+      void queryClient.invalidateQueries({ queryKey: ['nodes-summary'] })
+      void nodes.refetch()
+    },
   })
 
   const rows = safeRows<NodeSnapshot>(nodes.data?.nodes)
@@ -104,22 +106,6 @@ export function RegionReviewPage() {
     if (nodes.data?.page && nodes.data.page !== page) setPage(nodes.data.page)
   }, [nodes.data?.page, page])
 
-  useEffect(() => {
-    const state = String(reloadStatus.data?.state || '')
-    if (state === 'succeeded') {
-      setReloadState('idle')
-      setNeedReload(false)
-      toast('地区确认已进入运行池', 'ok')
-      void queryClient.invalidateQueries({ queryKey: ['nodes-page'] })
-      void queryClient.invalidateQueries({ queryKey: ['nodes-summary'] })
-      void nodes.refetch()
-    } else if (state === 'failed') {
-      setReloadState('failed')
-      toast(reloadStatus.data?.error ? `重载失败：${reloadStatus.data.error}` : '重载失败', 'error')
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadStatus.data?.state, reloadStatus.data?.error])
-
   const confirmRegion = useMutation({
     mutationFn: ({ tag, region }: { tag: string; region: string }) => confirmNodeRegion(tag, region),
     onSuccess: res => {
@@ -133,16 +119,15 @@ export function RegionReviewPage() {
   })
 
   const batchConfirmRegions = useMutation({
-    mutationFn: async () => {
-      let needReloadNext = false
-      for (const item of selectedConfirmations) {
-        const res = await confirmNodeRegion(item.tag, item.region)
-        if (res.need_reload) needReloadNext = true
-      }
-      return { count: selectedConfirmations.length, need_reload: needReloadNext }
-    },
+    mutationFn: () => bulkConfirmRegions(selectedConfirmations),
     onSuccess: res => {
-      toast(`已确认 ${res.count} 个节点地区`, 'ok')
+      if (res.fail === 0) {
+        toast(`已确认 ${res.ok} 个节点地区`, 'ok')
+      } else if (res.ok === 0) {
+        toast(`批量确认失败 ${res.fail} 个${res.errors[0] ? `：${res.errors[0]}` : ''}`, 'error')
+      } else {
+        toast(`已确认 ${res.ok} 个，失败 ${res.fail} 个${res.errors[0] ? `：${res.errors[0]}` : ''}`, 'info')
+      }
       if (res.need_reload) setNeedReload(true)
       setSelectedRegions({})
       void queryClient.invalidateQueries({ queryKey: ['nodes-page'] })
@@ -152,18 +137,19 @@ export function RegionReviewPage() {
     onError: error => toast(error instanceof Error ? error.message : '批量确认地区失败', 'error'),
   })
 
-  const startReload = useMutation({
-    mutationFn: reloadCore,
-    onSuccess: res => {
-      toast(res.message || '重载已在后台启动', 'ok')
-      setReloadState('reloading')
-      void reloadStatus.refetch()
-    },
-    onError: error => {
-      setReloadState('failed')
-      toast(error instanceof Error ? error.message : '重载启动失败', 'error')
-    },
-  })
+  const confirmBatch = () => {
+    const count = selectedConfirmations.length
+    if (!count) return
+    Modal.confirm({
+      title: `确认 ${count} 个节点的地区？`,
+      content: '确认后这些节点会写入持久化地区并进入运行池，随后触发代理核心后台重载。',
+      okText: '确认入池',
+      okType: 'primary',
+      cancelText: '取消',
+      centered: true,
+      onOk: () => batchConfirmRegions.mutateAsync(),
+    })
+  }
 
   const resetPage = <T,>(setter: (value: T) => void) => (value: T) => {
     setter(value)
@@ -181,21 +167,22 @@ export function RegionReviewPage() {
     />
   )
 
-  return <div className="page region-review-page">
-    <div className="page-header">
-      <div>
-        <h1>待确认节点</h1>
-        <p>这里只展示自动识别不到、落到 other/空地区的节点。手动确认地区后会写入持久化覆盖；点击“重载入池”后进入对应地区池。</p>
-      </div>
-      <div className="toolbar">
-        <Button variant="primary" onClick={() => batchConfirmRegions.mutate()} disabled={!selectedConfirmations.length || batchConfirmRegions.isPending || confirmRegion.isPending}>{batchConfirmRegions.isPending ? '确认中...' : `确认本页已选择${selectedConfirmations.length ? `（${selectedConfirmations.length}）` : ''}`}</Button>
+  return <Page
+    className="region-review-page"
+    eyebrow="Review"
+    title="待确认节点"
+    description="这里只展示自动识别不到、落到 other/空地区的节点。手动确认地区后会写入持久化覆盖；点击“重载入池”后进入对应地区池。"
+    actions={
+      <>
+        <Button variant="primary" onClick={confirmBatch} disabled={!selectedConfirmations.length || batchConfirmRegions.isPending || confirmRegion.isPending}>{batchConfirmRegions.isPending ? '确认中...' : `确认本页已选择${selectedConfirmations.length ? `（${selectedConfirmations.length}）` : ''}`}</Button>
         <Button onClick={() => { void nodes.refetch() }} disabled={nodes.isFetching}><RefreshCw size={16} />{nodes.isFetching ? '刷新中...' : '刷新'}</Button>
-        <Button variant="primary" onClick={() => startReload.mutate()} disabled={!needReload || startReload.isPending || reloadState === 'reloading'}><ServerCog size={16} />{reloadState === 'reloading' ? '重载中...' : '重载入池'}</Button>
-      </div>
-    </div>
+        <Button variant="primary" onClick={() => startReload.mutate()} disabled={!needReload || startReload.isPending || isReloading}><ServerCog size={16} />{isReloading ? '重载中...' : '重载入池'}</Button>
+      </>
+    }
+  >
 
     {nodes.isError && <QueryErrorBanner title="待确认节点加载失败" error={nodes.error} onRetry={() => { void nodes.refetch() }} />}
-    {reloadStatus.isError && <QueryErrorBanner title="重载状态加载失败" error={reloadStatus.error} onRetry={() => { void reloadStatus.refetch() }} />}
+    {reloadStatusError && <QueryErrorBanner title="重载状态加载失败" error={reloadStatusError} onRetry={refetchReloadStatus} />}
 
     {needReload && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status">
       <CheckCircle2 size={18} />
@@ -298,5 +285,5 @@ export function RegionReviewPage() {
         />
       </div>
     </section>
-  </div>
+  </Page>
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Checkbox, Input, Select } from 'antd'
 import { AlertCircle, Clock3, Copy, Database, Eye, EyeOff, Plus, Save, Trash2, Wifi } from 'lucide-react'
@@ -13,10 +13,14 @@ import { buildSettingsSavePayload, freeSourceDefaultScheme, isSettingsDraftDirty
 import type { FreeProxyCache, FreeProxyFilter, FreeProxyRefreshStatus, FreeProxySource, SettingsResponse } from '../types/settings'
 import type { CloudflareResult } from '../types/cloudflare'
 import type { ReputationResult } from '../types/reputation'
+import { Page } from '../components/layout/Page'
 
 type FreeProxyRefreshSource = NonNullable<FreeProxyRefreshStatus['sources']>[number]
 
 type SettingsSectionId = 'subscriptions' | 'free-proxy' | 'pool' | 'multi-port' | 'routing' | 'quality-check' | 'management'
+
+/** Auto-hide the revealed management password after this idle window (ms). */
+const MANAGEMENT_SECRET_HIDE_MS = 30000
 
 const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; index: string; title: string; subtitle: string }> = [
   { id: 'subscriptions', index: '01', title: '订阅', subtitle: '节点来源与刷新' },
@@ -126,6 +130,8 @@ export function SettingsPage() {
   const [revealedPassword, setRevealedPassword] = useState<string | null>(null)
   const [passwordVisible, setPasswordVisible] = useState(false)
   const [passwordBusy, setPasswordBusy] = useState(false)
+  const secretHideTimerRef = useRef<number | undefined>(undefined)
+  const passwordHideTimerRef = useRef<number | undefined>(undefined)
   const [reloadState, setReloadState] = useState<'idle' | 'reloading' | 'failed'>('idle')
   const [subscriptionRefreshState, setSubscriptionRefreshState] = useState<'idle' | 'refreshing'>('idle')
   const [subscriptionRefreshObservedRunning, setSubscriptionRefreshObservedRunning] = useState(false)
@@ -152,6 +158,9 @@ export function SettingsPage() {
     }
     if (!subsDirty) setSubs(listValue(settings.data.subscriptions))
   }, [settings.data, settingsDirty, subsDirty])
+  useEffect(() => () => {
+    if (secretHideTimerRef.current !== undefined) window.clearTimeout(secretHideTimerRef.current)
+  }, [])
   useEffect(() => {
     if (subscriptionRefreshState !== 'refreshing') return
     if (subStatus.data?.is_refreshing === true) {
@@ -316,22 +325,43 @@ export function SettingsPage() {
     setManagementPasswordClear(value)
     if (value) setManagementPasswordDraft('')
   }
+  const clearSecretHideTimer = () => {
+    if (secretHideTimerRef.current !== undefined) {
+      window.clearTimeout(secretHideTimerRef.current)
+      secretHideTimerRef.current = undefined
+    }
+  }
+  const hideManagementPassword = () => {
+    clearSecretHideTimer()
+    setPasswordVisible(false)
+    setRevealedPassword(null)
+  }
+  const scheduleSecretHide = () => {
+    clearSecretHideTimer()
+    secretHideTimerRef.current = window.setTimeout(() => {
+      setPasswordVisible(false)
+      setRevealedPassword(null)
+      secretHideTimerRef.current = undefined
+    }, MANAGEMENT_SECRET_HIDE_MS)
+  }
   const revealManagementPassword = async () => {
     if (passwordBusy) return
     setPasswordBusy(true)
     try {
       if (revealedPassword !== null && passwordVisible) {
-        setPasswordVisible(false)
+        hideManagementPassword()
         return
       }
       if (revealedPassword !== null) {
         setPasswordVisible(true)
+        scheduleSecretHide()
         return
       }
       const res = await getManagementPassword()
       const pass = String(res.password || '')
       setRevealedPassword(pass)
       setPasswordVisible(true)
+      scheduleSecretHide()
       if (!pass) toast('当前未设置管理密码', 'info')
     } catch (e) {
       toast(e instanceof Error ? e.message : '读取密码失败', 'error')
@@ -353,6 +383,7 @@ export function SettingsPage() {
       }
       await navigator.clipboard.writeText(pass)
       toast('管理密码已复制', 'ok')
+      if (passwordVisible) scheduleSecretHide()
     } catch (e) {
       toast(e instanceof Error ? e.message : '复制失败', 'error')
     }
@@ -466,28 +497,35 @@ export function SettingsPage() {
   }
 
   if (!settings.data && (settings.isLoading || settings.isError)) {
-    return <div className="page settings-page">
-      <div className="page-header settings-hero">
-        <div>
-          <h1>系统设置</h1>
-          <p>{settings.isError ? '当前配置加载失败，修复前不会展示可编辑空表单，避免误覆盖已有设置。' : '正在加载当前配置，加载完成前不会展示可编辑空表单，避免误覆盖已有设置。'}</p>
-        </div>
-        <div className="toolbar"><Button variant="primary" disabled><Save size={16} />{settings.isError ? '不可保存' : '加载中...'}</Button></div>
-      </div>
+    return <Page
+      className="settings-page"
+      headerClassName="settings-hero"
+      eyebrow="System"
+      title="系统设置"
+      description={settings.isError ? '当前配置加载失败，修复前不会展示可编辑空表单，避免误覆盖已有设置。' : '正在加载当前配置，加载完成前不会展示可编辑空表单，避免误覆盖已有设置。'}
+      actions={<Button variant="primary" disabled><Save size={16} />{settings.isError ? '不可保存' : '加载中...'}</Button>}
+    >
       {settings.isError
         ? <QueryErrorBanner title="设置加载失败" error={settings.error} onRetry={() => { void settings.refetch() }} />
         : <div className="card settings-section" role="status">
           <div className="panel-title">正在读取设置</div>
           <div className="panel-subtitle">请稍候，系统正在从后端加载订阅、免费源、端口和质量检测配置。</div>
         </div>}
-    </div>
+    </Page>
   }
 
-  return <div className="page settings-page">
-    <div className="page-header settings-hero">
-      <div><h1>系统设置</h1><p>集中管理订阅来源、代理入口、地区路由、质量检测和日志策略。</p></div>
-      <div className="toolbar"><Button variant="primary" onClick={saveAllSettings} disabled={save.isPending || saveSub.isPending || settingsUnavailable || !hasUnsavedChanges}><Save size={16} />{save.isPending || saveSub.isPending ? '保存中...' : '保存更改'}</Button></div>
-    </div>
+  return <Page
+    className="settings-page"
+    headerClassName="settings-hero"
+    eyebrow="System"
+    title="系统设置"
+    description="集中管理订阅来源、代理入口、地区路由、质量检测和日志策略。"
+    actions={
+      <Button variant="primary" onClick={saveAllSettings} disabled={save.isPending || saveSub.isPending || settingsUnavailable || !hasUnsavedChanges}>
+        <Save size={16} />{save.isPending || saveSub.isPending ? '保存中...' : '保存更改'}
+      </Button>
+    }
+  >
     {settings.isError && <QueryErrorBanner title="设置加载失败" error={settings.error} onRetry={() => { void settings.refetch() }} />}
     {subStatus.isError && <QueryErrorBanner title="订阅状态加载失败" error={subStatus.error} onRetry={() => { void subStatus.refetch() }} />}
     {cfCache.isError && <QueryErrorBanner title="CF 缓存状态加载失败" error={cfCache.error} onRetry={() => { void cfCache.refetch() }} />}
@@ -548,7 +586,7 @@ export function SettingsPage() {
           <div className="panel-header settings-section-header"><div><div className="panel-title">订阅</div><div className="panel-subtitle">每条订阅独立编辑，长 URL 不再挤在一个文本框里。</div></div><div className="toolbar"><Button onClick={addSub}><Plus size={16} />新增订阅</Button><Button variant="primary" onClick={saveSubscriptions} disabled={saveSub.isPending || settingsUnavailable || !subsDirty}><Save size={16} />{saveSub.isPending ? '保存中...' : '保存订阅'}</Button></div></div>
           <div className="settings-status-grid">
             <div className="status-card"><Database size={16} /><span>订阅条目</span><strong>{cleanSubItems.length}</strong></div>
-            <div className="status-card"><Wifi size={16} /><span>刷新状态</span><strong>{subStatusUnavailable ? '加载失败' : boolValue(status.is_refreshing) ? '刷新中' : '空闲'}</strong></div>
+            <div className="status-card"><Wifi size={16} /><span>刷新状态</span><strong>{subStatusUnavailable ? '加载失败' : status.is_refreshing ? '刷新中' : '空闲'}</strong></div>
             <div className="status-card"><Clock3 size={16} /><span>下次刷新</span><strong>{subStatusUnavailable ? '-' : shortDate(status.next_refresh)}</strong></div>
             <div className="status-card"><Database size={16} /><span>最近节点数</span><strong>{subStatusUnavailable ? '-' : Number(status.node_count || 0)}</strong></div>
           </div>
@@ -560,7 +598,7 @@ export function SettingsPage() {
             {subItems.length ? subItems.map((url, idx) => <div className="subscription-item modern-subscription-item" key={`${idx}-${url.slice(0, 16)}`}><div className="subscription-index">#{idx + 1}</div><Input aria-label={`订阅 URL #${idx + 1}`} className="settings-input mono subscription-url-input" value={url} title={url} onChange={e=>updateSub(idx, e.target.value)} /><Button variant="danger" onClick={()=>removeSub(idx)}><Trash2 size={15} />删除</Button></div>) : <div className="empty-state compact-empty"><strong>暂无订阅 URL</strong><span>点击“新增订阅”添加一条订阅地址。</span></div>}
           </div>
           <details className="raw-editor"><summary>批量编辑原始文本</summary><label htmlFor="subscriptions-raw-editor">批量编辑订阅原始文本</label><Input.TextArea id="subscriptions-raw-editor" className="settings-input mono subscription-textarea" rows={4} value={subs} onChange={e=>updateSubsDraft(e.target.value)} /></details>
-          <div className="settings-inline-note"><Badge tone={boolValue(status.enabled) ? 'good' : 'neutral'}>{boolValue(status.enabled) ? '已启用' : '未启用'}</Badge><span>上次刷新：{shortDate(status.last_refresh)}</span><span>刷新次数：{Number(status.refresh_count || 0)}</span>{String(status.last_error || '') && <span className="danger-text">错误：{String(status.last_error)}</span>}</div>
+          <div className="settings-inline-note"><Badge tone={status.enabled ? 'good' : 'neutral'}>{status.enabled ? '已启用' : '未启用'}</Badge><span>上次刷新：{shortDate(status.last_refresh)}</span><span>刷新次数：{Number(status.refresh_count || 0)}</span>{status.last_error ? <span className="danger-text">错误：{status.last_error}</span> : null}{status.nodes_modified ? <span>节点文件已变更</span> : null}</div>
         </section>
 
         <section className={sectionClass('free-proxy')} id="free-proxy">
@@ -691,6 +729,7 @@ export function SettingsPage() {
               <Button onClick={() => { void copyManagementPassword() }}>
                 <Copy size={14} />复制密码
               </Button>
+              {passwordVisible && <span className="settings-secret-hint">{Math.round(MANAGEMENT_SECRET_HIDE_MS / 1000)}s 后自动隐藏</span>}
             </div>
           )}
 
@@ -712,5 +751,5 @@ export function SettingsPage() {
         <Button variant="primary" onClick={saveAllSettings} disabled={save.isPending || saveSub.isPending || settingsUnavailable}><Save size={16} />{save.isPending || saveSub.isPending ? '保存中...' : '保存更改'}</Button>
       </div>
     </div>}
-  </div>
+  </Page>
 }

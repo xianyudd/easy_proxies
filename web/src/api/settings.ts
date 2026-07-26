@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { FreeProxyRefreshStatus, ReloadStatus, SaveSettingsResponse, SettingsResponse, StartFreeProxyRefreshResponse, SubscriptionConfigResponse } from '../types/settings'
+import type { FreeProxyRefreshStatus, ReloadStatus, SaveSettingsResponse, SettingsResponse, StartFreeProxyRefreshResponse, SubscriptionConfigResponse, SubscriptionStatus } from '../types/settings'
 
 export function getSettings() { return api.get<SettingsResponse>('/api/settings') }
 export function saveSettings(payload: SettingsResponse) { return api.put<SaveSettingsResponse>('/api/settings', payload) }
@@ -102,5 +102,5 @@ export async function reloadCoreWithRetry(attempts = 3) {
   }
   throw lastError
 }
-export function getSubscriptionStatus() { return api.get<Record<string, unknown>>('/api/subscription/status') }
+export function getSubscriptionStatus() { return api.get<SubscriptionStatus>('/api/subscription/status') }
 export function saveSubscriptionConfig(payload: {subscriptions: string[]; enabled: boolean; interval: string}) { return api.put<SubscriptionConfigResponse>('/api/subscription/config', payload) }

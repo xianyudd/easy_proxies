@@ -7,6 +7,8 @@ import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { useToast } from '../components/ui/Toast'
+import { Page } from '../components/layout/Page'
+import { downloadText } from '../lib/download'
 
 const LOG_RENDER_LIMIT = 1200
 const LOG_LEVELS = [
@@ -173,14 +175,7 @@ export function DiagnosticsPage() {
     ].filter(item => item.value !== '-')
   }, [debugData, debugNodes])
   const issueCount = errorLines + warnLines + (debug.isError ? 1 : 0)
-  const download = () => {
-    const a = document.createElement('a')
-    const url = URL.createObjectURL(new Blob([logs], {type:'text/plain'}))
-    a.href = url
-    a.download = 'easy_proxies.log'
-    a.click()
-    window.setTimeout(() => URL.revokeObjectURL(url), 0)
-  }
+  const download = () => downloadText('easy_proxies.log', logs)
   const clearFilters = () => { setKeyword(''); setLevelFilter('all'); setCaseSensitive(false) }
   const clearLogs = () => { setAuto(false); setLogs(''); toast('已清空当前页面显示，不会删除服务端日志文件', 'ok') }
   const refreshLogs = async () => {
@@ -197,8 +192,19 @@ export function DiagnosticsPage() {
       setManualLogRefreshPending(false)
     }
   }
-  return <div className="page diagnostics-page diagnostics-workbench-page">
-    <div className="page-header diagnostics-hero diagnostics-workbench-hero"><div><h1>日志诊断</h1><p>实时日志保持终端控制台体验，右侧只保留关键运行态摘要，避免原始数据和重复指标干扰排查。</p></div><div className="toolbar"><Badge tone={auto ? 'good' : 'neutral'}>{auto ? '自动刷新' : '已暂停'}</Badge><Button onClick={()=>setAuto(!auto)}>{auto?'暂停刷新':'自动刷新'}</Button></div></div>
+  return <Page
+    className="diagnostics-page diagnostics-workbench-page"
+    headerClassName="diagnostics-hero diagnostics-workbench-hero"
+    eyebrow="Console"
+    title="日志诊断"
+    description="实时日志保持终端控制台体验，右侧只保留关键运行态摘要，避免原始数据和重复指标干扰排查。"
+    actions={
+      <>
+        <Badge tone={auto ? 'good' : 'neutral'}>{auto ? '自动刷新' : '已暂停'}</Badge>
+        <Button onClick={() => setAuto(!auto)}>{auto ? '暂停刷新' : '自动刷新'}</Button>
+      </>
+    }
+  >
     {debug.isError && <QueryErrorBanner title="运行态摘要加载失败" error={debug.error} onRetry={() => { void debug.refetch() }} />}
     {logQuery.isError && <QueryErrorBanner title="日志加载失败" error={logQuery.error} onRetry={() => { void logQuery.refetch() }} />}
     <div className="diagnostics-metrics summary-grid diagnostics-workbench-metrics">
@@ -247,5 +253,5 @@ export function DiagnosticsPage() {
         <div className="diagnostics-refresh-card"><Activity size={15} /><span>日志 2s 自动刷新，API 15s 同步状态。</span></div>
       </div>
     </div>
-  </div>
+  </Page>
 }

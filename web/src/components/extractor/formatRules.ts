@@ -2,7 +2,12 @@ import { REGION_OPTIONS } from '../charts/region'
 import type { ExtractorFormat, ExtractorMode } from '../../types/extractor'
 
 export const regions = REGION_OPTIONS.map(item => [item.value, item.label] as const)
-export const modes: Array<[ExtractorMode,string]> = [['multi-port','独立端口节点 multi-port'],['pool','默认池入口 pool'],['geoip','地区池入口 geoip'],['android','Android 无认证端口']]
+export const modes: Array<[ExtractorMode, string]> = [
+  ['multi-port', '独立端口'],
+  ['pool', '默认池'],
+  ['geoip', '地区池'],
+  ['android', 'Android'],
+]
 export const formats: Array<[ExtractorFormat,string]> = [
   ['host_port','host:port'],['adb_command','ADB 命令'],['http_no_auth','http://host:port'],['socks5_url','socks5://username:password@host:port'],['socks5_no_auth','socks5://host:port'],['host_port_user_pass','host:port:username:password'],['user_pass_at_host_port','username:password@host:port'],['http_url','http://username:password@host:port'],['csv','host,port,username,password'],['pipe','host|port|username|password'],['curl_command','curl 命令'],['python_requests_json','Python requests JSON'],['clash_yaml','Clash YAML object'],['host_port_user_pass_refresh_remark','host:port:user:pass[refresh]{remark}'],['user_pass_at_host_port_refresh_remark','user:pass@host:port[refresh]{remark}'],['json','JSON'],
 ]

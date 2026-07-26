@@ -9,6 +9,7 @@ import {
   EyeOff,
   KeyRound,
   MoreHorizontal,
+  Pause,
   Pencil,
   Play,
   Plus,
@@ -18,6 +19,8 @@ import {
   ShieldCheck,
   Terminal,
   Trash2,
+  ChevronDown,
+  ChevronRight,
   X,
 } from 'lucide-react'
 import {
@@ -30,6 +33,7 @@ import {
   type ApiKeyBulkAction,
   type ApiKeyMeta,
 } from '../api/settings'
+import { Page } from '../components/layout/Page'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
@@ -153,6 +157,7 @@ export function ApiKeysPage() {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [pendingSecret, setPendingSecret] = useState<ApiKeyMeta | null>(null)
   const [secretCountdown, setSecretCountdown] = useState(0)
+  const [secretPaused, setSecretPaused] = useState(false)
   const [busy, setBusy] = useState(false)
   const [bulkBusy, setBulkBusy] = useState(false)
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
@@ -163,6 +168,7 @@ export function ApiKeysPage() {
   const [playSampleId, setPlaySampleId] = useState<string>(PLAY_SAMPLES[0].id)
   const [playRunning, setPlayRunning] = useState(false)
   const [playResult, setPlayResult] = useState<PlayResult | null>(null)
+  const [playOpen, setPlayOpen] = useState(false)
   const secretTimerRef = useRef<number | undefined>(undefined)
 
   const passwordSet = Boolean((settings.data?.management as Record<string, unknown> | undefined)?.password_set)
@@ -309,6 +315,7 @@ export function ApiKeysPage() {
     clearSecretTimer()
     setPendingSecret(null)
     setSecretCountdown(0)
+    setSecretPaused(false)
   }
 
   const openSecretModal = (ak: ApiKeyMeta | null | undefined) => {
@@ -316,6 +323,7 @@ export function ApiKeysPage() {
     clearSecretTimer()
     setPendingSecret(ak)
     setSecretCountdown(SECRET_MODAL_SECONDS)
+    setSecretPaused(false)
     if (ak.name) {
       setRevealed(prev => ({ ...prev, [String(ak.name)]: false }))
       flashRow(String(ak.name))
@@ -323,7 +331,7 @@ export function ApiKeysPage() {
   }
 
   useEffect(() => {
-    if (!pendingSecret?.key) {
+    if (!pendingSecret?.key || secretPaused) {
       clearSecretTimer()
       return
     }
@@ -339,7 +347,7 @@ export function ApiKeysPage() {
       })
     }, 1000)
     return clearSecretTimer
-  }, [pendingSecret?.key, pendingSecret?.name])
+  }, [pendingSecret?.key, pendingSecret?.name, secretPaused])
 
   const createMut = useMutation({
     mutationFn: async () => {
@@ -703,39 +711,38 @@ export function ApiKeysPage() {
     },
   ]
 
+  const headerStats = [
+    { label: '全部', value: stats.total },
+    { label: '启用', value: stats.enabled },
+    { label: 'Admin', value: stats.admin },
+    ...(stats.disabled > 0 ? [{ label: '禁用', value: stats.disabled }] : []),
+  ]
+
   return (
-    <div className="page api-keys-page">
-      <div className="page-header api-keys-page-header">
-        <div>
-          <div className="eyebrow">Access Control</div>
-          <h1>API Key</h1>
-          <p>
-            为脚本与服务签发访问凭证。默认 <strong>read</strong> 只读；
-            <strong> admin</strong> 完整管理。明文仅在创建/轮换时显示一次。
-            {bulkEnabled ? ' 密钥 ≥2 时可勾选批量管理。' : ' 密钥达到 2 把后自动出现批量勾选。'}
-          </p>
-        </div>
-        <div className="api-keys-header-stats" aria-label="凭证统计">
-          <div>
-            <span>全部</span>
-            <strong>{stats.total}</strong>
-          </div>
-          <div>
-            <span>启用</span>
-            <strong>{stats.enabled}</strong>
-          </div>
-          <div>
-            <span>Admin</span>
-            <strong>{stats.admin}</strong>
-          </div>
-          {stats.disabled > 0 && (
-            <div>
-              <span>禁用</span>
-              <strong>{stats.disabled}</strong>
-            </div>
-          )}
-        </div>
-      </div>
+    <Page
+      className="api-keys-page"
+      headerClassName="api-keys-page-header"
+      eyebrow="Access Control"
+      title={
+        <>
+          API Key
+          {import.meta.env.DEV ? <span className="design-preview-pill">Design preview</span> : null}
+        </>
+      }
+      description={
+        <>
+          为脚本与服务签发访问凭证。默认 <strong>read</strong> 只读；
+          <strong> admin</strong> 完整管理。明文仅在创建/轮换时显示一次。
+          {bulkEnabled ? ' 密钥 ≥2 时可勾选批量管理。' : ' 密钥达到 2 把后自动出现批量勾选。'}
+        </>
+      }
+      actions={
+        <Button onClick={() => { void keysQuery.refetch(); void settings.refetch() }} disabled={keysQuery.isFetching}>
+          <RefreshCw size={15} />刷新
+        </Button>
+      }
+      stats={headerStats}
+    >
 
       {(keysQuery.isError || settings.isError) && (
         <QueryErrorBanner
@@ -877,37 +884,165 @@ export function ApiKeysPage() {
               <p>在左侧生成第一把密钥。创建后会弹出可复制的明文窗口，{SECRET_MODAL_SECONDS}s 后自动关闭。</p>
             </div>
           ) : (
-            <Table<ApiKeyMeta>
-              className="api-key-data-table"
-              size="small"
-              rowKey={(row, index) => rowKeyOf(row, index ?? 0)}
-              columns={columns}
-              dataSource={keys}
-              pagination={false}
-              scroll={{ x: 760 }}
-              rowSelection={rowSelection}
-              loading={keysQuery.isFetching && !keys.length}
-              rowClassName={(row, index) => {
-                const name = rowKeyOf(row, index)
-                const classes: string[] = []
-                if (highlightName === name || highlightName === row.name) classes.push('api-key-row-highlight')
-                if (row.enabled === false) classes.push('api-key-row-disabled')
-                if (selectedNames.includes(name)) classes.push('api-key-row-selected')
-                return classes.join(' ')
-              }}
-              locale={{ emptyText: '暂无 API Key' }}
-            />
+            <>
+              <div className="api-key-table-view">
+                <Table<ApiKeyMeta>
+                  className="api-key-data-table"
+                  size="small"
+                  rowKey={(row, index) => rowKeyOf(row, index ?? 0)}
+                  columns={columns}
+                  dataSource={keys}
+                  pagination={false}
+                  scroll={{ x: 760 }}
+                  rowSelection={rowSelection}
+                  loading={keysQuery.isFetching && !keys.length}
+                  rowClassName={(row, index) => {
+                    const name = rowKeyOf(row, index)
+                    const classes: string[] = []
+                    if (highlightName === name || highlightName === row.name) classes.push('api-key-row-highlight')
+                    if (row.enabled === false) classes.push('api-key-row-disabled')
+                    if (selectedNames.includes(name)) classes.push('api-key-row-selected')
+                    return classes.join(' ')
+                  }}
+                  locale={{ emptyText: '暂无 API Key' }}
+                />
+              </div>
+              <div className="api-key-mobile-list" aria-label="移动端 API Key 卡片列表">
+                {keys.map((row, index) => {
+                  const name = String(row.name || '')
+                  const keyId = rowKeyOf(row, index)
+                  const full = String(row.key || '')
+                  const show = !!revealed[name]
+                  const display = show && full ? full : maskKey(full, row.hint)
+                  const enabled = row.enabled !== false
+                  const currentRole = row.role === 'admin' ? 'admin' : 'read'
+                  const selected = selectedNames.includes(keyId)
+                  const isHighlight = highlightName === keyId || highlightName === name
+                  return (
+                    <article
+                      key={keyId}
+                      className={[
+                        'api-key-card',
+                        enabled ? '' : 'is-disabled',
+                        isHighlight ? 'is-highlight' : '',
+                        selected ? 'is-selected' : '',
+                      ].filter(Boolean).join(' ')}
+                    >
+                      <div className="api-key-card-main">
+                        <div className="api-key-card-title">
+                          {bulkEnabled && (
+                            <input
+                              type="checkbox"
+                              className="api-key-card-check"
+                              aria-label={`选择 ${name || '未命名'}`}
+                              checked={selected}
+                              disabled={acting || !name}
+                              onChange={(e) => {
+                                setSelectedNames(prev => (
+                                  e.target.checked
+                                    ? Array.from(new Set([...prev, keyId]))
+                                    : prev.filter(item => item !== keyId)
+                                ))
+                              }}
+                            />
+                          )}
+                          <strong title={name || '未命名'}>{name || '未命名'}</strong>
+                          <Badge tone={currentRole === 'admin' ? 'warn' : 'info'}>{currentRole}</Badge>
+                          {!enabled && <Badge tone="neutral">禁用</Badge>}
+                        </div>
+                        <div className="api-key-card-secret mono" title={show ? full : '已遮挡'}>
+                          {display || '••••••••••••'}
+                        </div>
+                        <div className="api-key-card-meta">
+                          <div className="field console-field">
+                            <label>角色</label>
+                            <Select
+                              size="small"
+                              value={currentRole}
+                              className="api-key-role-select"
+                              disabled={acting || !name}
+                              options={[
+                                { value: 'read', label: 'read' },
+                                { value: 'admin', label: 'admin' },
+                              ]}
+                              onChange={(v) => {
+                                if (v === currentRole) return
+                                updateMut.mutate({ name, body: { role: v as 'read' | 'admin' } })
+                              }}
+                            />
+                          </div>
+                          <div className="api-key-card-toggle">
+                            <Switch
+                              size="small"
+                              checked={enabled}
+                              disabled={acting || !name}
+                              onChange={(checked) => updateMut.mutate({ name, body: { enabled: checked } })}
+                            />
+                            <span>{enabled ? '启用' : '禁用'}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="api-key-card-side">
+                        <div className="api-key-card-actions">
+                          <Button onClick={() => void copyValue(full, 'API Key')} disabled={!full} title="复制">
+                            <Copy size={14} />
+                          </Button>
+                          <Button
+                            onClick={() => setRevealed(prev => ({ ...prev, [name]: !prev[name] }))}
+                            disabled={!full}
+                            title={show ? '遮挡密钥' : '显示密钥'}
+                          >
+                            {show ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </Button>
+                          <Dropdown menu={{ items: rowMenu(row) }} trigger={['click']} placement="bottomRight">
+                            <Button disabled={acting || !name} title="更多">
+                              <MoreHorizontal size={14} />
+                            </Button>
+                          </Dropdown>
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            </>
           )}
         </section>
       </div>
 
-      <section className="panel api-keys-playground">
-        <div className="panel-header">
+      <details className="panel api-keys-guide" style={{ marginTop: 4 }}>
+        <summary>使用说明 · X-API-Key 与角色</summary>
+        <div className="api-keys-guide-body">
+          <div>请求头：<code>X-API-Key: epk_…</code>（签发后仅弹窗明文一次，请立即复制）。</div>
+          <div><strong>read</strong>：适合对外只读拉取节点/提取代理。</div>
+          <div><strong>admin</strong>：完整管理权限，勿下发到不可信环境。</div>
+          <div>禁用、轮换、删除均立即生效；批量操作仅在 ≥2 把密钥时出现。</div>
+        </div>
+      </details>
+
+      <section className={`panel api-keys-playground${playOpen ? '' : ' is-collapsed'}`}>
+        <div
+          className="panel-header"
+          onClick={() => setPlayOpen(v => !v)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPlayOpen(v => !v) } }}
+          role="button"
+          tabIndex={0}
+          aria-expanded={playOpen}
+        >
           <div>
-            <div className="panel-title"><Terminal size={16} style={{ verticalAlign: '-2px', marginRight: 6 }} />命令试验区</div>
+            <div className="panel-title">
+              <Terminal size={16} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+              命令试验区
+              <Badge tone="neutral">调试</Badge>
+            </div>
             <div className="panel-subtitle">选一把 Key 和示例接口，复制 curl 或直接试跑（结果仅本地显示）。</div>
           </div>
+          <Button className="api-keys-playground-toggle" onClick={(e) => { e.stopPropagation(); setPlayOpen(v => !v) }}>
+            {playOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            {playOpen ? '收起' : '展开'}
+          </Button>
         </div>
+        <div className="api-keys-play-body">
         <div className="api-keys-play-grid">
           <div className="field">
             <label>使用 Key</label>
@@ -993,6 +1128,7 @@ export function ApiKeysPage() {
             </div>
           </div>
         )}
+        </div>
       </section>
 
       <Modal
@@ -1034,10 +1170,20 @@ export function ApiKeysPage() {
               percent={secretProgress}
               showInfo={false}
               size="small"
-              strokeColor="var(--primary)"
+              strokeColor={secretPaused ? 'var(--muted)' : 'var(--primary)'}
               trailColor="color-mix(in srgb, var(--border) 70%, transparent)"
             />
-            <span>{secretCountdown}s 后自动关闭</span>
+            <div className="api-key-secret-timer-row">
+              <span>{secretPaused ? `已暂停 · 保留 ${secretCountdown}s` : `${secretCountdown}s 后自动关闭`}</span>
+              <div className="toolbar">
+                <Button size="small" onClick={() => setSecretPaused(p => !p)}>
+                  {secretPaused ? <><Play size={13} />继续</> : <><Pause size={13} />暂停</>}
+                </Button>
+                <Button size="small" onClick={() => setSecretCountdown(SECRET_MODAL_SECONDS)}>
+                  <RotateCcw size={13} />延长
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       </Modal>
@@ -1066,6 +1212,6 @@ export function ApiKeysPage() {
           />
         </div>
       </Modal>
-    </div>
+    </Page>
   )
 }

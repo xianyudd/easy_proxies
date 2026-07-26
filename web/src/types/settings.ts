@@ -89,6 +89,19 @@ export interface SubscriptionConfigResponse {
   refresh_error?: string
 }
 
+/** GET /api/subscription/status */
+export interface SubscriptionStatus {
+  enabled?: boolean
+  message?: string
+  last_refresh?: string
+  next_refresh?: string
+  node_count?: number
+  last_error?: string
+  refresh_count?: number
+  is_refreshing?: boolean
+  nodes_modified?: boolean
+}
+
 export interface StartFreeProxyRefreshResponse {
   message?: string
   started?: boolean

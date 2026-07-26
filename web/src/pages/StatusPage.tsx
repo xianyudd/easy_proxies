@@ -1,12 +1,15 @@
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getNodesPage, getNodesSummary } from '../api/nodes'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { getNodesPage, getNodesSummary, releaseNode } from '../api/nodes'
 import { getDebugSummary } from '../api/logs'
 import { Badge } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import { useToast } from '../components/ui/Toast'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { RegionAvailabilityChart, LatencyTopChart, TrafficTrendChart, FailureRankChart } from '../components/charts/NodeCharts'
 import { regionMeta } from '../components/charts/region'
 import type { NodeSnapshot } from '../types/node'
+import { Page } from '../components/layout/Page'
 
 interface DebugNode { failure_count?: number; success_count?: number }
 interface DebugResponse { success_rate?: number; nodes?: DebugNode[]; total_calls?: number; total_success?: number }
@@ -62,6 +65,18 @@ export function StatusPage() {
   const nodes = useQuery({ queryKey:['status-nodes-all'], queryFn:getAllStatusNodes, refetchInterval:10000 })
   const summary = useQuery({ queryKey:['nodes-summary'], queryFn:getNodesSummary, refetchInterval:10000 })
   const debug = useQuery({ queryKey:['debug-summary'], queryFn:() => getDebugSummary() as Promise<DebugResponse>, refetchInterval:10000 })
+  const toast = useToast(s => s.show)
+  const queryClient = useQueryClient()
+  const releaseMut = useMutation({
+    mutationFn: (tag: string) => releaseNode(tag),
+    onSuccess: (_res, tag) => {
+      toast(`${tag} 已解封`, 'ok')
+      void queryClient.invalidateQueries({ queryKey:['status-nodes-all'] })
+      void queryClient.invalidateQueries({ queryKey:['nodes-summary'] })
+      void queryClient.invalidateQueries({ queryKey:['nodes-page'] })
+    },
+    onError: e => toast(e instanceof Error ? e.message : '解封失败', 'error'),
+  })
   const data = safeRows<NodeSnapshot>(nodes.data?.nodes)
   const summaryData = summary.data
   const dataUnavailable = (nodes.isError && !nodes.data) || (summary.isError && !summary.data)
@@ -79,8 +94,7 @@ export function StatusPage() {
   const healthRate = stats.total && stats.healthy !== null ? Math.round((stats.healthy / stats.total) * 100) : null
   const regions = Object.entries(Object.keys(regionStats).length ? regionStats : data.reduce((m,n)=>{ const r=String(n.region||'other'); m[r]=(m[r]||0)+1; return m }, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1])
   const recentBad = data.filter(n=>n.blacklisted || (Number(n.failure_count)||0)>0).slice(0,8)
-  return <div className="page">
-    <div className="page-header"><div><h1>运行状态</h1><p>把整体健康度、关键趋势和异常节点放在同一监控视图里，优先定位需要处理的问题。</p></div></div>
+  return <Page eyebrow="Monitor" title="运行状态" description="把整体健康度、关键趋势和异常节点放在同一监控视图里，优先定位需要处理的问题。">
     {nodes.isError && <QueryErrorBanner title="节点状态加载失败" error={nodes.error} onRetry={() => { void nodes.refetch() }} />}
     {summary.isError && <QueryErrorBanner title="节点统计加载失败" error={summary.error} onRetry={() => { void summary.refetch() }} />}
     {debug.isError && <QueryErrorBanner title="调试摘要加载失败" error={debug.error} onRetry={() => { void debug.refetch() }} />}
@@ -104,8 +118,8 @@ export function StatusPage() {
       </div>
       <div className="dashboard-stack">
         <div className="card"><div className="section-title">地区分布</div>{regions.map(([r,c])=><div key={r} className="region-row"><span>{regionLabel(r)}</span><strong>{c}</strong></div>)}</div>
-        <div className="card"><div className="section-title">最近异常</div>{recentBad.length ? recentBad.map(n=><div key={String(n.tag||n.name)} className="issue-row"><div><strong>{String(n.name||n.tag||'-')}</strong><span>{regionLabel(n.region)} · {latencyLabel(n.last_latency_ms)}</span></div><Badge tone={n.blacklisted?'bad':'warn'}>{n.blacklisted?'拉黑':'失败 '+(n.failure_count||0)}</Badge></div>) : <div className="hint">暂无异常节点</div>}</div>
+        <div className="card"><div className="section-title">最近异常</div>{recentBad.length ? recentBad.map(n=>{ const tag = String(n.tag||''); const releasing = releaseMut.isPending && releaseMut.variables === tag; return <div key={String(n.tag||n.name)} className="issue-row"><div><strong>{String(n.name||n.tag||'-')}</strong><span>{regionLabel(n.region)} · {latencyLabel(n.last_latency_ms)}</span></div><div className="issue-row-actions"><Badge tone={n.blacklisted?'bad':'warn'}>{n.blacklisted?'拉黑':'失败 '+(n.failure_count||0)}</Badge>{n.blacklisted && tag && <Button size="small" disabled={releasing} onClick={() => releaseMut.mutate(tag)}>{releasing ? '解封中' : '解封'}</Button>}</div></div> }) : <div className="hint">暂无异常节点</div>}</div>
       </div>
     </div>
-  </div>
+  </Page>
 }
