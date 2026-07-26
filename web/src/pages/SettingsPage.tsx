@@ -499,8 +499,6 @@ export function SettingsPage() {
   if (!settings.data && (settings.isLoading || settings.isError)) {
     return <Page
       className="settings-page"
-      headerClassName="settings-hero"
-      eyebrow="System"
       title="系统设置"
       description={settings.isError ? '当前配置加载失败，修复前不会展示可编辑空表单，避免误覆盖已有设置。' : '正在加载当前配置，加载完成前不会展示可编辑空表单，避免误覆盖已有设置。'}
       actions={<Button variant="primary" disabled><Save size={16} />{settings.isError ? '不可保存' : '加载中...'}</Button>}
@@ -516,10 +514,8 @@ export function SettingsPage() {
 
   return <Page
     className="settings-page"
-    headerClassName="settings-hero"
-    eyebrow="System"
     title="系统设置"
-    description="集中管理订阅来源、代理入口、地区路由、质量检测和日志策略。"
+    description="订阅来源、代理入口、地区路由、质量检测与日志策略。"
     actions={
       <Button variant="primary" onClick={saveAllSettings} disabled={save.isPending || saveSub.isPending || settingsUnavailable || !hasUnsavedChanges}>
         <Save size={16} />{save.isPending || saveSub.isPending ? '保存中...' : '保存更改'}
@@ -572,23 +568,16 @@ export function SettingsPage() {
           className={activeSettingsSection === section.id ? 'active' : ''}
           aria-current={activeSettingsSection === section.id ? 'page' : undefined}
           onClick={() => setActiveSettingsSection(section.id)}
-        ><span className="nav-kicker">{section.index}</span><strong>{section.title}</strong><span>{section.subtitle}</span></a>)}
+        ><strong>{section.title}</strong><span>{section.subtitle}</span></a>)}
       </div>
       <div className="settings-stack refined-settings-stack">
-        <div className="settings-focus-strip" role="status" aria-live="polite">
-          <div>
-            <span className="nav-kicker">{activeSectionMeta.index}</span>
-            <div><strong>{activeSectionMeta.title}</strong><span>{activeSectionMeta.subtitle}</span></div>
-          </div>
-          <div className="settings-focus-hint">当前只展示一个设置分区，避免长页面连续滚动；左侧切换不会丢失未保存草稿。</div>
-        </div>
         <section className={sectionClass('subscriptions', 'settings-section-featured')} id="subscriptions">
           <div className="panel-header settings-section-header"><div><div className="panel-title">订阅</div><div className="panel-subtitle">每条订阅独立编辑，长 URL 不再挤在一个文本框里。</div></div><div className="toolbar"><Button onClick={addSub}><Plus size={16} />新增订阅</Button><Button variant="primary" onClick={saveSubscriptions} disabled={saveSub.isPending || settingsUnavailable || !subsDirty}><Save size={16} />{saveSub.isPending ? '保存中...' : '保存订阅'}</Button></div></div>
-          <div className="settings-status-grid">
-            <div className="status-card"><Database size={16} /><span>订阅条目</span><strong>{cleanSubItems.length}</strong></div>
-            <div className="status-card"><Wifi size={16} /><span>刷新状态</span><strong>{subStatusUnavailable ? '加载失败' : status.is_refreshing ? '刷新中' : '空闲'}</strong></div>
-            <div className="status-card"><Clock3 size={16} /><span>下次刷新</span><strong>{subStatusUnavailable ? '-' : shortDate(status.next_refresh)}</strong></div>
-            <div className="status-card"><Database size={16} /><span>最近节点数</span><strong>{subStatusUnavailable ? '-' : Number(status.node_count || 0)}</strong></div>
+          <div className="settings-inline-note settings-sub-stats" role="status">
+            <span>订阅条目 <strong>{cleanSubItems.length}</strong></span>
+            <span>刷新状态 <strong>{subStatusUnavailable ? '加载失败' : status.is_refreshing ? '刷新中' : '空闲'}</strong></span>
+            <span>下次刷新 <strong>{subStatusUnavailable ? '-' : shortDate(status.next_refresh)}</strong></span>
+            <span>最近节点数 <strong>{subStatusUnavailable ? '-' : Number(status.node_count || 0)}</strong></span>
           </div>
           <div className="subscription-controls">
             {toggle('启用订阅刷新', subRefresh.enabled !== false, v=>updateDraft({...draft, subscription_refresh:{...subRefresh,enabled:v}}))}

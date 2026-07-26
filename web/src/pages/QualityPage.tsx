@@ -309,7 +309,22 @@ export function QualityPage() {
     { title: '延迟', width: 100, sorter: jobId ? undefined : (a, b) => (Number(a.row.latency_ms) || 0) - (Number(b.row.latency_ms) || 0), render: (_, item) => `${item.row.latency_ms || 0} ms` },
     { title: '操作', width: 190, fixed: 'right', render: (_, item) => <Space size={6}><Button variant="primary" onClick={() => { void copyToClipboard(proxyUrl(item.row), toast, '代理已复制') }}>复制</Button><Button onClick={() => { void copyToClipboard(`curl -x ${proxyUrl(item.row)} http://cp.cloudflare.com/generate_204`, toast, 'curl 已复制') }}>curl</Button><Button onClick={() => extract(item.row)}>提取</Button></Space> },
   ], [jobId, proxyUrl, toast, extract])
-  return <Page className="quality-page" eyebrow="Quality" title="节点质量" description="自动加载缓存，一键全量扫描，并按 CF 评分、IP 风险和综合质量筛选可用节点。">
+  return <Page
+    className="quality-page"
+    title="节点质量"
+    description="按 CF 评分、IP 风险和综合质量筛选可用节点。"
+    stats={[
+      { label: '推荐', value: hasCacheError && !jobId ? '-' : summary?.final?.recommend ?? rows.filter(r => r.score >= 75).length },
+      { label: 'CF 优秀', value: hasCacheError && !jobId ? '-' : summary?.cloudflare?.excellent ?? activeCfRows.filter(r => r.level === 'excellent').length },
+      { label: '失败/高风险', value: hasCacheError && !jobId ? '-' : failedCount },
+    ]}
+    actions={
+      <>
+        <Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button>
+        <Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => { void startQualityJob(false) }}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button>
+      </>
+    }
+  >
     {settings.isError && <QueryErrorBanner title="设置加载失败" error={settings.error} onRetry={() => { void settings.refetch() }} />}
     {nodesQuery.isError && <QueryErrorBanner title="节点清单加载失败" error={nodesQuery.error} onRetry={() => { void nodesQuery.refetch() }} />}
     {nodesSummary.isError && <QueryErrorBanner title="节点统计加载失败" error={nodesSummary.error} onRetry={() => { void nodesSummary.refetch() }} />}
@@ -317,88 +332,49 @@ export function QualityPage() {
     {repCache.isError && <QueryErrorBanner title="IP 风险缓存加载失败" error={repCache.error} onRetry={() => { void repCache.refetch() }} />}
     {jobId && jobQuery.isError && <QueryErrorBanner title="后台任务状态加载失败" error={jobQuery.error} onRetry={() => { void jobQuery.refetch() }} />}
     {jobId && jobResults.isError && <QueryErrorBanner title="后台任务结果加载失败" error={jobResults.error} onRetry={() => { void jobResults.refetch() }} />}
-    <div className="card quality-control-card">
-      <div className="quality-control-head">
-        <div>
-          <div className="panel-title">检测流程</div>
-          <div className="panel-subtitle">全量 Pipeline 与同步抽样检测拆开控制：Pipeline 使用当前来源的实际节点数；样本数只影响 CF 抽样和出口地区校准。</div>
-        </div>
+    <section className="sec sec-flush quality-scan-sec">
+      <div className="sec-head">
+        <h2>扫描</h2>
+        <span className="sec-desc">{pipelineTargetText}；样本操作仅抽 {count} 个（{sampleTargetText}）。</span>
       </div>
-      <div className="quality-action-split" aria-label="质量检测操作区">
-        <section className="quality-action-lane quality-action-lane-primary">
-          <div>
-            <span className="action-kicker">Pipeline</span>
-            <strong>后台全量质量扫描</strong>
-            <p>{pipelineTargetText}。适合正式筛选，结果会写入质量缓存并按 Tier/池展示。</p>
-          </div>
-          <div className="quality-control-actions">
-            <Button variant="primary" disabled={!canCreatePipeline || fullScan.isPending} onClick={() => { void startQualityJob(false) }}>{fullScan.isPending ? '创建中...' : scanAllLabel}</Button>
-            <Button disabled={!canRetryPipeline || retryScan.isPending} onClick={() => { void startQualityJob(true) }}>{retryScan.isPending ? '重试中...' : jobRunning ? '替换当前任务并重试失败节点' : 'Pipeline 重试失败节点'}</Button>
-            <Button disabled={cacheLoading} onClick={loadCache}>{cacheLoading ? '加载中...' : '刷新缓存'}</Button>
-          </div>
-        </section>
-        <section className="quality-action-lane">
-          <div>
-            <span className="action-kicker">Sample</span>
-            <strong>同步抽样与地区校准</strong>
-            <p>{sampleTargetText}。适合快速确认探针和地区识别；不会替代 Pipeline 的全量结果。</p>
-          </div>
-          <div className="quality-control-actions">
-            <Button disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button>
-            <Button disabled={!canRunSampleCheck || regionCalibrate.isPending} onClick={() => regionCalibrate.mutate()}>{regionCalibrate.isPending ? '校准中...' : '出口校准地区'}</Button>
-            <Button variant="primary" disabled={!needRegionReload || regionReload.isPending || regionReloadState === 'reloading'} onClick={() => regionReload.mutate()}>{regionReloadState === 'reloading' ? '重载中...' : '重载入池'}</Button>
-          </div>
-        </section>
-      </div>
-      <div className="quality-filter-groups">
-        <div className="quality-filter-group">
-          <div className="quality-filter-group-title">扫描参数<span>决定检测范围与样本量</span></div>
-          <div className="quality-filter-grid modern-filter-grid">
-            <div className="field console-field">
-              <label>地区范围</label>
-              <Select className="console-select" aria-label="地区范围" value={region} onChange={setRegion} options={QUALITY_REGION_OPTIONS} />
-            </div>
-            <div className="field console-field">
-              <label>节点来源</label>
-              <Select className="console-select" aria-label="节点来源" value={source} onChange={setSource} options={[{ value: 'all', label: `全部来源 (${sourceTotalLabel})` }, { value: 'free_proxy', label: `免费源 (${sourceCountLabel('free_proxy')})` }, { value: 'subscription', label: `订阅源 (${sourceCountLabel('subscription')})` }, { value: 'inline', label: `内联 (${sourceCountLabel('inline')})` }, { value: 'nodes_file', label: `节点文件 (${sourceCountLabel('nodes_file')})` }]} />
-            </div>
-            <div className="field console-field">
-              <label>样本数</label>
-              <InputNumber className="console-number" aria-label="样本数" min={1} max={50} value={count} onChange={value=>setCount(Math.min(50, Math.max(1, Number(value)||10)))} />
-            </div>
-          </div>
-        </div>
-        <div className="quality-filter-group">
-          <div className="quality-filter-group-title">结果筛选<span>仅影响下方列表视图</span></div>
-          <div className="quality-filter-grid modern-filter-grid">
-            <div className="field console-field">
-              <label>结果等级</label>
-              <Select className="console-select" aria-label="结果筛选" value={filter} onChange={setFilter} disabled={!!jobId} options={[{ value: 'all', label: jobId ? '后台任务分页结果' : '全部等级' }, { value: 'excellent', label: '优秀' }, { value: 'good', label: '良好' }, { value: 'fair', label: '一般' }, { value: 'poor', label: '较差' }, { value: 'failed', label: '失败' }]} />
-            </div>
-            <div className="field console-field">
-              <label>Tier 筛选</label>
-              <Select className="console-select" aria-label="Tier 筛选" value={tierFilter} onChange={setTierFilter} options={[{ value: 'all', label: '全部 Tier' }, { value: 'reject', label: 'T0 Reject' }, { value: 'rescue', label: 'T1 Rescue' }, { value: 'http_only', label: 'T2 HTTP-only' }, { value: 'simple_web', label: 'T3 Simple Web' }, { value: 'recommended', label: 'T4 Recommended' }, { value: 'premium', label: 'T5 Premium' }]} />
-            </div>
-            <div className="field console-field">
-              <label>池筛选</label>
-              <Select className="console-select" aria-label="池筛选" value={poolFilter} onChange={setPoolFilter} options={[{ value: 'all', label: '全部池' }, { value: 'reject_pool', label: 'reject_pool' }, { value: 'rescue_pool', label: 'rescue_pool' }, { value: 'http_pool', label: 'http_pool' }, { value: 'web_pool', label: 'web_pool' }, { value: 'recommended_pool', label: 'recommended_pool' }, { value: 'strict_pool', label: 'strict_pool' }]} />
-            </div>
-          </div>
-        </div>
+      <div className="ftoolbar">
+        <Select className="console-select f-select" aria-label="地区范围" value={region} onChange={setRegion} options={QUALITY_REGION_OPTIONS} />
+        <Select className="console-select f-select" aria-label="节点来源" value={source} onChange={setSource} options={[{ value: 'all', label: `全部来源 (${sourceTotalLabel})` }, { value: 'free_proxy', label: `免费源 (${sourceCountLabel('free_proxy')})` }, { value: 'subscription', label: `订阅源 (${sourceCountLabel('subscription')})` }, { value: 'inline', label: `内联 (${sourceCountLabel('inline')})` }, { value: 'nodes_file', label: `节点文件 (${sourceCountLabel('nodes_file')})` }]} />
+        <InputNumber className="console-number quality-count-input" aria-label="样本数" min={1} max={50} value={count} onChange={value=>setCount(Math.min(50, Math.max(1, Number(value)||10)))} />
+        <span className="f-end">
+          <Button title={`同步抽样 ${count} 个节点检测 CF 兼容性，不影响 Pipeline 全量结果`} disabled={!canRunSampleCheck || cfScan.isPending} onClick={() => cfScan.mutate()}>{cfScan.isPending ? '检测中...' : '抽样检测 CF'}</Button>
+          <Button title={`按出口 IP 校准 ${count} 个抽样节点的地区并写入持久化`} disabled={!canRunSampleCheck || regionCalibrate.isPending} onClick={() => regionCalibrate.mutate()}>{regionCalibrate.isPending ? '校准中...' : '出口校准地区'}</Button>
+          <Button title={needRegionReload ? '让校准后的地区进入对应地区池' : '暂无待生效的地区校准'} disabled={!needRegionReload || regionReload.isPending || regionReloadState === 'reloading'} onClick={() => regionReload.mutate()}>{regionReloadState === 'reloading' ? '重载中...' : '重载入池'}</Button>
+          <Button title="只对上次 Pipeline 失败的节点重新扫描" disabled={!canRetryPipeline || retryScan.isPending} onClick={() => { void startQualityJob(true) }}>{retryScan.isPending ? '重试中...' : jobRunning ? '替换任务重试失败' : '重试失败节点'}</Button>
+        </span>
       </div>
       {regionUpdateSummary && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status" style={{ marginTop: 16 }}><div><strong>出口地区校准结果</strong><span>{regionUpdateText(regionUpdateSummary)}{needRegionReload ? '；需要重载入池后地区池才完全生效。' : '；当前无需重载。'}</span></div>{needRegionReload && <Button variant="primary" disabled={regionReload.isPending || regionReloadState === 'reloading'} onClick={() => regionReload.mutate()}>{regionReloadState === 'reloading' ? '重载中...' : '立即重载入池'}</Button>}</div>}
       {regionReloadState !== 'idle' && <div className="settings-alert modern-settings-alert settings-reload-alert" role="status" style={{ marginTop: 12 }}><div><strong>{regionReloadState === 'reloading' ? '代理核心正在后台重载' : '代理核心重载失败'}</strong><span>{regionReloadState === 'reloading' ? `已运行 ${Math.floor(Number(regionReloadStatusData?.elapsed_ms || 0) / 1000)} 秒，完成后会自动清除待重载状态。` : regionReloadStatusData?.error || '请检查日志后重试。'}</span></div></div>}
-      {jobId && <div className="card" style={{ marginTop: 16 }}>
-        <div className="panel-header"><div><div className="panel-title">后台质量检测任务</div><div className="panel-subtitle">{jobId} · {jobQuery.data?.status || 'queued'} · {jobQuery.data?.completed || 0}/{jobQuery.data?.total || 0}</div></div><div className="toolbar"><Button disabled={isTerminalJob(jobQuery.data) || cancelScan.isPending} onClick={() => cancelScan.mutate()}>{cancelScan.isPending ? '取消中...' : '取消任务'}</Button><Button disabled={jobProgressLoading} onClick={() => { void jobQuery.refetch(); void jobResults.refetch() }}>{jobProgressLoading ? '刷新中...' : '刷新进度'}</Button></div></div>
-        <Progress percent={Math.round(jobQuery.data?.percent || 0)} status={jobQuery.data?.status === 'failed' ? 'exception' : jobQuery.data?.status === 'completed' ? 'success' : 'active'} />
+      {jobId && <div className="quality-job-strip">
+        <div className="quality-job-meta">
+          <strong>后台任务</strong>
+          <span className="mono muted">{jobId}</span>
+          <span className="muted">{jobQuery.data?.status || 'queued'} · {jobQuery.data?.completed || 0}/{jobQuery.data?.total || 0}</span>
+        </div>
+        <div className="quality-job-progress"><Progress percent={Math.round(jobQuery.data?.percent || 0)} status={jobQuery.data?.status === 'failed' ? 'exception' : jobQuery.data?.status === 'completed' ? 'success' : 'active'} /></div>
+        <div className="toolbar">
+          <Button disabled={isTerminalJob(jobQuery.data) || cancelScan.isPending} onClick={() => cancelScan.mutate()}>{cancelScan.isPending ? '取消中...' : '取消任务'}</Button>
+          <Button disabled={jobProgressLoading} onClick={() => { void jobQuery.refetch(); void jobResults.refetch() }}>{jobProgressLoading ? '刷新中...' : '刷新进度'}</Button>
+        </div>
       </div>}
-    </div>
-    <div className="summary-grid quality-summary-grid"><div className="metric"><div className="label">预筛通过</div><div className="value success">{summary?.quick?.ok ?? '-'}</div></div><div className="metric"><div className="label">最终推荐</div><div className="value success">{hasCacheError && !jobId ? '-' : summary?.final?.recommend ?? rows.filter(r => r.score >= 75).length}</div></div><div className="metric"><div className="label">CF 优秀</div><div className="value success">{hasCacheError && !jobId ? '-' : summary?.cloudflare?.excellent ?? activeCfRows.filter(r=>r.level==='excellent').length}</div></div><div className="metric"><div className="label">失败/高风险</div><div className="value error">{hasCacheError && !jobId ? '-' : failedCount}</div></div></div>
-    <div className="charts-grid quality-charts"><div className="chart-panel"><div className="chart-title">CF 评分分布 <span>{jobId ? 'Current Page' : 'Compatibility'}</span></div><CfDistributionChart rows={activeCfRows} /></div><div className="chart-panel"><div className="chart-title">IP 风险等级 <span>{jobId ? 'Current Page' : 'Reputation'}</span></div><ReputationRiskChart rows={activeRepRows} /></div><div className="chart-panel wide compact-rank-chart"><div className="chart-title">CF 高分节点排行 <span>{jobId ? 'Current Page' : 'Top Scores'}</span></div><CfScoreRankChart rows={rows.slice(0, 10).map(item => item.row)} /></div></div>
-    <div className="card quality-table-card">
-      <div className="panel-header"><div><div className="panel-title">可用节点列表</div><div className="panel-subtitle">{jobId ? `当前页 ${rows.length} 条 / 任务共 ${jobResults.data?.count || 0} 条；后台任务结果由服务端分页返回，不在前端二次筛选排序。` : `共 ${rows.length} 条结果。`}</div></div></div>
+    </section>
+    <section className="sec">
+      <div className="charts-grid quality-charts"><div className="chart-panel"><div className="chart-title">CF 评分分布 <span>{jobId ? 'Current Page' : 'Compatibility'}</span></div><CfDistributionChart rows={activeCfRows} /></div><div className="chart-panel"><div className="chart-title">IP 风险等级 <span>{jobId ? 'Current Page' : 'Reputation'}</span></div><ReputationRiskChart rows={activeRepRows} /></div><div className="chart-panel wide compact-rank-chart"><div className="chart-title">CF 高分节点排行 <span>{jobId ? 'Current Page' : 'Top Scores'}</span></div><CfScoreRankChart rows={rows.slice(0, 10).map(item => item.row)} /></div></div>
+    </section>
+    <section className="sec quality-table-card">
+      <div className="ftoolbar">
+        <Select className="console-select f-select" aria-label="结果筛选" value={filter} onChange={setFilter} disabled={!!jobId} options={[{ value: 'all', label: jobId ? '后台任务分页结果' : '全部等级' }, { value: 'excellent', label: '优秀' }, { value: 'good', label: '良好' }, { value: 'fair', label: '一般' }, { value: 'poor', label: '较差' }, { value: 'failed', label: '失败' }]} />
+        <Select className="console-select f-select" aria-label="Tier 筛选" value={tierFilter} onChange={setTierFilter} options={[{ value: 'all', label: '全部 Tier' }, { value: 'reject', label: 'T0 Reject' }, { value: 'rescue', label: 'T1 Rescue' }, { value: 'http_only', label: 'T2 HTTP-only' }, { value: 'simple_web', label: 'T3 Simple Web' }, { value: 'recommended', label: 'T4 Recommended' }, { value: 'premium', label: 'T5 Premium' }]} />
+        <Select className="console-select f-select" aria-label="池筛选" value={poolFilter} onChange={setPoolFilter} options={[{ value: 'all', label: '全部池' }, { value: 'reject_pool', label: 'reject_pool' }, { value: 'rescue_pool', label: 'rescue_pool' }, { value: 'http_pool', label: 'http_pool' }, { value: 'web_pool', label: 'web_pool' }, { value: 'recommended_pool', label: 'recommended_pool' }, { value: 'strict_pool', label: 'strict_pool' }]} />
+        <span className="f-end">{jobId ? `当前页 ${rows.length} / 共 ${jobResults.data?.count || 0} 条` : `${rows.length} 条结果`}</span>
+      </div>
       <div className="quality-table-desktop">
-        <Table className="quality-table" columns={columns} dataSource={rows} size="middle" scroll={{ x: 1260 }} pagination={jobId ? { current: resultPage, pageSize: resultPageSize, total: jobResults.data?.count || 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (page, pageSize) => { setResultPage(page); setResultPageSize(pageSize) } } : { pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 条` }} locale={{ emptyText: jobResults.isError ? '任务结果接口失败，请先重试。' : hasCacheError ? '质量缓存加载失败，请先重试。' : '暂无质量数据，请先检测或查看缓存。' }} />
+        <Table className="quality-table" columns={columns} dataSource={rows} size="middle" scroll={{ x: 1260 }} pagination={jobId ? { current: resultPage, pageSize: resultPageSize, total: jobResults.data?.count || 0, size: 'small', showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`, onChange: (page, pageSize) => { setResultPage(page); setResultPageSize(pageSize) } } : { pageSize: 10, size: 'small', showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条` }} locale={{ emptyText: jobResults.isError ? '任务结果接口失败，请先重试。' : hasCacheError ? '质量缓存加载失败，请先重试。' : '暂无质量数据，请先检测或查看缓存。' }} />
       </div>
       <div className="quality-mobile-list" aria-label="移动端质量卡片列表">
         {mobileRows.length ? mobileRows.map(item => (
@@ -433,6 +409,7 @@ export function QualityPage() {
       </div>
       {mobileTotal > 0 && <div className="quality-mobile-pagination">
         <Pagination
+          size="small"
           current={mobilePage}
           pageSize={mobilePageSize}
           total={mobileTotal}
@@ -442,6 +419,6 @@ export function QualityPage() {
           onChange={onMobilePageChange}
         />
       </div>}
-    </div>
+    </section>
   </Page>
 }

@@ -721,21 +721,8 @@ export function ApiKeysPage() {
   return (
     <Page
       className="api-keys-page"
-      headerClassName="api-keys-page-header"
-      eyebrow="Access Control"
-      title={
-        <>
-          API Key
-          {import.meta.env.DEV ? <span className="design-preview-pill">Design preview</span> : null}
-        </>
-      }
-      description={
-        <>
-          为脚本与服务签发访问凭证。默认 <strong>read</strong> 只读；
-          <strong> admin</strong> 完整管理。明文仅在创建/轮换时显示一次。
-          {bulkEnabled ? ' 密钥 ≥2 时可勾选批量管理。' : ' 密钥达到 2 把后自动出现批量勾选。'}
-        </>
-      }
+      title="API Key"
+      description="为脚本与服务签发访问凭证；明文仅在创建/轮换时显示一次。"
       actions={
         <Button onClick={() => { void keysQuery.refetch(); void settings.refetch() }} disabled={keysQuery.isFetching}>
           <RefreshCw size={15} />刷新
@@ -752,81 +739,49 @@ export function ApiKeysPage() {
         />
       )}
 
-      <div className="api-keys-workspace">
-        <section className="panel api-keys-issue-panel">
-          <div className="panel-header">
-            <div>
-              <div className="panel-title">签发凭证</div>
-              <div className="panel-subtitle">自动生成密钥 · 无需手填</div>
-            </div>
-            <Button onClick={() => { void keysQuery.refetch(); void settings.refetch() }} disabled={keysQuery.isFetching}>
-              <RefreshCw size={15} />
-            </Button>
+      {!passwordSet && (
+        <div className="settings-alert modern-settings-alert" role="status">
+          <Shield size={16} />
+          <div>
+            <strong>需要管理密码</strong>
+            <span>签发 API Key 前请先到「系统设置 → 管理与日志」配置管理密码。</span>
           </div>
+        </div>
+      )}
 
-          <div className="api-keys-issue-form">
-            <div className="field">
-              <label>名称</label>
-              <Input
-                size="large"
-                placeholder="可选，如 mobile-app"
-                value={nameDraft}
-                onChange={e => setNameDraft(e.target.value)}
-                maxLength={64}
-                allowClear
-              />
-            </div>
-            <div className="field">
-              <label>权限角色</label>
-              <Select
-                size="large"
-                value={role}
-                onChange={v => setRole(v as 'read' | 'admin')}
-                style={{ width: '100%' }}
-                options={[
-                  { value: 'read', label: 'read · 只读（推荐对外）' },
-                  { value: 'admin', label: 'admin · 完整管理' },
-                ]}
-              />
-            </div>
+      <div className="api-keys-stack">
+        <div className="ftoolbar api-keys-issue-bar" role="region" aria-label="签发凭证">
+          <Input
+            className="f-grow"
+            placeholder="名称（可选，如 mobile-app）"
+            value={nameDraft}
+            onChange={e => setNameDraft(e.target.value)}
+            maxLength={64}
+            allowClear
+          />
+          <Select
+            className="f-select"
+            value={role}
+            onChange={v => setRole(v as 'read' | 'admin')}
+            popupMatchSelectWidth={false}
+            options={[
+              { value: 'read', label: 'read · 只读（推荐对外）' },
+              { value: 'admin', label: 'admin · 完整管理' },
+            ]}
+          />
+          <Button
+            variant="primary"
+            className="api-keys-issue-btn"
+            disabled={acting || !passwordSet}
+            onClick={() => createMut.mutate()}
+          >
+            <Plus size={16} />
+            {createMut.isPending ? '生成中…' : '生成 API Key'}
+          </Button>
+          <span className="f-end">{bulkEnabled ? '勾选可批量启用 / 禁用 / 改角色 / 删除' : `${keys.length} keys`}</span>
+        </div>
 
-            <div className={`api-keys-auth-chip ${passwordSet ? 'is-ok' : 'is-warn'}`}>
-              {passwordSet ? <ShieldCheck size={15} /> : <Shield size={15} />}
-              <div>
-                <strong>{passwordSet ? '管理密码已就绪' : '需要管理密码'}</strong>
-                <span>{passwordSet ? '可安全签发 API Key' : '请先到系统设置中配置'}</span>
-              </div>
-            </div>
-
-            <Button
-              variant="primary"
-              size="large"
-              className="api-keys-issue-btn"
-              disabled={acting || !passwordSet}
-              onClick={() => createMut.mutate()}
-            >
-              <Plus size={16} />
-              {createMut.isPending ? '生成中…' : '一键生成 API Key'}
-            </Button>
-
-            <div className="api-keys-issue-hint mono">
-              curl -H &apos;X-API-Key: epk_…&apos; http://host:9091/api/extractor?...
-            </div>
-          </div>
-        </section>
-
-        <section className="panel api-keys-list-panel">
-          <div className="panel-header">
-            <div>
-              <div className="panel-title">凭证列表</div>
-              <div className="panel-subtitle">
-                {bulkEnabled
-                  ? '勾选后批量启用 / 禁用 / 改角色 / 删除'
-                  : '表格管理 · 达到 2 把密钥后自动出现批量勾选'}
-              </div>
-            </div>
-            <Badge tone={keys.length ? 'info' : 'neutral'}>{keys.length} keys</Badge>
-          </div>
+        <section className="sec api-keys-list-panel">
 
           {selectedCount > 0 && bulkEnabled && (
             <div className="api-key-bulk-bar" role="region" aria-label="批量操作">
@@ -881,7 +836,7 @@ export function ApiKeysPage() {
             <div className="api-keys-empty">
               <div className="api-keys-empty-icon"><KeyRound size={28} /></div>
               <strong>还没有 API Key</strong>
-              <p>在左侧生成第一把密钥。创建后会弹出可复制的明文窗口，{SECRET_MODAL_SECONDS}s 后自动关闭。</p>
+              <p>在上方签发条生成第一把密钥。创建后会弹出可复制的明文窗口，{SECRET_MODAL_SECONDS}s 后自动关闭。</p>
             </div>
           ) : (
             <>
@@ -892,7 +847,13 @@ export function ApiKeysPage() {
                   rowKey={(row, index) => rowKeyOf(row, index ?? 0)}
                   columns={columns}
                   dataSource={keys}
-                  pagination={false}
+                  pagination={keys.length > 10 ? {
+                    pageSize: 10,
+                    size: 'small',
+                    showSizeChanger: true,
+                    pageSizeOptions: [10, 20, 50],
+                    showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`,
+                  } : false}
                   scroll={{ x: 760 }}
                   rowSelection={rowSelection}
                   loading={keysQuery.isFetching && !keys.length}

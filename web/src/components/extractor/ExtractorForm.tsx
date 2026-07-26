@@ -1,3 +1,4 @@
+import { InputNumber, Select } from 'antd'
 import { useExtractorStore } from '../../store/extractorStore'
 import type { ExtractorFormat, ExtractorMode, ExtractorRegion } from '../../types/extractor'
 import { allowedFormats, formats, modeHelp, modes, preferredFormat, regions } from './formatRules'
@@ -18,78 +19,60 @@ export function ExtractorForm({ geoipEnabled = true }: { geoipEnabled?: boolean 
 
   return (
     <div className="form extractor-form">
-      <div className="extractor-form-section">
-        <div className="extractor-form-kicker">输出目标</div>
-        <div className="form-grid-2">
-          <div className="field">
-            <label htmlFor="extractor-mode">模式</label>
-            <select
-              id="extractor-mode"
-              className="input"
-              aria-label="提取模式"
-              value={params.mode}
-              onChange={e => setMode(e.target.value as ExtractorMode)}
-            >
-              {modes.map(([v, l]) => (
-                <option key={v} value={v} disabled={v === 'geoip' && !geoipEnabled}>
-                  {v === 'geoip' && !geoipEnabled ? `${l}（未启用）` : l}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="extractor-format">格式</label>
-            <select
-              id="extractor-format"
-              className="input"
-              aria-label="输出格式"
-              value={params.format}
-              onChange={e => setParams({ format: e.target.value as ExtractorFormat })}
-            >
-              {formats.filter(([v]) => allowed.includes(v)).map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
-            </select>
-          </div>
+      <div className="field">
+        <label htmlFor="extractor-mode">模式</label>
+        <Select
+          id="extractor-mode"
+          aria-label="提取模式"
+          value={params.mode}
+          onChange={value => setMode(value as ExtractorMode)}
+          options={modes.map(([v, l]) => ({
+            value: v,
+            label: v === 'geoip' && !geoipEnabled ? `${l}（未启用）` : l,
+            disabled: v === 'geoip' && !geoipEnabled,
+          }))}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="extractor-format">格式</label>
+        <Select
+          id="extractor-format"
+          aria-label="输出格式"
+          value={params.format}
+          onChange={value => setParams({ format: value as ExtractorFormat })}
+          options={formats.filter(([v]) => allowed.includes(v)).map(([v, l]) => ({ value: v, label: l }))}
+        />
+      </div>
+      <div className="form-grid-2">
+        <div className="field">
+          <label htmlFor="extractor-region">区域</label>
+          <Select
+            id="extractor-region"
+            aria-label="代理区域"
+            value={params.region}
+            onChange={value => setParams({ region: value as ExtractorRegion })}
+            showSearch
+            optionFilterProp="label"
+            options={regions.map(([v, l]) => ({ value: v, label: l }))}
+          />
         </div>
-        <div className="extractor-mode-help" role="note">
-          {params.mode === 'geoip' && !geoipEnabled
-            ? 'GeoIP 地区池未启用；请到系统设置启用后再用地区池入口。'
-            : modeHelp(params.mode)}
+        <div className="field">
+          <label htmlFor="extractor-count">数量</label>
+          <InputNumber
+            id="extractor-count"
+            aria-label="提取数量"
+            min={1}
+            max={500}
+            value={params.count}
+            onChange={value => setParams({ count: Math.max(1, Math.min(500, Number(value) || 1)) })}
+            style={{ width: '100%' }}
+          />
         </div>
       </div>
-
-      <div className="extractor-form-section">
-        <div className="extractor-form-kicker">范围</div>
-        <div className="form-grid-2">
-          <div className="field">
-            <label htmlFor="extractor-region">区域</label>
-            <select
-              id="extractor-region"
-              className="input"
-              aria-label="代理区域"
-              value={params.region}
-              onChange={e => setParams({ region: e.target.value as ExtractorRegion })}
-            >
-              {regions.map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="extractor-count">数量</label>
-            <input
-              id="extractor-count"
-              className="input"
-              aria-label="提取数量"
-              type="number"
-              min={1}
-              max={500}
-              value={params.count}
-              onChange={e => setParams({ count: Math.max(1, Math.min(500, Number(e.target.value) || 1)) })}
-            />
-          </div>
-        </div>
+      <div className="extractor-mode-help" role="note">
+        {params.mode === 'geoip' && !geoipEnabled
+          ? 'GeoIP 地区池未启用；请到系统设置启用后再用地区池入口。'
+          : modeHelp(params.mode)}
       </div>
     </div>
   )

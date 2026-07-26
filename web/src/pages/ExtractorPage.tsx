@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { ChevronDown, ClipboardCopy, Eraser, FileDown, Play } from 'lucide-react'
+import { Switch } from 'antd'
+import { ChevronDown, ClipboardCopy, Eraser, FileDown, FileSearch, Play } from 'lucide-react'
 import { getExtractor } from '../api/extractor'
 import { getSettings } from '../api/settings'
 import { Button } from '../components/ui/Button'
@@ -8,7 +9,7 @@ import { Badge } from '../components/ui/Badge'
 import { useToast } from '../components/ui/Toast'
 import { ExtractorForm } from '../components/extractor/ExtractorForm'
 import { ProxyResultList, entriesToText } from '../components/extractor/ProxyResultList'
-import { formats, modes, regions } from '../components/extractor/formatRules'
+import { formats } from '../components/extractor/formatRules'
 import { useExtractorStore } from '../store/extractorStore'
 import { copyToClipboard } from '../lib/clipboard'
 import { downloadText } from '../lib/download'
@@ -76,8 +77,6 @@ export function ExtractorPage() {
   const resultCount = entries.length
   const text = entriesToText(entries)
   const formatLabel = formats.find(([value]) => value === params.format)?.[1] || params.format
-  const modeLabel = modes.find(([value]) => value === params.mode)?.[1] || params.mode
-  const regionLabel = regions.find(([value]) => value === params.region)?.[1] || params.region
 
   const run = (patch?: Partial<ExtractorParams>) => {
     if (busy) return
@@ -113,22 +112,16 @@ export function ExtractorPage() {
   return (
     <Page
       className="extractor-page extractor-page-v2"
-      eyebrow="Workbench"
       title="代理提取"
-      description="自上而下：定参数 → 生成 → 结果依次呈现。"
-      stats={[
-        { label: '模式', value: modeLabel },
-        { label: '区域', value: regionLabel },
-        { label: '数量', value: params.count },
-        { label: '结果', value: resultCount },
-      ]}
+      description="定参数，生成，按条或整段复制。"
+      stats={[{ label: '结果', value: resultCount }]}
       actions={
         <Badge tone={busy ? 'warn' : resultCount ? 'good' : 'neutral'}>
           {busy ? '生成中' : resultCount ? `${resultCount} 条` : '待命'}
         </Badge>
       }
     >
-      <div className="extractor-flow">
+      <div className="extractor-grid">
         {/* INPUT */}
         <section className="card extractor-card extractor-input-card">
           <div className="panel-header">
@@ -145,32 +138,33 @@ export function ExtractorPage() {
 
             <ExtractorForm geoipEnabled={geoipEnabled} />
 
-            <div className="extractor-options" role="group" aria-label="生成选项">
-              <label className="extractor-option">
-                <input
-                  type="checkbox"
-                  aria-label="显示真实凭据"
-                  checked={params.reveal}
-                  onChange={e => setParams({ reveal: e.target.checked })}
-                  disabled={busy}
-                />
-                <span>
+            <div className="extractor-toggles" role="group" aria-label="生成选项">
+              <div className="extractor-toggle">
+                <div className="extractor-toggle-copy">
                   <strong>显示真实凭据</strong>
                   <em>关闭时输出掩码</em>
-                </span>
-              </label>
-              <label className="extractor-option">
-                <input
-                  type="checkbox"
-                  checked={copyAlso}
-                  onChange={e => setCopyAlso(e.target.checked)}
+                </div>
+                <Switch
+                  size="small"
+                  aria-label="显示真实凭据"
+                  checked={params.reveal}
+                  onChange={v => setParams({ reveal: v })}
                   disabled={busy}
                 />
-                <span>
+              </div>
+              <div className="extractor-toggle">
+                <div className="extractor-toggle-copy">
                   <strong>生成后自动复制</strong>
                   <em>结果写入剪贴板</em>
-                </span>
-              </label>
+                </div>
+                <Switch
+                  size="small"
+                  aria-label="生成后自动复制"
+                  checked={copyAlso}
+                  onChange={v => setCopyAlso(v)}
+                  disabled={busy}
+                />
+              </div>
             </div>
           </div>
 
@@ -178,10 +172,10 @@ export function ExtractorPage() {
             <Button
               className="extractor-run-btn"
               variant="primary"
-              disabled={busy}
+              loading={busy}
               onClick={() => run()}
             >
-              <Play size={15} />
+              {busy ? null : <Play size={15} />}
               {busy ? '生成中…' : copyAlso ? '生成并复制' : '生成代理'}
             </Button>
             <Button
@@ -244,12 +238,15 @@ export function ExtractorPage() {
                 <ProxyResultList entries={entries} />
               ) : (
                 <div className="extractor-empty" data-busy={busy ? '1' : '0'}>
+                  <div className="extractor-empty-icon" aria-hidden>
+                    <FileSearch size={22} strokeWidth={1.8} />
+                  </div>
                   <div className="extractor-empty-copy">
                     <strong>{busy ? '生成中…' : '还没有结果'}</strong>
                     <span>
                       {busy
                         ? '完成后会显示在这里，并可按条复制。'
-                        : '在上方设置参数后点「生成并复制」。'}
+                        : '在左侧设置参数后点「生成并复制」。'}
                     </span>
                   </div>
                 </div>

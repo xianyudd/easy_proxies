@@ -94,19 +94,20 @@ export function StatusPage() {
   const healthRate = stats.total && stats.healthy !== null ? Math.round((stats.healthy / stats.total) * 100) : null
   const regions = Object.entries(Object.keys(regionStats).length ? regionStats : data.reduce((m,n)=>{ const r=String(n.region||'other'); m[r]=(m[r]||0)+1; return m }, {} as Record<string,number>)).sort((a,b)=>b[1]-a[1])
   const recentBad = data.filter(n=>n.blacklisted || (Number(n.failure_count)||0)>0).slice(0,8)
-  return <Page eyebrow="Monitor" title="运行状态" description="把整体健康度、关键趋势和异常节点放在同一监控视图里，优先定位需要处理的问题。">
+  return <Page
+    title="运行状态"
+    description="健康度、趋势与异常节点的监控视图。"
+    stats={[
+      { label: '可用率', value: healthRate === null ? '--' : `${healthRate}%` },
+      { label: '可用/总数', value: `${stats.healthy ?? '-'} / ${stats.total ?? '-'}` },
+      { label: '成功率', value: stats.successRate === null ? '-' : `${stats.successRate.toFixed(1)}%` },
+      { label: '活跃连接', value: dataUnavailable ? '-' : stats.conn },
+      { label: '异常', value: dataUnavailable ? '-' : recentBad.length },
+    ]}
+  >
     {nodes.isError && <QueryErrorBanner title="节点状态加载失败" error={nodes.error} onRetry={() => { void nodes.refetch() }} />}
     {summary.isError && <QueryErrorBanner title="节点统计加载失败" error={summary.error} onRetry={() => { void summary.refetch() }} />}
     {debug.isError && <QueryErrorBanner title="调试摘要加载失败" error={debug.error} onRetry={() => { void debug.refetch() }} />}
-    <div className="status-hero">
-      <div className="insight-panel">
-        <div className="panel-title">整体健康状态</div>
-        <div className="panel-subtitle">节点可用率 / Success telemetry</div>
-        <div className="health-score">{healthRate === null ? '--' : `${healthRate}%`}</div>
-        <div className="mini-grid"><div className="mini-stat"><span>总节点</span><strong>{stats.total ?? '-'}</strong></div><div className="mini-stat"><span>可用</span><strong>{stats.healthy ?? '-'}</strong></div><div className="mini-stat"><span>异常</span><strong>{stats.bad ?? '-'}</strong></div></div>
-      </div>
-      <div className="summary-grid"><div className="metric"><div className="label">成功率</div><div className="value">{stats.successRate === null ? '-' : `${stats.successRate.toFixed(1)}%`}</div></div><div className="metric"><div className="label">活跃连接</div><div className="value">{dataUnavailable ? '-' : stats.conn}</div></div><div className="metric"><div className="label">地区数</div><div className="value">{dataUnavailable ? '-' : regions.length}</div></div><div className="metric"><div className="label">最近异常</div><div className="value error">{dataUnavailable ? '-' : recentBad.length}</div></div></div>
-    </div>
     <div className="dashboard-grid">
       <div className="dashboard-stack">
         <div className="chart-panel wide map-panel"><div className="chart-title">节点地理分布 <span>Node World Map</span></div><RegionAvailabilityChart nodes={data} /></div>

@@ -14,9 +14,12 @@ type PageHeaderProps = {
   className?: string
 }
 
-/** Shared page title block — keeps spacing/type consistent across screens (design preview). */
+/**
+ * Compact toolbar-style page header:
+ * one row — title (+one-line description) | inline text metrics | actions.
+ * No stat cards, no eyebrow: the top nav already gives section context.
+ */
 export function PageHeader({
-  eyebrow,
   title,
   description,
   actions,
@@ -24,25 +27,22 @@ export function PageHeader({
   className = '',
 }: PageHeaderProps) {
   return (
-    <div className={`page-header ep-page-header ${className}`.trim()}>
-      <div className="ep-page-header-main">
-        {eyebrow ? <div className="eyebrow">{eyebrow}</div> : null}
-        <div className="ep-page-header-title-row">
-          <h1>{title}</h1>
-          {actions ? <div className="toolbar ep-page-header-actions">{actions}</div> : null}
-        </div>
-        {description ? <p className="ep-page-header-desc">{description}</p> : null}
+    <div className={`page-header pg-head ${className}`.trim()}>
+      <div className="pg-head-main">
+        <h1>{title}</h1>
+        {description ? <p className="pg-desc">{description}</p> : null}
       </div>
       {stats && stats.length > 0 ? (
-        <div className="ep-page-header-stats" aria-label="页面统计">
+        <div className="pg-stats" aria-label="页面统计">
           {stats.map((s) => (
-            <div key={String(s.label)} className="ep-page-header-stat">
-              <span>{s.label}</span>
+            <span key={String(s.label)} className="pg-stat">
+              <em>{s.label}</em>
               <strong>{s.value}</strong>
-            </div>
+            </span>
           ))}
         </div>
       ) : null}
+      {actions ? <div className="toolbar pg-actions">{actions}</div> : null}
     </div>
   )
 }

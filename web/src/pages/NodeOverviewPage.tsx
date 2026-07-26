@@ -1,4 +1,4 @@
-import { Input, Pagination, Select } from 'antd'
+import { Input, Pagination, Progress, Select } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, Ban, Copy, Gauge, RefreshCw, Search, ShieldCheck, Wand2 } from 'lucide-react'
@@ -235,9 +235,8 @@ export function NodeOverviewPage() {
   return (
     <Page
       className="overview-page overview-proxies"
-      eyebrow="Proxies"
       title="节点"
-      description="选择节点 · 看延迟 · 测速 · 复制或带去提取"
+      description="选中节点后测速、复制或带去提取。"
       actions={
         <>
           <Button
@@ -258,10 +257,8 @@ export function NodeOverviewPage() {
         </>
       }
       stats={[
-        { label: '总计', value: summaryUnavailable ? '—' : totalNodes },
         { label: '可用', value: summaryUnavailable ? '—' : availableCount },
-        { label: '筛选', value: summaryUnavailable ? '—' : filtered },
-        { label: '本页', value: rows.length },
+        { label: '总计', value: summaryUnavailable ? '—' : totalNodes },
       ]}
     >
       {isError && (
@@ -321,7 +318,7 @@ export function NodeOverviewPage() {
               </div>
             </>
           ) : (
-            <div className="px-current-empty">点击下方节点选中 · 测速 / 复制 / 带到提取页</div>
+            <div className="px-current-empty">点击行选中节点，在这里测速、拉黑、复制或带去提取。</div>
           )}
         </div>
 
@@ -399,6 +396,19 @@ export function NodeOverviewPage() {
           </span>
         </div>
 
+        {/* Probe-all progress */}
+        {probeAllProgress && probeAllProgress.total > 0 && (
+          <div className="px-probe-strip" role="status" aria-label="全量测速进度">
+            <Progress
+              percent={Math.round((probeAllProgress.current / probeAllProgress.total) * 100)}
+              size="small"
+              showInfo={false}
+              status="active"
+            />
+            <span className="mono">{probeAllProgress.current}/{probeAllProgress.total}</span>
+          </div>
+        )}
+
         {/* Region chips */}
         <div className="px-regions" role="tablist" aria-label="按地区筛选">
           {regionChips.map(item => (
@@ -475,7 +485,7 @@ export function NodeOverviewPage() {
                         disabled={!tag || probingTag === tag}
                         onClick={() => tag && probeMut.mutate(tag)}
                       >
-                        {probingTag === tag ? '…' : '测'}
+                        {probingTag === tag ? '…' : '测速'}
                       </Button>
                       <Button size="small" onClick={() => copyNode(node)}>复制</Button>
                     </span>
@@ -488,7 +498,7 @@ export function NodeOverviewPage() {
 
         <div className="px-foot">
           <span className="muted" style={{ fontSize: 12 }}>
-            点行选中 · 默认仅可用
+            {summaryUnavailable ? '' : `本页 ${rows.length} · 筛选 ${filtered}`}
           </span>
           <Pagination
             size="small"
@@ -497,6 +507,7 @@ export function NodeOverviewPage() {
             total={data?.total_filtered || 0}
             showSizeChanger
             pageSizeOptions={[50, 100, 200]}
+            showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`}
             onChange={(p, ps) => {
               setPage(p)
               if (ps !== pageSize) setPageSize(ps)

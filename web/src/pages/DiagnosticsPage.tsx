@@ -141,7 +141,14 @@ export function DiagnosticsPage() {
     const safeLogs = safeText(logQuery.data?.logs)
     setLogs(safeLogs)
   }, [logQuery.data])
-  const logRows = useMemo<LogRow[]>(() => logs ? logs.split('\n').map((text, id) => ({ id, text, level: detectLogLevel(text) })) : [], [logs])
+  const logRows = useMemo<LogRow[]>(() => {
+    if (!logs) return []
+    const lines = logs.split('\n')
+    // The backend tails the log by bytes, so the first line may start mid-way
+    // through a multi-byte character — drop it instead of rendering mojibake.
+    if (lines.length && lines[0].includes('�')) lines.shift()
+    return lines.map((text, id) => ({ id, text, level: detectLogLevel(text) }))
+  }, [logs])
   const normalizedKeyword = keyword.trim()
   const filteredLogRows = useMemo(() => logRows.filter(row => (levelFilter === 'all' || row.level === levelFilter) && includesKeyword(row.text, normalizedKeyword, caseSensitive)), [caseSensitive, levelFilter, logRows, normalizedKeyword])
   const visibleLogRows = useMemo(() => filteredLogRows.slice(-LOG_RENDER_LIMIT), [filteredLogRows])
@@ -194,10 +201,13 @@ export function DiagnosticsPage() {
   }
   return <Page
     className="diagnostics-page diagnostics-workbench-page"
-    headerClassName="diagnostics-hero diagnostics-workbench-hero"
-    eyebrow="Console"
     title="日志诊断"
-    description="实时日志保持终端控制台体验，右侧只保留关键运行态摘要，避免原始数据和重复指标干扰排查。"
+    description="实时日志终端 + 关键运行态摘要。"
+    stats={[
+      { label: '错误', value: errorLines },
+      { label: '警告', value: warnLines },
+      { label: 'API', value: debug.isFetching || logQuery.isFetching ? 'SYNC' : debug.isError || logQuery.isError ? 'ERROR' : 'READY' },
+    ]}
     actions={
       <>
         <Badge tone={auto ? 'good' : 'neutral'}>{auto ? '自动刷新' : '已暂停'}</Badge>
@@ -207,12 +217,6 @@ export function DiagnosticsPage() {
   >
     {debug.isError && <QueryErrorBanner title="运行态摘要加载失败" error={debug.error} onRetry={() => { void debug.refetch() }} />}
     {logQuery.isError && <QueryErrorBanner title="日志加载失败" error={logQuery.error} onRetry={() => { void logQuery.refetch() }} />}
-    <div className="diagnostics-metrics summary-grid diagnostics-workbench-metrics">
-      <div className="metric"><div className="label">日志行数</div><div className="value">{logRows.length}</div></div>
-      <div className="metric"><div className="label">错误线索</div><div className="value error">{errorLines}</div></div>
-      <div className="metric"><div className="label">警告线索</div><div className="value">{warnLines}</div></div>
-      <div className="metric"><div className="label">API 状态</div><div className={`value ${debug.isError || logQuery.isError ? 'error' : 'success'}`}>{debug.isFetching || logQuery.isFetching?'SYNC':debug.isError || logQuery.isError?'ERROR':'READY'}</div></div>
-    </div>
     <div className="diagnostics-layout refined-diagnostics-layout diagnostics-workbench">
       <div className="log-console refined-log-console terminal-console-panel diagnostics-log-panel">
         <div className="log-toolbar refined-log-toolbar terminal-toolbar">
@@ -226,7 +230,7 @@ export function DiagnosticsPage() {
           </div>
         </div>
         <div className="terminal-frame diagnostics-terminal-frame">
-          <div className="terminal-chrome"><span></span><span></span><span></span><strong>easy_proxies.log</strong></div>
+          <div className="terminal-chrome"><strong>easy_proxies.log</strong></div>
           <div ref={logRef} className="terminal-logbox" role="log" aria-label="实时日志">
             {visibleLogRows.length ? visibleLogRows.map(row => <div key={row.id} className={`terminal-logline terminal-logline-${row.level}`}>{highlightKeyword(row.text || ' ', normalizedKeyword, caseSensitive)}</div>) : <div className="terminal-log-empty">{logs ? '当前筛选没有匹配日志' : '当前页面显示已清空；点击刷新可重新加载最新日志，服务端日志文件不会被删除'}</div>}
           </div>
