@@ -28,6 +28,8 @@ type Config struct {
 	ProxyPassword  string // 代理池的密码（用于导出）
 	ExternalIP     string // 外部 IP 地址，用于导出时替换 0.0.0.0
 	SkipCertVerify bool   // 全局跳过 SSL 证书验证
+	// ProbeConcurrency caps simultaneous health-check dials. 0 = auto.
+	ProbeConcurrency int
 	// APIKeys / CORSOrigins mirror management config for auth middleware.
 	// Updated via SetConfig when YAML reloads.
 	APIKeys     []config.APIKeyConfig
@@ -44,10 +46,10 @@ type NodeInfo struct {
 	Mode          string `json:"mode"`
 	ListenAddress string `json:"listen_address,omitempty"`
 	Port          uint16 `json:"port,omitempty"`
-	Region        string `json:"region,omitempty"`  // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
-	Country       string `json:"country,omitempty"` // Full country name from GeoIP
-	Source        string `json:"source,omitempty"`  // Runtime source: inline, nodes_file, subscription, free_proxy
-	Protocol      string `json:"protocol,omitempty"`    // URI scheme: vless, vmess, hysteria2, anytls, ...
+	Region        string `json:"region,omitempty"`       // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
+	Country       string `json:"country,omitempty"`      // Full country name from GeoIP
+	Source        string `json:"source,omitempty"`       // Runtime source: inline, nodes_file, subscription, free_proxy
+	Protocol      string `json:"protocol,omitempty"`     // URI scheme: vless, vmess, hysteria2, anytls, ...
 	ViaUpstream   bool   `json:"via_upstream,omitempty"` // true when dialed through upstream_proxy detour
 }
 
@@ -133,6 +135,18 @@ type Manager struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	logger      Logger
+
+	probeInterval time.Duration // periodic sweep period, for freshness skipping
+	sweeps        atomic.Int32  // in-flight sweeps; a reload can overlap the periodic tick
+	// probeSem caps dials across ALL sweeps, not per sweep: a reload-triggered
+	// ProbeAllNow can run alongside the periodic tick, and per-sweep limits would
+	// simply add up (three overlapping sweeps at startup meant 3x the cap).
+	probeSem     chan struct{}
+	probeWorkers int
+	// firstSweepDone closes once the boot sweep finishes, so callers that share
+	// the upstream path can hold off until the startup burst is over.
+	firstSweepDone chan struct{}
+	firstSweepOnce sync.Once
 }
 
 // Logger interface for logging
@@ -144,11 +158,18 @@ type Logger interface {
 // NewManager constructs a manager and pre-validates the probe target.
 func NewManager(cfg Config) (*Manager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	workers := probeWorkerLimit(runtime.NumCPU())
+	if cfg.ProbeConcurrency > 0 {
+		workers = cfg.ProbeConcurrency
+	}
 	m := &Manager{
-		cfg:    cfg,
-		nodes:  make(map[string]*entry),
-		ctx:    ctx,
-		cancel: cancel,
+		cfg:            cfg,
+		nodes:          make(map[string]*entry),
+		ctx:            ctx,
+		cancel:         cancel,
+		probeWorkers:   workers,
+		probeSem:       make(chan struct{}, workers),
+		firstSweepDone: make(chan struct{}),
 	}
 	if cfg.ProbeTarget != "" {
 		target := cfg.ProbeTarget
@@ -196,8 +217,10 @@ func (m *Manager) StartPeriodicHealthCheck(interval, timeout time.Duration) {
 		return
 	}
 
+	m.probeInterval = interval
+
 	go func() {
-		// 启动后立即进行一次检查
+		// 启动后立即进行一次检查（此时还没有真实流量可借用，必须全量探测）
 		m.probeAllNodes(timeout)
 
 		ticker := time.NewTicker(interval)
@@ -208,7 +231,7 @@ func (m *Manager) StartPeriodicHealthCheck(interval, timeout time.Duration) {
 			case <-m.ctx.Done():
 				return
 			case <-ticker.C:
-				m.probeAllNodes(timeout)
+				m.sweep(timeout, true)
 			}
 		}
 	}()
@@ -223,8 +246,61 @@ func (m *Manager) ProbeAllNow(timeout time.Duration) {
 	m.probeAllNodes(timeout)
 }
 
-// probeAllNodes checks all registered nodes concurrently.
+// probeAllNodes checks every registered node, skipping nothing that can be probed.
 func (m *Manager) probeAllNodes(timeout time.Duration) {
+	m.sweep(timeout, false)
+}
+
+// SweepInProgress reports whether a health-check sweep is currently dialing.
+// Callers that share the same upstream path (e.g. the upstream health probe)
+// use this to stay out of the sweep's way instead of competing with it.
+func (m *Manager) SweepInProgress() bool {
+	if m == nil {
+		return false
+	}
+	return m.sweeps.Load() > 0
+}
+
+// FirstSweepDone is closed once the boot sweep has finished. It never closes
+// when health checking is disabled, so callers must pair it with a deadline.
+func (m *Manager) FirstSweepDone() <-chan struct{} {
+	if m == nil {
+		return nil
+	}
+	return m.firstSweepDone
+}
+
+// probeWorkerLimit derives the dial concurrency for a health-check sweep.
+// Probes are network-bound, not CPU-bound, so core count is the wrong axis to
+// scale on: on a 32-core host the old NumCPU()*2 opened 64 simultaneous dials,
+// and when every node routes through one upstream relay that burst saturates
+// the relay's selected outbound — stalling unrelated traffic (including the
+// upstream health probe itself) for seconds. Keep it low and flat.
+func probeWorkerLimit(cpus int) int {
+	limit := cpus / 2
+	if limit < minProbeWorkers {
+		limit = minProbeWorkers
+	}
+	if limit > maxProbeWorkers {
+		limit = maxProbeWorkers
+	}
+	return limit
+}
+
+const (
+	minProbeWorkers = 4
+	maxProbeWorkers = 16
+	// probeLaunchStagger spaces out dial starts so a sweep ramps up instead of
+	// slamming the relay with a full worker set in the same millisecond.
+	probeLaunchStagger = 20 * time.Millisecond
+)
+
+// sweep checks registered nodes concurrently. When skipFresh is set, nodes that
+// carried successful live traffic recently are trusted without a probe.
+func (m *Manager) sweep(timeout time.Duration, skipFresh bool) {
+	m.sweeps.Add(1)
+	defer m.sweeps.Add(-1)
+
 	m.mu.RLock()
 	entries := make([]*entry, 0, len(m.nodes))
 	for _, e := range m.nodes {
@@ -240,17 +316,26 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 		m.logger.Info("starting health check for ", len(entries), " nodes")
 	}
 
-	workerLimit := runtime.NumCPU() * 2
-	if workerLimit < 8 {
-		workerLimit = 8
-	}
-	sem := make(chan struct{}, workerLimit)
+	workerLimit := m.probeWorkers
+	sem := m.probeSem
 	var wg sync.WaitGroup
 	var availableCount atomic.Int32
 	var failedCount atomic.Int32
 	failureSummary := newProbeFailureSummary(5)
 
 	var skippedIsolated atomic.Int32
+	var skippedFresh atomic.Int32
+
+	// A node that just carried real traffic has already proven the exact thing a
+	// probe would test, so re-dialing it only adds load. Half the sweep period
+	// keeps this from swallowing the probe's own lastOK from the previous round.
+	var freshWindow time.Duration
+	if skipFresh && m.probeInterval > 0 {
+		freshWindow = m.probeInterval / 2
+	}
+
+	launched := 0
+sweepLoop:
 	for _, e := range entries {
 		e.mu.Lock()
 		probeFn := e.probe
@@ -271,6 +356,8 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 			e.mu.Unlock()
 			continue
 		}
+		fresh := freshWindow > 0 && e.available && e.initialCheckDone && reason == "" &&
+			!e.lastOK.IsZero() && time.Since(e.lastOK) < freshWindow && e.lastFail.Before(e.lastOK)
 		e.mu.Unlock()
 
 		if probeFn == nil {
@@ -280,6 +367,20 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 			skippedIsolated.Add(1)
 			continue
 		}
+		if fresh {
+			skippedFresh.Add(1)
+			continue
+		}
+
+		// Ramp the sweep up instead of releasing a full worker set at once.
+		if launched > 0 && launched < workerLimit {
+			select {
+			case <-m.ctx.Done():
+				break sweepLoop
+			case <-time.After(probeLaunchStagger):
+			}
+		}
+		launched++
 
 		sem <- struct{}{}
 		wg.Add(1)
@@ -332,10 +433,12 @@ func (m *Manager) probeAllNodes(timeout time.Duration) {
 		}(e, probeFn, tag)
 	}
 	wg.Wait()
+	m.firstSweepOnce.Do(func() { close(m.firstSweepDone) })
 
 	if m.logger != nil {
 		m.logger.Info("health check completed: ", availableCount.Load(), " available, ", failedCount.Load(), " failed",
-			", skipped_isolated=", skippedIsolated.Load())
+			", skipped_isolated=", skippedIsolated.Load(), ", skipped_fresh=", skippedFresh.Load(),
+			", concurrency=", workerLimit)
 		if failedCount.Load() > 0 {
 			m.logger.Warn(failureSummary.String())
 		}

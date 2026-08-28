@@ -29,23 +29,26 @@ type UpstreamHealth struct {
 }
 
 type upstreamHealthState struct {
-	mu              sync.RWMutex
-	last            UpstreamHealth
-	stop            chan struct{}
-	once            sync.Once
-	primary         string // configured preferred upstream (usually 17890)
-	usingFallback   bool
-	consecFail      int
-	consecOK        int
-	lastSwitch      time.Time
+	mu               sync.RWMutex
+	last             UpstreamHealth
+	stop             chan struct{}
+	once             sync.Once
+	primary          string // configured preferred upstream (usually 17890)
+	usingFallback    bool
+	consecFail       int
+	consecOK         int
+	lastSwitch       time.Time
 	lastSwitchReason string
-	switching       bool
+	switching        bool
 }
 
 const (
-	upstreamFailThreshold    = 3
-	upstreamRecoverThreshold = 2
-	upstreamSwitchCooldownounce   = 45 * time.Second
+	upstreamFailThreshold       = 3
+	upstreamRecoverThreshold    = 2
+	upstreamSwitchCooldownounce = 45 * time.Second
+	// initialUpstreamCheckGrace bounds the wait for the boot sweep. A sweep that
+	// outruns it is still covered by the in-sweep guard in checkUpstreamOnce.
+	initialUpstreamCheckGrace = 90 * time.Second
 )
 
 func (s *Server) upstreamHealthSnapshot() UpstreamHealth {
@@ -81,6 +84,18 @@ func (s *Server) StartUpstreamHealthLoop(interval time.Duration) {
 		}
 		s.cfgMu.RUnlock()
 		go func() {
+			// The boot sweep starts at the same moment this loop does, and the
+			// immediate first check would otherwise race ahead of it: it runs
+			// before the sweep flag is set, so the in-sweep guard misses it and
+			// we measure the queue our own startup burst just created. Wait the
+			// sweep out — bounded, since a disabled health check never sweeps.
+			select {
+			case <-s.mgr.FirstSweepDone():
+			case <-s.upstreamHealth.stop:
+				return
+			case <-time.After(initialUpstreamCheckGrace):
+			}
+
 			t := time.NewTicker(interval)
 			defer t.Stop()
 			s.checkUpstreamOnce()
@@ -112,6 +127,14 @@ func (s *Server) StopUpstreamHealthLoop() {
 }
 
 func (s *Server) checkUpstreamOnce() {
+	// The node sweep dials through this same relay. Probing mid-sweep measures
+	// the queue our own health check just created, not the relay's health — and
+	// a false timeout here triggers a needless failover. Skip this tick; the
+	// next one (interval-spaced) lands outside the sweep.
+	if s.mgr.SweepInProgress() {
+		return
+	}
+
 	s.cfgMu.RLock()
 	var configured string
 	var fallback string

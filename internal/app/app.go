@@ -28,16 +28,17 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 
 	monitorCfg := monitor.Config{
-		Enabled:       cfg.ManagementEnabled(),
-		Listen:        cfg.Management.Listen,
-		ProbeTarget:   cfg.Management.ProbeTarget,
-		Password:      cfg.Management.Password,
-		ProxyUsername: proxyUsername,
-		ProxyPassword: proxyPassword,
-		ExternalIP:    cfg.ExternalIP,
-		APIKeys:       append([]config.APIKeyConfig(nil), cfg.Management.APIKeys...),
-		CORSOrigins:   append([]string(nil), cfg.Management.CORSOrigins...),
-		Governance:    monitor.DefaultGovernance(),
+		Enabled:          cfg.ManagementEnabled(),
+		Listen:           cfg.Management.Listen,
+		ProbeTarget:      cfg.Management.ProbeTarget,
+		ProbeConcurrency: cfg.Management.ProbeConcurrency,
+		Password:         cfg.Management.Password,
+		ProxyUsername:    proxyUsername,
+		ProxyPassword:    proxyPassword,
+		ExternalIP:       cfg.ExternalIP,
+		APIKeys:          append([]config.APIKeyConfig(nil), cfg.Management.APIKeys...),
+		CORSOrigins:      append([]string(nil), cfg.Management.CORSOrigins...),
+		Governance:       monitor.DefaultGovernance(),
 	}
 
 	// Create and start BoxManager

@@ -162,10 +162,13 @@ type ManagementConfig struct {
 	Enabled        *bool          `yaml:"enabled"`
 	Listen         string         `yaml:"listen"`
 	ProbeTarget    string         `yaml:"probe_target"`
-	Password       string         `yaml:"password"`          // WebUI 访问密码，为空则不需要密码
-	ClashAPIListen string         `yaml:"clash_api_listen"`  // sing-box Clash API 监听地址
-	APIKeys        []APIKeyConfig `yaml:"api_keys"`          // 外部调用长期密钥；有启用项时未鉴权请求一律 401
-	CORSOrigins    []string       `yaml:"cors_origins"`      // 非空时启用 CORS；空=不发 CORS 头
+	Password       string         `yaml:"password"`         // WebUI 访问密码，为空则不需要密码
+	ClashAPIListen string         `yaml:"clash_api_listen"` // sing-box Clash API 监听地址
+	APIKeys        []APIKeyConfig `yaml:"api_keys"`         // 外部调用长期密钥；有启用项时未鉴权请求一律 401
+	CORSOrigins    []string       `yaml:"cors_origins"`     // 非空时启用 CORS；空=不发 CORS 头
+	// ProbeConcurrency 限制健康检查同时发起的拨号数；0=自动（按 CPU 推导并封顶）。
+	// 所有节点共用一条上游 relay 时，过高的并发会打满 relay 选中的出站。
+	ProbeConcurrency int `yaml:"probe_concurrency"`
 }
 
 // SubscriptionRefreshConfig controls subscription auto-refresh and reload settings.
