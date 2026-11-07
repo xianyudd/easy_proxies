@@ -62,6 +62,15 @@
 - 端点 9091/9092 200、2323 open、真实代理 gstatic 204；config 指纹 f5c30b41… 不变。
 - 工作区：`M internal/builder/builder.go` + `?? internal/builder/builder_log_test.go`；未 commit/push。
 
+## START-6 部署实证（Go 1.26.10 工具链安全升级，2026-11-08 07:14:02 重启，二进制 a9925c33…）
+
+- 来源：cherry-pick 上游 jasonwong1991/easy_proxies `9f6ccf9`（等价应用，本地基线 go 1.24.1 → 1.26.10，Docker `golang:1.24` → `1.26.10`）；commit `6c7d69c` 已推送 origin main。
+- 目的：闭合 GO-2026-6809（`crypto/x509` 中间证书不信任，仅 1.26.10 修复，release gate govulncheck 可触达）。
+- 验证：Go 1.26.10 工具链经 goproxy.cn 可下载；干净快照 663 passed；构建产物 `a9925c33…`（50.4MB）。
+- 部署：备份 `a0705f33` → `easy_proxies.bak-go124-20261108`；替换 a9925c33；重启后 NRestarts=0、PID 608132。
+- 验收：`go version -m` 确认 buildinfo `go1.26.10`；9091/9092 200、2323 open、真实代理 gstatic 204；config 指纹 f5c30b41… 不变；启动窗口 journal 879 行（每节点横幅 0、摘要 1），err/warning 级仅 6 行。
+- 工作区整洁：main = 6c7d69c，已推送；无遗留改动。
+
 ## 约束
 
 - 不改用户节点、订阅、端口、日志阈值和其他业务配置；不打印凭据。
