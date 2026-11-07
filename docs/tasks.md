@@ -51,6 +51,17 @@
 - 部署二进制 f7f0a0b7(v1) → c76e8b25(v2)；备份 easy_proxies.bak-v1-20261108 与 easy_proxies.bak-lifecyclefix-20261108-050228；未回退。
 - 仍未 commit/push；分支 fix/startup-reload-order-20261108 工作区含 v1+v2 改动与新增测试。
 
+## START-5 部署实证（builder 日志降级，2026-11-08 06:32:56 重启，二进制 a0705f33…）
+
+- 目标：消除每次构建/重载约 3 行/节点（~1200 节点 → 3600+ 行）的低信息密度日志。
+- 改动（`internal/builder/builder.go`，+31/−5）：`debugLogLevel()` 判定；`printProxyLinks` 非 debug/trace 只打一行摘要（pool/hybrid `🌐 Pool Entry Point:`、multi-port/hybrid `🔌 Multi-Port Entry Points: N nodes`）；`⏳ Building nodes... %d/%d` 进度行门控到 debug。
+- 保留未动：所有 ⚠️/❌ 警告错误（GeoIP 失败、node build failed、XHTTP 回退、ECH cache miss、prefetch 失败）、低频状态（GeoIP loaded、区域分布、upstream detour、ech_cache 聚合行）。
+- 测试：新 `internal/builder/builder_log_test.go` 3 个；全套 663 passed、builder -race 37 passed（干净快照独立复验）。
+- 部署实证：备份 `easy_proxies.bak-builderlog-20261108`（原 c76e8b25）；替换 a0705f33；系统 d restart 后 NRestarts=0。
+- 启动窗口 journal：907 行（含 348 行 config 端口避让警告 = v2 已知正常 trying_next_port，非搬移）；`📡 Proxy Links:` 页头 0、每节点 HTTP/SOCKS5 0；摘要各 1 次（单次构建 ✅）。
+- 端点 9091/9092 200、2323 open、真实代理 gstatic 204；config 指纹 f5c30b41… 不变。
+- 工作区：`M internal/builder/builder.go` + `?? internal/builder/builder_log_test.go`；未 commit/push。
+
 ## 约束
 
 - 不改用户节点、订阅、端口、日志阈值和其他业务配置；不打印凭据。
