@@ -1128,13 +1128,22 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 			c.Nodes[idx].Name = fmt.Sprintf("node-%d", idx)
 		}
 
-		// Check if this node has a preserved port from portMap
+		// Check if this node has a preserved port from portMap.
+		// 若该端口已被同一配置里的其他节点占用（重复 URI 会被 canonicalNodeURI
+		// 折叠成同一个 key，两个条目都被 portMap 赋到同一端口；hybrid 下还可能
+		// 撞上共享池 Listener.Port），保留它会生成一个自身互相冲突的 sing-box
+		// 配置——两个 inbound 同端口，Start 必失败并触发反复搬移。此时跳过保留，
+		// 留给第二遍分配新端口。
 		if c.Mode == "multi-port" || c.Mode == "hybrid" {
 			nodeKey := c.Nodes[idx].NodeKey()
 			if existingPort, ok := portMap[nodeKey]; ok && existingPort > 0 {
-				c.Nodes[idx].Port = existingPort
-				usedPorts[existingPort] = true
-				log.Printf("✅ Preserved port %d for node %q", existingPort, c.Nodes[idx].Name)
+				if usedPorts[existingPort] {
+					log.Printf("⚠️  Port %d for node %q already used, assigning a new port", existingPort, c.Nodes[idx].Name)
+				} else {
+					c.Nodes[idx].Port = existingPort
+					usedPorts[existingPort] = true
+					log.Printf("✅ Preserved port %d for node %q", existingPort, c.Nodes[idx].Name)
+				}
 			}
 		}
 	}
