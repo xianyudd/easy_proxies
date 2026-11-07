@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enables Clash-compatible tooling integration
 
 ### Changed
+- Require Go 1.26.10 and pin the Docker builder to `golang:1.26.10`, closing the reachable stdlib advisory GO-2026-6809 (`crypto/x509` intermediate-certificate distrust, fixed in 1.26.10).
 - **Subscription Parsing**: Improved Clash YAML format detection
   - User-Agent changed to `clash-verge/v2.2.3` for better compatibility
   - YAML detection sample size increased from 200 to 16384 characters
