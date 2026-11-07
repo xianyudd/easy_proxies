@@ -41,6 +41,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - VMess node name extraction from base64 payload
 - Cross-platform file locking for Windows support
 
+## [3.0.2] - 2026-11-08
+
+### Fixed
+- Startup/reload timing: lifecycle operations serialized so hot reload no
+  longer races manager startup ("manager not started" errors gone)
+- Node port relocation on reload: reassignments now persist through the
+  current port map, and duplicate subscription URIs collapse to distinct
+  ports instead of colliding on the same one
+
+### Changed
+- Per-node build listing and build progress lines are gated behind the
+  debug/trace log level; info/warn now prints one summary line per entry
+  mode. Journal volume drops from ~3 lines per node per build to a handful.
+
 ## [2.0.0] - 2025-01-XX
 
 ### Added
