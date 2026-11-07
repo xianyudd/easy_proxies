@@ -35,6 +35,48 @@ const (
 	healthCheckPollInterval   = 500 * time.Millisecond
 	periodicHealthInterval    = 5 * time.Minute
 	periodicHealthTimeout     = 10 * time.Second
+	// defaultPortReleaseTimeout 是重载时等待旧实例释放监听端口的上限。
+	// 旧实例 Close 返回后端口可能仍被内核短暂占用，先等它真正可绑再构建新实例，
+	// 避免把"释放延迟"误判成端口冲突而永久搬移节点端口。
+	defaultPortReleaseTimeout = 5 * time.Second
+	// portReleasePollInterval 是端口释放轮询间隔。
+	portReleasePollInterval = 50 * time.Millisecond
+)
+
+// ManagerState 描述 manager 的生命周期状态。
+// 状态是并发可观察的：重载/启动/关闭必须按状态机串行推进，避免后台刷新
+// 在实例尚未就绪或正在重建时进入。
+type ManagerState int
+
+const (
+	StateNotStarted ManagerState = iota
+	StateStarting
+	StateRunning
+	StateReloading
+	StateClosed
+)
+
+func (s ManagerState) String() string {
+	switch s {
+	case StateStarting:
+		return "starting"
+	case StateRunning:
+		return "running"
+	case StateReloading:
+		return "reloading"
+	case StateClosed:
+		return "closed"
+	default:
+		return "not_started"
+	}
+}
+
+var (
+	// ErrManagerNotStarted 表示尚未成功启动过实例（或启动/回滚失败后没有可用实例）。
+	// 明确返回该错误而不是静默失败，调用方可以据此决定是否重试启动。
+	ErrManagerNotStarted = errors.New("manager not started")
+	// ErrBoxManagerClosed 表示 manager 已关闭，不再接受重载。
+	ErrBoxManagerClosed = errors.New("box manager closed")
 )
 
 // Logger defines logging interface for the manager.
@@ -57,9 +99,25 @@ func WithLogger(l Logger) Option {
 	return func(m *Manager) { m.logger = l }
 }
 
+// WithPortReleaseTimeout overrides how long a reload waits for the previous
+// instance's listening ports to become bindable again before building the new
+// box. Tests use it to keep the wait window short.
+func WithPortReleaseTimeout(d time.Duration) Option {
+	return func(m *Manager) { m.portReleaseTimeout = d }
+}
+
 // Manager owns the lifecycle of the active sing-box instance.
 type Manager struct {
+	// lifecycleMu 串行化 Start / Reload / Close。
+	// 没有它时，两次重载会互相看到 currentBox == nil（第一次重建期间把
+	// currentBox 清空），后到者直接报 "manager not started"；Close 与
+	// Reload 重叠还会让关闭完成后又被装回一个新实例（泄漏）。
+	lifecycleMu sync.Mutex
+
 	mu sync.RWMutex
+
+	// state 由 mu 保护，配合 lifecycleMu 构成明确的启动/重载/关闭状态机。
+	state ManagerState
 
 	currentBox     boxInstance
 	monitorMgr     *monitor.Manager
@@ -76,10 +134,11 @@ type Manager struct {
 	upstreamPreferred       string
 	upstreamRuntimeOverride string
 
-	drainTimeout      time.Duration
-	minAvailableNodes int
-	logger            Logger
-	boxFactory        func(context.Context, *config.Config) (boxInstance, error)
+	drainTimeout       time.Duration
+	portReleaseTimeout time.Duration
+	minAvailableNodes  int
+	logger             Logger
+	boxFactory         func(context.Context, *config.Config) (boxInstance, error)
 
 	baseCtx            context.Context
 	healthCheckStarted bool
@@ -105,25 +164,73 @@ func New(cfg *config.Config, monitorCfg monitor.Config, opts ...Option) *Manager
 	if m.drainTimeout <= 0 {
 		m.drainTimeout = defaultDrainTimeout
 	}
+	if m.portReleaseTimeout <= 0 {
+		m.portReleaseTimeout = defaultPortReleaseTimeout
+	}
 	return m
+}
+
+// State reports the current lifecycle state. A manager that never started (or
+// whose start/rollback failed) reports StateNotStarted instead of failing
+// silently.
+func (m *Manager) State() ManagerState {
+	if m == nil {
+		return StateNotStarted
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.state
+}
+
+func (m *Manager) setState(state ManagerState) {
+	m.mu.Lock()
+	m.state = state
+	m.mu.Unlock()
+}
+
+// setStateAfterFailedStart 启动失败后回到 StateNotStarted：后续重载会得到
+// 明确的 ErrManagerNotStarted（而不是静默沿用不存在的实例）。
+func (m *Manager) setStateAfterFailedStart() {
+	m.mu.Lock()
+	m.state = StateNotStarted
+	m.mu.Unlock()
 }
 
 // Start creates and starts the initial sing-box instance.
 func (m *Manager) Start(ctx context.Context) error {
+	m.lifecycleMu.Lock()
+	// Start 与 Reload/Close 串行。锁握到函数返回，保证任何并发重载/关闭
+	// 都看到"已启动且可用"的实例，而不是启动中途的临时状态。
+	defer m.lifecycleMu.Unlock()
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	m.mu.Lock()
+	if m.state == StateClosed {
+		m.mu.Unlock()
+		return ErrBoxManagerClosed
+	}
+	if m.state == StateStarting || m.state == StateRunning {
+		m.mu.Unlock()
+		return errors.New("sing-box already running")
+	}
+	m.state = StateStarting
+	m.mu.Unlock()
 	if err := m.ensureMonitor(ctx); err != nil {
+		m.setStateAfterFailedStart()
 		return err
 	}
 
 	m.mu.Lock()
 	if m.cfg == nil {
 		m.mu.Unlock()
+		m.setStateAfterFailedStart()
 		return errors.New("box manager requires config")
 	}
 	if m.currentBox != nil {
 		m.mu.Unlock()
+		m.setStateAfterFailedStart()
 		return errors.New("sing-box already running")
 	}
 	m.applyConfigSettings(m.cfg)
@@ -138,6 +245,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		var err error
 		instance, err = m.newBox(ctx, cfg)
 		if err != nil {
+			m.setStateAfterFailedStart()
 			return err
 		}
 		if err = instance.Start(); err != nil {
@@ -150,6 +258,7 @@ func (m *Manager) Start(ctx context.Context) error {
 					continue
 				}
 			}
+			m.setStateAfterFailedStart()
 			return fmt.Errorf("start sing-box: %w", err)
 		}
 		break // Success
@@ -157,6 +266,7 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	m.mu.Lock()
 	m.currentBox = instance
+	m.state = StateRunning
 	m.mu.Unlock()
 
 	// Start periodic health check after nodes are registered
@@ -201,15 +311,25 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 		return errors.New("new config is nil")
 	}
 
+	// 重载串行化：与 Start/Close 共用 lifecycleMu，避免两个重载互相看到
+	// currentBox == nil（上次重载清空后尚未装回）而误报 manager not started。
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+
 	m.mu.Lock()
-	if m.currentBox == nil {
+	if m.state == StateClosed {
 		m.mu.Unlock()
-		return errors.New("manager not started")
+		return ErrBoxManagerClosed
+	}
+	if m.state != StateRunning || m.currentBox == nil {
+		m.mu.Unlock()
+		return ErrManagerNotStarted
 	}
 	ctx := m.baseCtx
 	oldBox := m.currentBox
 	oldCfg := m.cfg
 	m.currentBox = nil // Mark as reloading
+	m.state = StateReloading
 	// Resolve which upstream the new box should actually use, while tracking
 	// the persistable primary separately from any temporary failover override.
 	m.applyUpstreamForBoxBuildLocked(newCfg)
@@ -217,6 +337,14 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		// 启动上下文已被取消（进程即将退出）：不重建，把旧实例装回并恢复状态。
+		m.mu.Lock()
+		m.currentBox = oldBox
+		m.state = StateRunning
+		m.mu.Unlock()
+		return err
 	}
 
 	m.logger.Infof("reloading with %d nodes", len(newCfg.Nodes))
@@ -250,8 +378,13 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 	m.androidRouters = nil
 	m.mu.Unlock()
 
-	// Give OS time to release ports
-	time.Sleep(500 * time.Millisecond)
+	// 旧实例 Close 返回后，监听端口可能仍被内核短暂占用（TIME_WAIT / close
+	// 完成前的窗口）。把"端口真正可绑"作为构建新实例的前置条件：轮询等待，
+	// 而不是固定 sleep 500ms；超时后仍占用才交给下面的重试/重分配逻辑，
+	// 避免把释放延迟误判为第三方端口冲突而永久搬移节点端口。
+	if stuck := waitForListenPortsReleased(ctx, newCfg, m.portReleaseTimeout); len(stuck) > 0 {
+		m.logger.Warnf("port(s) %v still held after %s, will retry/reassign during start", stuck, m.portReleaseTimeout)
+	}
 
 	// Reset shared state store to ensure clean state for new config
 	pool.ResetSharedStateStore()
@@ -270,15 +403,18 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 		var err error
 		instance, err = m.newBox(ctx, newCfg)
 		if err != nil {
-			m.rollbackToOldConfig(ctx, oldCfg)
+			// 启动上下文取消时不回滚（旧实例还在/进程在退出），直接返回。
+			if ctx.Err() != nil {
+				return fmt.Errorf("create new box: %w", err)
+			}
+			m.recoverAfterFailedReload(ctx, oldCfg)
 			return fmt.Errorf("create new box: %w", err)
 		}
 		if err = instance.Start(); err != nil {
 			_ = instance.Close()
 			// Check if it's a port conflict error. During reload the old sing-box
-			// process has just been closed; some systems keep sockets reserved for a
-			// short window. Retrying the same config first avoids permanently moving a
-			// node to a new port and creating gaps in the multi-port range.
+			// process has just been closed; port release was already awaited above,
+			// so a bind error here is usually a genuine third-party conflict.
 			if conflictPort := extractPortFromBindError(err); conflictPort > 0 {
 				if shouldRetryTransientPortConflict(retry) {
 					m.logger.Warnf("port %d is still being released, retrying before reassignment...", conflictPort)
@@ -292,7 +428,10 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 					continue
 				}
 			}
-			m.rollbackToOldConfig(ctx, oldCfg)
+			if ctx.Err() != nil {
+				return fmt.Errorf("start new box: %w", err)
+			}
+			m.recoverAfterFailedReload(ctx, oldCfg)
 			return fmt.Errorf("start new box: %w", err)
 		}
 		break // Success
@@ -301,8 +440,16 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 	m.applyConfigSettings(newCfg)
 
 	m.mu.Lock()
+	if m.state == StateClosed {
+		// Close 已抢先完成（本应被 lifecycleMu 排除，这里作为兜底防泄漏），
+		// 不再把新实例装回去，直接关闭它。
+		m.mu.Unlock()
+		_ = instance.Close()
+		return ErrBoxManagerClosed
+	}
 	m.currentBox = instance
 	m.cfg = newCfg
+	m.state = StateRunning
 	// Box may have been built with a temporary failover upstream; the
 	// authoritative config object always keeps the preferred primary so
 	// SaveSettings / WebUI never persist the override.
@@ -358,10 +505,20 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 	return nil
 }
 
+// recoverAfterFailedReload 在重载失败后尝试恢复旧配置。回滚成功则回到
+// StateRunning；回滚也失败则标记 StateNotStarted，后续重载会得到明确的
+// ErrManagerNotStarted，而不是静默使用不存在的实例。
+func (m *Manager) recoverAfterFailedReload(ctx context.Context, oldCfg *config.Config) {
+	if err := m.rollbackToOldConfig(ctx, oldCfg); err != nil {
+		m.logger.Errorf("rollback failed: %v", err)
+		m.setState(StateNotStarted)
+	}
+}
+
 // rollbackToOldConfig attempts to restart with the previous configuration.
-func (m *Manager) rollbackToOldConfig(ctx context.Context, oldCfg *config.Config) {
+func (m *Manager) rollbackToOldConfig(ctx context.Context, oldCfg *config.Config) error {
 	if oldCfg == nil {
-		return
+		return errors.New("no previous config to roll back to")
 	}
 	m.logger.Warnf("attempting rollback to previous config...")
 	if m.monitorMgr != nil {
@@ -371,26 +528,42 @@ func (m *Manager) rollbackToOldConfig(ctx context.Context, oldCfg *config.Config
 	instance, err := m.newBox(ctx, oldCfg)
 	if err != nil {
 		m.logger.Errorf("rollback failed to create box: %v", err)
-		return
+		return fmt.Errorf("create old box: %w", err)
 	}
 	if err := instance.Start(); err != nil {
 		_ = instance.Close()
 		m.logger.Errorf("rollback failed to start box: %v", err)
-		return
+		return fmt.Errorf("start old box: %w", err)
 	}
 	m.mu.Lock()
 	m.currentBox = instance
 	m.cfg = oldCfg
+	m.state = StateRunning
 	m.mu.Unlock()
 	// Sync config pointer to monitor server after rollback
 	if m.monitorServer != nil {
 		m.monitorServer.SetConfig(m.cfg)
 	}
 	m.logger.Infof("rollback successful")
+	return nil
 }
 
 // Close terminates the active instance and auxiliary components.
+// 与 Start/Reload 串行：若重载正在进行，先等它结束再关闭，保证 Close 返回后
+// 不会有重建把新实例装回来（旧实现会在 Close 之后把 currentBox 重新赋值，
+// 泄漏一个仍在运行的实例）。
 func (m *Manager) Close() error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+
+	m.mu.Lock()
+	if m.state == StateClosed {
+		m.mu.Unlock()
+		return nil
+	}
+	m.state = StateClosed
+	m.mu.Unlock()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -794,6 +967,7 @@ func removeFromSlice(slice []string, element string) []string {
 }
 
 // waitForHealthCheck polls until enough nodes are available or timeout.
+// ctx 取消（进程正在退出）时提前返回，避免关闭被启动健康检查拖住。
 func (m *Manager) waitForHealthCheck(timeout time.Duration) error {
 	if m.monitorMgr == nil || m.minAvailableNodes <= 0 {
 		return nil
@@ -805,6 +979,7 @@ func (m *Manager) waitForHealthCheck(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(healthCheckPollInterval)
 	defer ticker.Stop()
+	ctx := m.baseCtx
 
 	for {
 		available, total := m.availableNodeCount()
@@ -814,6 +989,14 @@ func (m *Manager) waitForHealthCheck(timeout time.Duration) error {
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timeout: %d/%d nodes available (need >= %d)", available, total, m.minAvailableNodes)
+		}
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+				continue
+			}
 		}
 		<-ticker.C
 	}
@@ -1165,9 +1348,19 @@ func (m *Manager) ReloadWithPortMap(newCfg *config.Config, portMap map[string]ui
 		return errors.New("new config is nil")
 	}
 
-	// Apply port mapping to preserve existing node ports
-	if portMap != nil && len(portMap) > 0 {
-		if err := newCfg.NormalizeWithPortMap(portMap); err != nil {
+	// 端口表合并：以 manager 当前端口表（CurrentPortMap）为准进行覆盖，调用方
+	// 传入的旧表只补充当前表未知的条目。运行时重分配（reassignConflictingPort）
+	// 只写进内存 newCfg，若不合并，上游持有一份搬移前端口写死的旧表（例如 app
+	// 启动时持有的原始 cfg 副本），下一次重载又会退回原端口、再次撞冲突。
+	merged := make(map[string]uint16, len(portMap))
+	for k, v := range portMap {
+		merged[k] = v
+	}
+	for k, v := range m.CurrentPortMap() {
+		merged[k] = v // current wins
+	}
+	if len(merged) > 0 {
+		if err := newCfg.NormalizeWithPortMap(merged); err != nil {
 			return fmt.Errorf("normalize config with port map: %w", err)
 		}
 	}
@@ -1215,7 +1408,11 @@ func extractPortFromBindError(err error) uint16 {
 	return 0
 }
 
-// reassignConflictingPort finds the node using the conflicting port and assigns a new port.
+// reassignConflictingPort finds every node using the conflicting port and
+// moves it to an available port. The same port can legitimately be shared by
+// several nodes when duplicate URIs were collapsed onto one preserved port
+// (NormalizeWithPortMap) or when the caller supplied a hand-written conflict;
+// moving only the first match leaves the box failing on the same port forever.
 func reassignConflictingPort(cfg *config.Config, conflictPort uint16) bool {
 	// Build set of used ports
 	usedPorts := make(map[uint16]bool)
@@ -1226,28 +1423,116 @@ func reassignConflictingPort(cfg *config.Config, conflictPort uint16) bool {
 		usedPorts[node.Port] = true
 	}
 
-	// Find and reassign the conflicting node
+	address := cfg.MultiPort.Address
+	if address == "" {
+		address = "0.0.0.0"
+	}
+	reassigned := false
 	for idx := range cfg.Nodes {
-		if cfg.Nodes[idx].Port == conflictPort {
-			// Find next available port
-			newPort := conflictPort + 1
-			address := cfg.MultiPort.Address
-			if address == "" {
-				address = "0.0.0.0"
+		if cfg.Nodes[idx].Port != conflictPort {
+			continue
+		}
+		// Find next available port
+		newPort := conflictPort + 1
+		for usedPorts[newPort] || !config.IsPortAvailable(address, newPort) {
+			newPort++
+			if newPort > 65535 {
+				log.Printf("❌ No available port found for node %q", cfg.Nodes[idx].Name)
+				return reassigned
 			}
-			for usedPorts[newPort] || !config.IsPortAvailable(address, newPort) {
-				newPort++
-				if newPort > 65535 {
-					log.Printf("❌ No available port found for node %q", cfg.Nodes[idx].Name)
-					return false
-				}
+		}
+		log.Printf("⚠️  Port %d in use, reassigning node %q to port %d", conflictPort, cfg.Nodes[idx].Name, newPort)
+		cfg.Nodes[idx].Port = newPort
+		usedPorts[newPort] = true
+		reassigned = true
+	}
+	return reassigned
+}
+
+// listenPort 描述一个将要被绑定的监听端口。
+type listenPort struct {
+	address string
+	port    uint16
+}
+
+func (p listenPort) String() string {
+	return fmt.Sprintf("%s:%d", p.address, p.port)
+}
+
+// configListenPorts 返回 newCfg 在 multi-port/hybrid 模式下会绑定的监听端口。
+// 宁可多等也不漏：凡 Port>0 的节点都计入（含 free_proxy 池节点 —— builder 的
+// 每节点 inbound 循环会跳过它们，但配置若给了 Port>0，多等一次无害；漏掉一个
+// 真实监听端口则会重演"wait 无告警但 Start 撞端口"）。
+func configListenPorts(cfg *config.Config) []listenPort {
+	if cfg == nil {
+		return nil
+	}
+	var ports []listenPort
+	address := cfg.MultiPort.Address
+	if address == "" {
+		address = "0.0.0.0"
+	}
+	if cfg.Mode == "hybrid" && cfg.Listener.Port > 0 {
+		listen := cfg.Listener.Address
+		if listen == "" {
+			listen = address
+		}
+		ports = append(ports, listenPort{address: listen, port: cfg.Listener.Port})
+	}
+	if cfg.Mode == "multi-port" || cfg.Mode == "hybrid" {
+		seen := make(map[uint16]bool)
+		for _, node := range cfg.Nodes {
+			if node.Port == 0 {
+				continue
 			}
-			log.Printf("⚠️  Port %d in use, reassigning node %q to port %d", conflictPort, cfg.Nodes[idx].Name, newPort)
-			cfg.Nodes[idx].Port = newPort
-			return true
+			if seen[node.Port] {
+				continue
+			}
+			seen[node.Port] = true
+			ports = append(ports, listenPort{address: address, port: node.Port})
 		}
 	}
-	return false
+	return ports
+}
+
+// waitForListenPortsReleased 轮询等待新配置要绑定的端口全部可绑，直到全部
+// 释放、超时或 ctx 取消。返回超时/取消时仍未释放的端口；空表示端口已就绪。
+// 这取代了"固定 sleep 500ms"的盲等，是构建新实例前的真实前置条件：
+// 释放延迟不再被误判为端口冲突，也就不再触发无谓的端口重分配。
+func waitForListenPortsReleased(ctx context.Context, cfg *config.Config, timeout time.Duration) []listenPort {
+	ports := configListenPorts(cfg)
+	if len(ports) == 0 {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = defaultPortReleaseTimeout
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := portsStillBound(ports)
+		if len(remaining) == 0 {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return remaining
+		}
+		select {
+		case <-ctx.Done():
+			return remaining
+		case <-time.After(portReleasePollInterval):
+		}
+	}
+}
+
+// portsStillBound 返回当前仍不可绑定的端口（被其他进程/内核短暂占用）。
+func portsStillBound(ports []listenPort) []listenPort {
+	var remaining []listenPort
+	for _, p := range ports {
+		if !config.IsPortAvailable(p.address, p.port) {
+			remaining = append(remaining, p)
+		}
+	}
+	return remaining
 }
 
 func cloneNodes(nodes []config.NodeConfig) []config.NodeConfig {

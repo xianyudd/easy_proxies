@@ -78,7 +78,8 @@ func Build(cfg *config.Config) (option.Options, error) {
 
 	totalNodes := len(cfg.Nodes)
 	for i, node := range cfg.Nodes {
-		if i > 0 && i%1000 == 0 {
+		// 进度行属于每次构建必然输出、信息密度低的日志，仅在 debug/trace 级别打印
+		if debugLogLevel(cfg.LogLevel) && i > 0 && i%1000 == 0 {
 			log.Printf("⏳ Building nodes... %d/%d", i, totalNodes)
 		}
 		baseTag := sanitizeTag(node.Name)
@@ -1592,14 +1593,39 @@ func atoiDefault(value string) int {
 	return v
 }
 
-// printProxyLinks prints all proxy connection information at startup
+// debugLogLevel reports whether the configured log level requests verbose
+// output. Only "debug" and "trace" enable the per-node banners; warn/info
+// keep a one-line summary instead.
+func debugLogLevel(level string) bool {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug", "trace":
+		return true
+	}
+	return false
+}
+
+// printProxyLinks prints connection information for the enabled entry-point
+// modes. 完整横幅（含每节点 3 行清单与分隔线）只在 debug/trace 级别输出，
+// 避免每次构建/重载向日志灌入约 3 行/节点的低信息密度内容；默认级别只打印
+// 每个入口模式一行摘要。
 func printProxyLinks(cfg *config.Config, metadata map[string]poolout.MemberMeta) {
+	showPoolEntry := cfg.Mode == "pool" || cfg.Mode == "hybrid"
+	showMultiPort := cfg.Mode == "multi-port" || cfg.Mode == "hybrid"
+
+	if !debugLogLevel(cfg.LogLevel) {
+		// 默认级别：一行摘要。不打印本地监听口令，口令仍可从配置文件读取。
+		if showPoolEntry {
+			log.Printf("🌐 Pool Entry Point: http://%s:%d / socks5://%s:%d", cfg.Listener.Address, cfg.Listener.Port, cfg.Listener.Address, cfg.Listener.Port)
+		}
+		if showMultiPort {
+			log.Printf("🔌 Multi-Port Entry Points: %d nodes", len(cfg.Nodes))
+		}
+		return
+	}
+
 	log.Println("")
 	log.Println("📡 Proxy Links:")
 	log.Println("═══════════════════════════════════════════════════════════════")
-
-	showPoolEntry := cfg.Mode == "pool" || cfg.Mode == "hybrid"
-	showMultiPort := cfg.Mode == "multi-port" || cfg.Mode == "hybrid"
 
 	if showPoolEntry {
 		// Pool mode: single entry point for all nodes
