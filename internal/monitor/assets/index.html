@@ -490,7 +490,16 @@
       font-size: 13px;
     }
     tr:hover { background: rgba(100,100,100,0.02); }
-    
+
+    /* 长名称/URI 截断，保持表格布局不被撑破 */
+    .cell-trunc {
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cell-trunc-uri { max-width: 360px; }
+
     .badge {
       padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500;
     }
@@ -1854,8 +1863,8 @@
           <td><span class="badge ${badge}">${statusText}</span></td>
           <td>${EMOJIS[n.region||'other']} ${(n.region||'other').toUpperCase()}</td>
           <td>
-            <div style="font-weight: 500">${escapeHtml(n.name || n.tag)}</div>
-            <div style="font-size: 11px; color: var(--text-muted)">${escapeHtml(n.tag)}</div>
+            <div class="cell-trunc" style="font-weight: 500" title="${escapeHtml(n.name || n.tag)}">${escapeHtml(n.name || n.tag)}</div>
+            <div class="cell-trunc" style="font-size: 11px; color: var(--text-muted)" title="${escapeHtml(n.tag)}">${escapeHtml(n.tag)}</div>
           </td>
           <td class="tt-mono">${n.port || '-'}</td>
           <td>
@@ -2272,8 +2281,8 @@
         const tbody = document.getElementById('configNodesTableBody');
         tbody.innerHTML = configNodes.map((n, i) => `
           <tr>
-            <td><strong>${escapeHtml(n.name)}</strong></td>
-            <td class="tt-mono" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(n.uri)}</td>
+            <td><strong class="cell-trunc" style="display:inline-block;vertical-align:bottom" title="${escapeHtml(n.name)}">${escapeHtml(n.name)}</strong></td>
+            <td class="tt-mono cell-trunc cell-trunc-uri" title="${escapeHtml(n.uri)}">${escapeHtml(n.uri)}</td>
             <td class="tt-mono">${n.port || '-'}</td>
             <td><span class="badge ${n.source==='subscription'?'badge-warning':'badge-healthy'}">${n.source||'manual'}</span></td>
             <td>
@@ -2340,7 +2349,7 @@
           const timeline = safeArray(n.timeline).filter(t => t && typeof t === 'object');
           const tl = timeline.map(t => `<div class="tl-dot ${t.success?'success':'error'}" title="${t.latency_ms}ms"></div>`).join('');
           return `<tr>
-            <td><strong>${escapeHtml(n.name)}</strong><br><span style="font-size:11px;color:var(--text-muted)">${escapeHtml(n.tag)}</span></td>
+            <td><strong class="cell-trunc" style="display:inline-block;vertical-align:bottom" title="${escapeHtml(n.name)}">${escapeHtml(n.name)}</strong><br><span class="cell-trunc" style="display:inline-block;vertical-align:bottom;font-size:11px;color:var(--text-muted)" title="${escapeHtml(n.tag)}">${escapeHtml(n.tag)}</span></td>
             <td class="tt-mono ${sr>80?'':'badge-error'}">${sr}%</td>
             <td class="tt-mono"><span style="color:var(--success)">${n.success_count||0}</span> / <span style="color:var(--error)">${n.failure_count||0}</span></td>
             <td class="tt-mono">${n.active_connections||0}</td>

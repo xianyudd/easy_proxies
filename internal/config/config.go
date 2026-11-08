@@ -1526,7 +1526,7 @@ func firstNonEmptyString(values ...string) string {
 
 // IsProxyURI checks if a string is a valid proxy URI
 func IsProxyURI(s string) bool {
-	schemes := []string{"vmess://", "vless://", "trojan://", "ss://", "ssr://", "hysteria://", "hysteria2://", "hy2://", "tuic://", "socks5://", "socks://", "http://", "https://", "anytls://"}
+	schemes := []string{"vmess://", "vless://", "trojan://", "ss://", "ssr://", "hysteria://", "hysteria2://", "hy2://", "tuic://", "socks5://", "socks5h://", "socks://", "http://", "https://", "anytls://"}
 	lower := strings.ToLower(s)
 	for _, scheme := range schemes {
 		if strings.HasPrefix(lower, scheme) {

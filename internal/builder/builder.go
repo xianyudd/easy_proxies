@@ -593,7 +593,7 @@ func buildNodeOutbound(tag, rawURI string, skipCertVerify bool) (option.Outbound
 			return option.Outbound{}, err
 		}
 		return option.Outbound{Type: C.TypeVMess, Tag: tag, Options: &opts}, nil
-	case "socks5", "socks":
+	case "socks5", "socks5h", "socks":
 		opts, err := buildSOCKSOptions(parsed)
 		if err != nil {
 			return option.Outbound{}, err
@@ -649,7 +649,15 @@ func buildVLESSOptions(u *url.URL, skipCertVerify bool) (option.VLESSOutboundOpt
 		packetEncoding = "xudp"
 	}
 	if packetEncoding != "" {
-		opts.PacketEncoding = &packetEncoding
+		// sing-box 只接受 "packetaddr"/"xudp"；其他取值会使 sing-box 在格式化
+		// 自身错误信息时 panic（它会对 *string 做字符串化）。在此拒绝未知值，
+		// 让该节点被干净跳过而不是拖垮整个进程。
+		switch packetEncoding {
+		case "packetaddr", "xudp":
+			opts.PacketEncoding = &packetEncoding
+		default:
+			return option.VLESSOutboundOptions{}, fmt.Errorf("unsupported packetEncoding: %s", packetEncoding)
+		}
 	}
 	if transport, err := buildV2RayTransport(query); err != nil {
 		return option.VLESSOutboundOptions{}, err

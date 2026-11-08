@@ -808,6 +808,25 @@ func (m *Manager) startGeoIPRouter(ctx context.Context, cfg *config.Config) {
 	m.mu.Unlock()
 }
 
+// callWithBoxNew runs fn and converts a panic into an error. 部分畸形订阅节点
+// 会让 sing-box 在出站初始化期间 panic（例如在格式化自身错误信息时对 *string
+// 做字符串化），而不是返回错误。没有这层保护，单个坏节点就会使整个进程崩溃、
+// 服务永远无法启动。
+func callWithBoxNew(fn func() (*box.Box, error)) (instance *box.Box, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			instance = nil
+			err = fmt.Errorf("sing-box panicked during initialization: %v", r)
+		}
+	}()
+	return fn()
+}
+
+// newBoxRecover wraps box.New with the panic-to-error guard.
+func newBoxRecover(opts box.Options) (*box.Box, error) {
+	return callWithBoxNew(func() (*box.Box, error) { return box.New(opts) })
+}
+
 // createBox builds a sing-box instance from config.
 // It retries automatically when individual outbounds fail sing-box validation,
 // removing the offending outbound each time.
@@ -838,7 +857,7 @@ func (m *Manager) createBox(ctx context.Context, cfg *config.Config) (*box.Box, 
 		boxCtx := box.Context(ctx, inboundRegistry, outboundRegistry, endpointRegistry, dnsRegistry, serviceRegistry)
 		boxCtx = monitor.ContextWith(boxCtx, m.monitorMgr)
 
-		instance, err := box.New(box.Options{Context: boxCtx, Options: opts})
+		instance, err := newBoxRecover(box.Options{Context: boxCtx, Options: opts})
 		if err == nil {
 			if attempt > 0 {
 				log.Printf("✅ sing-box instance created after removing %d invalid outbound(s)", attempt)
@@ -1793,7 +1812,7 @@ func isValidNodeURI(raw string) bool {
 		return false
 	}
 	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https", "socks", "socks5", "ss", "ssr", "vmess", "vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic", "anytls":
+	case "http", "https", "socks", "socks5", "socks5h", "ss", "ssr", "vmess", "vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic", "anytls":
 		return parsed.Host != "" || parsed.Opaque != ""
 	default:
 		return false
