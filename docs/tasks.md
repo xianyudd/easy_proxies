@@ -81,6 +81,17 @@
 - config 指纹：**由 f5c30b41… 变为 5bc26e28…，发生在 08:15:52（本次重启前 20 分钟，属上次部署运行期的应用自动持久化写入），本次部署前后未再变**；结构核验正常、reload 成功、配置有效；我方未改任何业务配置。
 - 工作区：main = b9271b2（+ 本看板 commit）已推送；无遗留。
 
+## START-8 部署实证（上游 d423519 并发订阅刷新移植，2026-11-08 10:04:16 重启，二进制 f94af15c…）
+
+- 内容：等价移植上游 d423519（commit `41a089c`，已推送 origin main）——并发订阅抓取（`fetch_concurrency` 默认 16/上限 32）、订阅 URL 与节点双重去重、抓取错误与日志脱敏、响应体 10 MiB 上限、缓存回退统一为 `ShouldUseCachedSubscriptionNodes`、Clash http/https 代理条目、outbound/pool 注册日志汇总。
+- 独立代码审查：两轮；第二轮结论“通过”。审查发现已处理——`url.Parse` 错误改走脱敏、并发测试空断言改为真实 token + `redacted=1` 断言、helper 导出并由 manager 复用、补 manager 级缓存回退测试（全空 / 部分失败缩水两分支）。
+- 验证：全量 675 passed、`-race` 通过；gofmt / vet 干净。
+- 部署：备份 `2c9df1be` → `easy_proxies.bak-pre-d423519-20261108`；替换 f94af15c（运行中文件报 `Text file busy`，改用 `.new` + `mv` 原子替换并校验哈希）；重启后 NRestarts=0、PID 942178。
+- 验收：`go version -m` 确认 go1.26.10、模块伪版本含 `41a089c`；9091/9092 200、2323 open、真实代理 gstatic 204（预热后 0.28s）；启动窗口 `Multi-Port` 摘要 15 次（免费代理刷新链触发）、warn/err 15 行（403 订阅、free-proxy promote shortfall、提升节点健康检查拒绝等既有噪音）、panic/fatal 0；每节点横幅 0（该注册路径在本部署未触发，与旧版一致）。
+- config 指纹：5bc26e28… → fbc7386a…（写入发生在 10:05:11 启动整合期，属应用自身持久化；未经我方编辑、无 WebUI 操作；端点/节点/端口均无变化）。
+- 遗留观察（非本次引入）：启动期串行订阅路径仍以原文 URL 写日志，运行期并发抓取路径已脱敏；建议后续单独修复。
+- 工作区：main = 41a089c（+ 本看板 commit）已推送；无遗留。
+
 ## 约束
 
 - 不改用户节点、订阅、端口、日志阈值和其他业务配置；不打印凭据。
