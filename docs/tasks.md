@@ -71,6 +71,16 @@
 - 验收：`go version -m` 确认 buildinfo `go1.26.10`；9091/9092 200、2323 open、真实代理 gstatic 204；config 指纹 f5c30b41… 不变；启动窗口 journal 879 行（每节点横幅 0、摘要 1），err/warning 级仅 6 行。
 - 工作区整洁：main = 6c7d69c，已推送；无遗留改动。
 
+## START-7 部署实证（上游可靠性小修复移植，2026-11-08 08:35:17 重启，二进制 2c9df1be…）
+
+- 内容：等价移植上游 3 个修复（commit `b9271b2`，已推送 origin main）——socks5h 协议支持、VLESS packetEncoding 白名单 + `callWithBoxNew` panic 防护、WebUI 长名/URI 截断。
+- 独立代码审查：审查代理发现 `isValidNodeURI` 漏 socks5h（WebUI 手工添加被拒），已修复；recover 测试改为直接覆盖 `callWithBoxNew` 真实路径。
+- 验证：全量 669 passed（+6 新测试）、race 通过；快照 669 passed。
+- 部署：备份 `a9925c33` → `easy_proxies.bak-pre-port-20261108`；替换 2c9df1be；NRestarts=0、PID 776255。
+- 验收：9091/9092 200（9092 启动整合期约 20s 内一次 000 后恢复）、2323 open、真实代理 gstatic 204；buildinfo go1.26.10；启动窗口 `Multi-Port` 摘要 7 次（启动期免费代理刷新链触发 7 次构建，每次仅 1 行摘要，08:36:13 后收敛为 0 reload）、warn/err 6 行；每节点横幅 0。
+- config 指纹：**由 f5c30b41… 变为 5bc26e28…，发生在 08:15:52（本次重启前 20 分钟，属上次部署运行期的应用自动持久化写入），本次部署前后未再变**；结构核验正常、reload 成功、配置有效；我方未改任何业务配置。
+- 工作区：main = b9271b2（+ 本看板 commit）已推送；无遗留。
+
 ## 约束
 
 - 不改用户节点、订阅、端口、日志阈值和其他业务配置；不打印凭据。
