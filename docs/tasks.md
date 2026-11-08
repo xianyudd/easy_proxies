@@ -99,6 +99,14 @@
 - 验收：重启 NRestarts=0；缓存重建为纯 socks5（140 行，http 0 行）；池子 1007 → 214 → 190 节点（订阅 148 + free_proxy/socks5 42）；400 失败 694 → 5；blacklisted 0；本轮只下载 3 个 socks5 源；9091/9092 200、2323 open、真实代理 gstatic 204（0.19s）；应用持久化未改指纹（ded19614 保持）。
 - 回滚：`podman exec easy_proxies_main cp /app/config.yaml.bak-http-off-20261109 /app/config.yaml && systemctl --user restart easy_proxies_main.service`；如需更换 http 名单，改对应源 `url` 后重开 `enabled: true` 即可。
 
+## START-8.2 运行观察（CF IP 信誉检查 + 18 个瞬时失败核对，2026-11-09）
+
+- 机制梳理：IP 信誉两套独立评价 —— ① **Cloudflare CF 分**（0–100，`internal/cloudflarecheck/scoring.go`：起始 100，204 不通 −30、trace 不通 −20、地域不匹配 −15、challenge forbidden/managed_challenge −40/−25、延迟>3s −10、全失败直接 0/failed；级别 ≥80 excellent / ≥60 good / ≥40 fair / <40 poor），用于 free-proxy 提升门槛（min_cloudflare_score 60）与 quality tiering（CF≥60 https_cf、≥80 strict_web）；② **Reputation 风险分**（`internal/reputation`，ipwho.is 提供 is_proxy/is_vpn/is_tor/is_hosting：hosting +30、proxy/vpn +40、tor +80、国别不符 +20、失败 +50、延迟>3s +10；≤30 low / ≤70 medium / >70 high），**当前未接入**（cache 空、`reputation checker is not configured`、config 无对应段），实际评级 = 纯 CF 分。
+- 实时检查：`/api/cloudflare/check?count=204&background=true` → job-1794165270196768883-1，109 个订阅节点全部完成：excellent 71 / good 20 / failed 18 / fair・poor 0；83% ≥ good；cf_loc US 17、HK 15、JP 11、SG 9、TW 6、KR 3、DE/TH 各 2、IN/TR/GB/NG/PH/VN 各 1；warp 全 off。tier 全部 reject 为 artifact（本次只跑 CF 类、无 quick 数据，勿读）。
+- 18 个 failed 核对：CF 检查端口与当前分配端口**完全一致**、18 端口全部 LISTEN（0.0.0.0）、健康检查全 available（fail_count 0–1）、无映射过期；**实测 18/18 端口现全部 204**（0.3–5.4s）。定性：15 个 connection refused 是检查时段恰逢 multi-port 重建/订阅刷新 reload 空窗的**瞬时假失败**；3 个 context deadline exceeded 为慢节点超时（jp softbank / kr kt / tw hinet03，现 2.8–5.4s）。
+- 结论：节点集存在两套状态（健康检查每 5 分钟 vs CF 一次性任务），multi-port 每次 reload 重建入口的窗口内跑 CF 检查会产生假失败，不代表信誉或可用性问题。**定期 CF 检查暂不启用**（用户决定，后续需要再说）。
+- 备注：geoip 对 free_proxy 的背景扫描为异步（本次重启后约 30 分钟完成），完成前 free 节点显示 other/Unknown，属正常瞬时状态。
+
 ## 约束
 
 - 不改用户节点、订阅、端口、日志阈值和其他业务配置；不打印凭据。
