@@ -77,3 +77,6 @@ sdk/typescript/dist/
 
 # 运维看板：仅本地，不进公开仓库
 docs/tasks.md
+
+# 业务设计文档与看板仅存于私有仓库 easy-proxies-ops
+docs/design/
