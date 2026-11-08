@@ -74,3 +74,6 @@ sdk/typescript/dist/
 # runtime session store (local login)
 .sessions.json
 **/.sessions.json
+
+# 运维看板：仅本地，不进公开仓库
+docs/tasks.md
