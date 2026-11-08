@@ -1,8 +1,26 @@
 # Easy Proxies 本地长期代理池使用说明
 
 > 本文档面向当前这台机器上的本地使用方式，避免重复踩坑。
+> 相关文档：[README](README.md)、[AI_PROXY_ACCESS](AI_PROXY_ACCESS.md)、[PROXY_EXTRACTOR](PROXY_EXTRACTOR.md)。
 
 ## 1. 当前推荐启动方式
+
+### 本机实际部署（WSL + Podman quadlet）
+
+本机当前**不是用 Docker 部署**，而是通过 Podman quadlet 把 Easy Proxies 作为 systemd --user 常驻服务运行：
+服务名 `easy_proxies_main.service`，host 网络、镜像 `localhost/easy-proxies:main`，二进制与配置目录分别挂载自
+`~/.local/share/easy_proxies-bin/` 与 `~/.local/share/easy_proxies-main/`（路径省略了用户主目录，按本机实际位置替换）。
+日常维护直接看服务状态，不需要起 Docker 容器：
+
+```bash
+systemctl --user status easy_proxies_main        # 服务状态
+systemctl --user restart easy_proxies_main       # 重启
+journalctl --user -u easy_proxies_main -e        # 查看日志（或 podman logs -f easy_proxies_main）
+```
+
+下面的 Docker 小节保留为通用说明，适用于没有 Podman quadlet 的其他机器。
+
+### Docker 通用方式（Docker Desktop / 其他机器）
 
 如果你在 Docker Desktop / WSL 环境中使用，优先用显式端口映射：
 
@@ -14,13 +32,19 @@ docker compose -f docker-compose.desktop.yml up -d
 
 ## 2. 启动服务
 
-### 推荐方式（当前环境）
+### 当前环境（Podman quadlet）
+
+```bash
+systemctl --user start easy_proxies_main
+```
+
+### Docker 通用方式
 
 ```bash
 docker compose -f docker-compose.desktop.yml up -d
 ```
 
-### 首次或需要重新拉镜像时
+首次或需要重新拉/构建镜像时：
 
 ```bash
 docker compose -f docker-compose.desktop.yml pull
@@ -28,6 +52,14 @@ docker compose -f docker-compose.desktop.yml up -d
 ```
 
 ## 3. 停止服务
+
+当前环境（Podman）：
+
+```bash
+systemctl --user stop easy_proxies_main
+```
+
+Docker 通用：
 
 ```bash
 docker compose -f docker-compose.desktop.yml down
@@ -41,9 +73,11 @@ docker compose -f docker-compose.desktop.yml down
 http://localhost:9091
 ```
 
-如果打不开，先检查容器状态：
+如果打不开，先检查服务状态（本机用 Podman 服务，Docker 环境用容器）：
 
 ```bash
+systemctl --user status easy_proxies_main
+# Docker 环境：
 docker ps
 ```
 
@@ -166,7 +200,7 @@ curl -x http://<USERNAME>:<PASSWORD>@127.0.0.1:24000 http://cp.cloudflare.com/ge
 - `proxy:test <region>` 会测试 Android 无认证地区端口，并带重试
 - `proxy:regions` 会显示地区和端口映射
 - `adb:set <region>` 会设置 `adb reverse` 和 Android 全局代理
-- 默认 ADB 设备是 `192.168.1.118:5555`，可用 `ADB_SERIAL=...` 覆盖
+- 默认 ADB 设备是脚本内置的本机局域网地址（文档不展示真实 IP），可用 `ADB_SERIAL=...` 覆盖
 - 脚本不会打印订阅地址或代理密码
 - 旧命令仍兼容，例如 `status`、`test jp`、`adb-set jp`
 
@@ -174,15 +208,19 @@ curl -x http://<USERNAME>:<PASSWORD>@127.0.0.1:24000 http://cp.cloudflare.com/ge
 
 ### WebUI 打不开
 
-先看容器是否在运行：
+先看服务是否在运行（本机为 Podman systemd 服务，Docker 环境看容器）：
 
 ```bash
+systemctl --user status easy_proxies_main
+# Docker 环境：
 docker ps
 ```
 
 再看日志：
 
 ```bash
+journalctl --user -u easy_proxies_main -e
+# Docker 环境：
 docker logs --tail 100 easy_proxies_desktop
 ```
 
@@ -194,7 +232,7 @@ docker logs --tail 100 easy_proxies_desktop
 docker compose -f docker-compose.desktop.yml up -d
 ```
 
-不要优先使用 `network_mode: host` 版本。
+不要优先使用 `network_mode: host` 版本（本机 Podman quadlet 使用 host 网络，属正常部署方式）。
 
 ### 默认代理池有端口，但请求失败
 
@@ -231,7 +269,7 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY
 
 如果你的目标是“长期稳定像代理平台一样本地使用”，建议：
 
-1. 保持 Docker 常驻
+1. 保持服务常驻（当前本机为 Podman systemd 服务，Docker 环境同理保持容器常驻）
 2. 开启订阅自动刷新
 3. 平时通过 WebUI 观察节点健康和黑名单情况
 4. 日常使用默认代理池，只有在明确需要时再启用 GeoIP 或多端口

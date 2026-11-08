@@ -1,6 +1,7 @@
 # AI 代理获取说明
 
-本文档给本地 AI Agent / 自动化脚本使用，目标是**稳定、安全地从 easy_proxies 获取本地代理入口**。
+> 本文档给本地 AI Agent / 自动化脚本使用，目标是**稳定、安全地从 easy_proxies 获取本地代理入口**。
+> 相关文档：[PROXY_EXTRACTOR](PROXY_EXTRACTOR.md)（提取页/格式）、[EXTERNAL_SDK](EXTERNAL_SDK.md)（SDK 接入）、[README](README_ZH.md)。
 
 安全约束：
 
@@ -107,8 +108,8 @@ curl -sH 'X-API-Key: epk_xxx' \
 
 | role | 权限 |
 |------|------|
-| `read` | nodes / export / extractor / 状态查询 |
-| `admin` | 完整管理（settings、reload、probe、refresh…） |
+| `read` | nodes / extractor / 状态与缓存查询（`/api/export` 仅 admin） |
+| `admin` | 完整管理（settings、reload、probe、refresh、export…） |
 
 WebUI 仍用 `management.password` 登录拿 session。有 enabled api_keys 时，匿名访问一律 401。
 

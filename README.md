@@ -407,6 +407,18 @@ services:
 | 1221 | GeoIP region router (when enabled, configurable) |
 | 24000+ | Multi-port mode (one per node) |
 
+## Documentation
+
+- [README_ZH.md](README_ZH.md) — Simplified Chinese overview
+- [LOCAL_USAGE.md](LOCAL_USAGE.md) — long-running local pool usage (incl. Podman quadlet deployment)
+- [AI_PROXY_ACCESS.md](AI_PROXY_ACCESS.md) — stable proxy retrieval for AI agents and scripts
+- [PROXY_EXTRACTOR.md](PROXY_EXTRACTOR.md) — proxy extractor page and export formats
+- [CF_SCORE.md](CF_SCORE.md) — Cloudflare compatibility scoring
+- [IP_REPUTATION.md](IP_REPUTATION.md) — IP reputation checks
+- [EXTERNAL_SDK.md](EXTERNAL_SDK.md) — TypeScript / Python SDK guide
+- [WEB_UI_ARCHITECTURE.md](WEB_UI_ARCHITECTURE.md) — WebUI architecture
+- [docs/README.md](docs/README.md) — documentation index
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
@@ -444,12 +456,15 @@ MIT License
 
 - `代理提取`：按地区、协议格式和数量提取代理。
 - `节点总览`：展示全部节点，支持地区、可用性、延迟筛选和排序。
+- `待确认节点`：确认地区归属，减少错误路由与池污染。
+- `节点配置`：维护节点配置条目与重载相关操作。
 - `节点质量`：自动加载 CF/IP 信誉缓存；全量扫描和失败重试通过后台任务执行，结果服务端分页返回，避免 6000+ 节点时阻塞页面；也可通过 `quality_check` 配置定时刷新质量缓存。
 - `运行状态`：展示节点状态、实时流量和可切换时间尺度的带宽图。
+- `日志诊断`：查看实时日志和运行摘要。
+- `API Key`：签发、启停和轮换访问凭证。
 - `系统设置`：维护配置并写回 `config.yaml`。
-- `日志诊断`：查看日志和诊断信息。
 
-详细说明见 `WEB_UI_ARCHITECTURE.md`。
+详细说明见 [WEB_UI_ARCHITECTURE.md](WEB_UI_ARCHITECTURE.md)。
 
 ## Verify Zo Computer API Token
 

@@ -1,5 +1,8 @@
 # Proxy Extractor 使用说明
 
+> WebUI「代理提取」页的使用说明：基于本机已运行的 Easy Proxies，按地区、模式、格式和数量提取代理入口，便于复制或下载。
+> 相关文档：[AI_PROXY_ACCESS](AI_PROXY_ACCESS.md)（AI 获取方式）、[EXTERNAL_SDK](EXTERNAL_SDK.md)（SDK 接入）、[README](README_ZH.md)。
+
 ## 功能概览
 
 WebUI 新增了一个本地代理提取页面：**代理提取 / Proxy Extractor**。

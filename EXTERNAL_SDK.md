@@ -1,13 +1,13 @@
 # Easy Proxies 外部 SDK 接入
 
-当前仓库提供两个 SDK：
+当前仓库提供两个 SDK，适合 Node.js / Python 服务、脚本、Agent 或前端管理工具从 Easy Proxies 获取代理、读取节点状态和质量缓存：
 
 ```text
 sdk/typescript
 sdk/python
 ```
 
-它们适合 Node.js / Python 服务、脚本、Agent 或前端管理工具从 Easy Proxies 获取代理、读取节点状态和质量缓存。
+相关文档：[PROXY_EXTRACTOR](PROXY_EXTRACTOR.md)（提取格式）、[AI_PROXY_ACCESS](AI_PROXY_ACCESS.md)（API 用法）、[README](README_ZH.md)。
 
 ## TypeScript 安装
 

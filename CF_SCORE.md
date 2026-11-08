@@ -4,6 +4,8 @@
 
 重要说明：这不是 Cloudflare Enterprise Bot Management 的官方 Bot Score。官方 Bot Score 只有你控制的 Cloudflare Enterprise Zone 并启用 Bot Management 后，才能通过 Cloudflare 规则、日志或 Workers 读取。
 
+相关文档：[IP_REPUTATION](IP_REPUTATION.md)（IP 信誉）、[PROXY_EXTRACTOR](PROXY_EXTRACTOR.md)（代理提取）、[README](README_ZH.md)。
+
 ## 第一版检测项
 
 第一版默认检测：
@@ -21,6 +23,25 @@
 5. Challenge URL
    - 第一版默认未配置，返回 `not_configured`
    - 后续可接入你自己的 Cloudflare 测试域名
+
+```mermaid
+flowchart TD
+    Start[开始检测] --> P204[请求 generate_204]
+    P204 -- 成功 --> Ptr[请求 cdn-cgi/trace]
+    P204 -- 失败 --> Score
+    Ptr -- 成功 --> Geo{节点 region 与 trace loc 一致?}
+    Ptr -- 失败 --> Score
+    Geo -- 否 --> Score
+    Geo -- 是 --> Delay[计算总延迟]
+    Delay --> Chal{配置了 challenge_url?}
+    Chal -- 否 --> Score
+    Chal -- 是 --> ChalR[403 = forbidden / 命中 = managed_challenge]
+    ChalR --> Score
+    Score[按规则从 100 基础分扣分] --> Level[得到 score 与 level]
+    Start -. 204 与 trace 都失败且有错误 .-> Failed[level = failed, score = 0]
+```
+
+> 图：CF 评分的检测与评分流程，与代码实现（internal/cloudflarecheck）一致。
 
 ## 评分规则
 
@@ -65,20 +86,22 @@ http://127.0.0.1:9091
 进入：
 
 ```text
-CF 评分
+节点质量（Quality）
 ```
+
+CF 评分是「节点质量」页内的一个维度（与 IP 风险、综合质量并列展示）。
 
 推荐流程：
 
 1. 选择地区，例如 `日本(jp)`。
-2. 模式保持 `multi-port 独立节点`。
-3. 数量选择 `5` 或 `10`。
-4. 点击 `快速检测当前可用节点` 或 `完整扫描全部配置节点`。
+2. 数量选择 `5` 或 `10`（抽样样本数）。
+3. 点 `抽样检测 CF` 做同步小批量检测，或点 `Pipeline 扫描 N 个节点` 创建后台全量任务。
 
 按钮区别：
 
-- `快速检测当前可用节点`：只检测当前健康节点，速度快。
-- `完整扫描全部配置节点`：包含不可用/未探测节点，耗时更长。
+- `抽样检测 CF`：同步抽样检测当前筛选出的节点，数量受上限约束，速度快，适合快速看。
+- `Pipeline 扫描`：后台全量任务，包含不可用/未探测节点，适合 6000+ 节点；结果服务端分页返回。
+- `重试失败节点`：只对上次 Pipeline 失败的节点重新扫描。
 
 页面支持：
 
@@ -102,7 +125,7 @@ CF 评分
 
 ## 大规模后台检测
 
-6000+ 节点不要使用同步全量请求等待所有结果返回。节点质量页的“全量扫描”和“重试失败节点”会创建后台质量任务：
+6000+ 节点不要使用同步全量请求等待所有结果返回。节点质量页的“Pipeline 扫描”和“重试失败节点”会创建后台质量任务：
 
 ```bash
 curl --noproxy '*' -sS -X POST 'http://127.0.0.1:9091/api/quality/jobs' \
@@ -117,7 +140,7 @@ curl --noproxy '*' -sS 'http://127.0.0.1:9091/api/quality/jobs/<job_id>'
 curl --noproxy '*' -sS 'http://127.0.0.1:9091/api/quality/jobs/<job_id>/results?page=1&page_size=100'
 ```
 
-详细接口见 `docs/quality-background-jobs.md`。
+更完整的接口列表见 [README.md](README.md#management-api) 的 Management API 表格。
 
 ## API 用法
 
@@ -171,9 +194,10 @@ https://cf-test.example.com/
 - Turnstile / Pre-clearance，可选
 - Bot Fight Mode / Super Bot Fight Mode，可选
 
-后续可以把这个 URL 接入配置：
+> 注意：当前版本配置中**尚未接入** `cloudflare_score` 配置段（`challenge_url` 未在配置文件中暴露，代码默认返回 `not_configured`）。下面的 YAML 仅为预留示意，实际接入方式以 release notes 为准。
 
 ```yaml
+# 预留示意，尚未生效
 cloudflare_score:
   enabled: true
   challenge_url: "https://cf-test.example.com/"

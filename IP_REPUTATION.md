@@ -2,12 +2,18 @@
 
 `easy_proxies` 增加了本地 IP 信誉检查能力，用来判断当前代理节点的真实出口 IP 是否更像住宅、机房、代理/VPN 或高风险出口。
 
+> **现状说明（重要）**：该能力在代码中**已实现**（内置 `ip-api.com` 与 `ipwho.is` 两个 provider），但**默认运行配置未启用**：
+> 它不参与任何默认后台定时任务，缓存初始为空，只有你显式调用 `/api/reputation/*` 或 WebUI「节点质量」页触发检查时才会真正请求第三方接口并产生缓存。
+> 在未接入/未初始化巡检的实例上可能看到 `reputation checker is not configured` 提示，这属于"未默认启用"，不是功能缺失。
+
 安全边界：
 
 - 不读取或展示订阅 URL。
 - 不在 API 响应里返回代理密码。
 - 不硬编码第三方 API key。
 - 默认只通过本地 WebUI 管理接口访问。
+
+相关文档：[CF_SCORE](CF_SCORE.md)（CF 兼容性评分）、[PROXY_EXTRACTOR](PROXY_EXTRACTOR.md)（代理提取）、[README](README_ZH.md)。
 
 ## WebUI 使用
 
@@ -20,15 +26,16 @@ http://127.0.0.1:9091
 进入：
 
 ```text
-IP 信誉
+节点质量（Quality）
 ```
+
+IP 信誉是「节点质量」页内的一个维度（与 CF 评分、综合质量并列展示），页面里对应「风险/IP 风险」列。
 
 推荐用法：
 
 1. 地区选择 `日本(jp)`、`美国(us)` 或 `全部(all)`。
-2. 模式保持 `multi-port 独立节点`。
-3. 数量选择 `5` 或 `10`。
-4. 点击 `开始检查`。
+2. 数量选择 `5` 或 `10`（抽样样本数）。
+3. 点 `出口校准地区` 对抽样节点做同步的出口 IP 信誉检查并按出口校准地区（样本数受限）；大规模检查走 `Pipeline 扫描` 后台任务。
 
 页面会显示：
 
@@ -96,6 +103,23 @@ WEBUI_PASSWORD='***' ./epctl.sh reputation:check jp 10
 31-70  medium
 71-100 high
 ```
+
+## 检测流程
+
+```mermaid
+flowchart TD
+    A[选择 multi-port 节点] --> B[经节点出口请求公网 IP 服务得到出口 IP]
+    B --> C[查询第三方 provider]
+    C --> D[ip-api.com]
+    C --> E[ipwho.is]
+    D --> F[归一化 ASN / ISP / Org / 匿名标记]
+    E --> F
+    F --> G[本地启发式评分]
+    G --> H[low / medium / high]
+    H --> I[写入内存 TTL 缓存]
+```
+
+> 图：IP 信誉的检查与评分流程（与 internal/reputation 实现一致）。
 
 ## Provider
 
