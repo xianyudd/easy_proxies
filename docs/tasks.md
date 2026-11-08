@@ -92,6 +92,13 @@
 - 遗留观察（非本次引入）：启动期串行订阅路径仍以原文 URL 写日志，运行期并发抓取路径已脱敏；建议后续单独修复。
 - 工作区：main = 41a089c（+ 本看板 commit）已推送；无遗留。
 
+## START-8.1 运维调整（停用 http 类免费代理源，2026-11-09 02:12:34 重启，PID 2277700）
+
+- 起因：24h 健康检查显示 780/965 节点不可用，其中 694 个失败原因是 `dial: unexpected status: 400 Bad Request`，全部来自 free_proxy 的 **http** 类源（5 个：thespeedx-http/monosans-http/proxifly-http/murongpig-http/clarketm-http），http 类 743 节点仅 1 可用；socks5 类 3 源可用率 97%、订阅可用率 76%。按源预筛 kept 数加权：murongpig-http 贡献最大（≈56%）。
+- 处置：用户授权「全部停用」。容器内备份 `/app/config.yaml` → `config.yaml.bak-http-off-20261109`（指纹 fbc7386a…），将 5 个 `*-http` 源 `enabled: true` → `false`（行 108/118/128/148/178），保留 3 个 socks5 源；指纹 fbc7386a → ded19614。
+- 验收：重启 NRestarts=0；缓存重建为纯 socks5（140 行，http 0 行）；池子 1007 → 214 → 190 节点（订阅 148 + free_proxy/socks5 42）；400 失败 694 → 5；blacklisted 0；本轮只下载 3 个 socks5 源；9091/9092 200、2323 open、真实代理 gstatic 204（0.19s）；应用持久化未改指纹（ded19614 保持）。
+- 回滚：`podman exec easy_proxies_main cp /app/config.yaml.bak-http-off-20261109 /app/config.yaml && systemctl --user restart easy_proxies_main.service`；如需更换 http 名单，改对应源 `url` 后重开 `enabled: true` 即可。
+
 ## 约束
 
 - 不改用户节点、订阅、端口、日志阈值和其他业务配置；不打印凭据。
