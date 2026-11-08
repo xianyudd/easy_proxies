@@ -2,8 +2,8 @@ package pool
 
 import (
 	"context"
-	"net"
 	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -232,7 +232,6 @@ func TestNormalizeOptionsAcceptsLatencyMode(t *testing.T) {
 	}
 }
 
-
 func TestRecordFailureUsesCallerBlacklistDuration(t *testing.T) {
 	ResetSharedStateStore()
 	tag := "mp-node"
@@ -261,7 +260,6 @@ func TestEffectiveMultiportDefaults(t *testing.T) {
 		t.Fatalf("threshold=%d", opts.FailureThreshold)
 	}
 }
-
 
 func TestLatencyScoreEWMASmoothsSpike(t *testing.T) {
 	ResetSharedStateStore()

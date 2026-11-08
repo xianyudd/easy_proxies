@@ -2,9 +2,11 @@ package subscription
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -57,15 +59,70 @@ func TestFetchSubscriptionRejectsBodyLargerThanLimit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	mgr := New(&config.Config{}, nil)
-	defer mgr.Stop()
-
-	nodes, err := mgr.fetchSubscription(server.URL, time.Second)
-	if err == nil {
-		t.Fatalf("fetchSubscription returned nil error for oversized body, nodes=%d", len(nodes))
+	nodes, stats := config.FetchSubscriptionNodes(context.Background(), []string{server.URL}, config.SubscriptionFetchOptions{
+		Timeout:     time.Second,
+		Concurrency: 1,
+		Client:      server.Client(),
+	})
+	if len(nodes) != 0 {
+		t.Fatalf("expected 0 nodes for oversized body, got %d", len(nodes))
 	}
-	if !strings.Contains(err.Error(), "body too large") {
-		t.Fatalf("error=%v, want body too large", err)
+	if stats.Failed != 1 || stats.LastError == nil || !strings.Contains(stats.LastError.Error(), "exceeds") {
+		t.Fatalf("stats=%+v, lastErr=%v; want a body-size failure", stats, stats.LastError)
+	}
+}
+
+func TestFetchAllSubscriptionsFallsBackToCache(t *testing.T) {
+	const cachedOne = "trojan://pw@cached1.example.com:443#cached1"
+	const cachedTwo = "trojan://pw@cached2.example.com:443#cached2"
+
+	emptyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(""))
+	}))
+	defer emptyServer.Close()
+
+	partialServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/broken" {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte("trojan://pw@fresh.example.com:443#fresh\n"))
+	}))
+	defer partialServer.Close()
+
+	cases := []struct {
+		name  string
+		urls  []string
+		nodes int // 期望回退后拿到的缓存节点数
+	}{
+		{"all empty uses cache", []string{emptyServer.URL + "/empty"}, 2},
+		{"partial failure regression uses cache", []string{partialServer.URL + "/ok", partialServer.URL + "/broken"}, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			nodesFile := filepath.Join(dir, "nodes.txt")
+			if err := os.WriteFile(nodesFile, []byte(cachedOne+"\n"+cachedTwo+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			mgr := New(&config.Config{
+				NodesFile:     nodesFile,
+				Subscriptions: tc.urls,
+				SubscriptionRefresh: config.SubscriptionRefreshConfig{
+					Timeout: 5 * time.Second,
+				},
+			}, nil)
+			defer mgr.Stop()
+			mgr.httpClient = emptyServer.Client()
+
+			nodes, err := mgr.fetchAllSubscriptions()
+			if err != nil {
+				t.Fatalf("fetchAllSubscriptions error: %v", err)
+			}
+			if len(nodes) != tc.nodes {
+				t.Fatalf("nodes=%d, want %d cached nodes: %#v", len(nodes), tc.nodes, nodes)
+			}
+		})
 	}
 }
 

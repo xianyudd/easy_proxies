@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Clash API Integration**: Embedded Clash API controller
   - Internal controller at `127.0.0.1:9092`
   - Enables Clash-compatible tooling integration
+- **Concurrent Subscription Fetching**: Speed up multi-subscription refreshes
+  - New `subscription_refresh.fetch_concurrency` option (default 16, max 32)
+  - Worker pool fetches subscriptions in parallel with context cancellation
+  - Deduplicates duplicate subscription URLs and returned nodes
+  - Redacts credentials/query tokens from fetch errors and logs
+  - Keeps cached nodes when all fetches fail or a partial refresh would
+    shrink the node set
 
 ### Changed
 - Require Go 1.26.10 and pin the Docker builder to `golang:1.26.10`, closing the reachable stdlib advisory GO-2026-6809 (`crypto/x509` intermediate-certificate distrust, fixed in 1.26.10).

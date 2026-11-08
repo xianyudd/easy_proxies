@@ -179,6 +179,7 @@ type SubscriptionRefreshConfig struct {
 	HealthCheckTimeout time.Duration `yaml:"health_check_timeout"` // 新节点健康检查超时
 	DrainTimeout       time.Duration `yaml:"drain_timeout"`        // 旧实例排空超时时间
 	MinAvailableNodes  int           `yaml:"min_available_nodes"`  // 最少可用节点数，低于此值不切换
+	FetchConcurrency   int           `yaml:"fetch_concurrency"`    // 订阅抓取并发数，默认 16，最大 32
 }
 
 const (
@@ -420,6 +421,33 @@ const (
 	NodeSourceSubscription NodeSource = "subscription" // Fetched from subscription URL
 	NodeSourceFreeProxy    NodeSource = "free_proxy"   // Loaded from configured free proxy source
 )
+
+const (
+	defaultSubscriptionFetchConcurrency = 16
+	maxSubscriptionFetchConcurrency     = 32
+	maxSubscriptionBodySize             = 10 * 1024 * 1024
+)
+
+// SubscriptionFetchStats describes a subscription loading attempt.
+type SubscriptionFetchStats struct {
+	RequestedURLs int
+	UniqueURLs    int
+	Successful    int
+	Failed        int
+	Empty         int
+	Nodes         int
+	DedupedURLs   int
+	DedupedNodes  int
+	LastError     error
+}
+
+// SubscriptionFetchOptions controls concurrent subscription loading.
+type SubscriptionFetchOptions struct {
+	Timeout     time.Duration
+	Concurrency int
+	Client      *http.Client
+	Loggerf     func(format string, args ...any)
+}
 
 // NodeConfig describes a single upstream proxy endpoint expressed as URI.
 type NodeConfig struct {
@@ -842,6 +870,7 @@ func (c *Config) normalize() error {
 	if c.SubscriptionRefresh.MinAvailableNodes <= 0 {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
 	}
+	c.SubscriptionRefresh.FetchConcurrency = normalizeSubscriptionFetchConcurrency(c.SubscriptionRefresh.FetchConcurrency)
 	c.FreeProxyFilter = c.FreeProxyFilter.Normalized()
 	c.FreeProxyCache = c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
 	c.FreeProxyPromote = c.FreeProxyPromote.Normalized()
@@ -1081,6 +1110,7 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	if c.SubscriptionRefresh.MinAvailableNodes <= 0 {
 		c.SubscriptionRefresh.MinAvailableNodes = 1
 	}
+	c.SubscriptionRefresh.FetchConcurrency = normalizeSubscriptionFetchConcurrency(c.SubscriptionRefresh.FetchConcurrency)
 	c.FreeProxyFilter = c.FreeProxyFilter.Normalized()
 	c.FreeProxyCache = c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
 	c.FreeProxyPromote = c.FreeProxyPromote.Normalized()
@@ -1322,17 +1352,266 @@ func loadNodesFromFile(path string) ([]NodeConfig, error) {
 	return parseNodesFromContent(string(data))
 }
 
-// loadNodesFromSubscription fetches and parses nodes from a subscription URL
-// Supports multiple formats: base64 encoded, plain text, clash yaml, etc.
-func loadNodesFromSubscription(subURL string, timeout time.Duration) ([]NodeConfig, error) {
+// LoadNodesFromFile reads a nodes file where each non-comment line is a proxy URI.
+func LoadNodesFromFile(path string) ([]NodeConfig, error) {
+	return loadNodesFromFile(path)
+}
+
+// ShouldUseCachedSubscriptionNodes 判断本次订阅抓取结果是否需要回退到本地缓存：
+// 缓存不可用或抓取结果不差时不用；全部失败且手头有缓存时用；部分失败且抓到
+// 的少于缓存数量时用（避免一次部分刷新把节点集缩水）。空响应不算失败。
+func ShouldUseCachedSubscriptionNodes(fetched []NodeConfig, cached []NodeConfig, cacheErr error, stats SubscriptionFetchStats) (bool, string) {
+	if cacheErr != nil || len(cached) == 0 {
+		return false, ""
+	}
+	if len(fetched) == 0 {
+		return true, "all subscriptions failed or returned no usable nodes"
+	}
+	if stats.Failed > 0 && len(fetched) < len(cached) {
+		return true, "partial refresh would reduce the node set"
+	}
+	return false, ""
+}
+
+// normalizeSubscriptionFetchConcurrency 把抓取并发数约束到合法区间，默认 16、上限 32。
+func normalizeSubscriptionFetchConcurrency(v int) int {
+	if v <= 0 {
+		return defaultSubscriptionFetchConcurrency
+	}
+	if v > maxSubscriptionFetchConcurrency {
+		return maxSubscriptionFetchConcurrency
+	}
+	return v
+}
+
+// newSubscriptionHTTPClient 构建带连接池与超时的订阅抓取 HTTP 客户端。
+func newSubscriptionHTTPClient(timeout time.Duration) *http.Client {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	client := &http.Client{
-		Timeout: timeout,
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   minDuration(timeout, 10*time.Second),
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   minDuration(timeout, 10*time.Second),
+		ResponseHeaderTimeout: minDuration(timeout, 15*time.Second),
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+	}
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a <= 0 {
+		return b
+	}
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// RedactURL 脱敏 URL 中的凭据、路径与查询参数后再写日志。
+func RedactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	u.User = nil
+	if u.Path != "" && u.Path != "/" {
+		u.Path = "/..."
+		u.RawPath = ""
+	}
+	if u.RawQuery != "" {
+		u.RawQuery = "redacted=1"
+	}
+	u.Fragment = ""
+	return u.String()
+}
+
+// dedupeSubscriptionURLs 去重订阅 URL（忽略空白条目），返回去重结果与重复数。
+func dedupeSubscriptionURLs(urls []string) (unique []string, deduped int) {
+	seen := make(map[string]struct{}, len(urls))
+	for _, raw := range urls {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if _, ok := seen[raw]; ok {
+			deduped++
+			continue
+		}
+		seen[raw] = struct{}{}
+		unique = append(unique, raw)
+	}
+	return unique, deduped
+}
+
+// dedupeNodesByKey 按 NodeKey（退化用 URI）去重节点，结果原地写回切片。
+func dedupeNodesByKey(nodes []NodeConfig) ([]NodeConfig, int) {
+	if len(nodes) < 2 {
+		return nodes, 0
+	}
+	seen := make(map[string]struct{}, len(nodes))
+	out := nodes[:0]
+	deduped := 0
+	for _, node := range nodes {
+		node.URI = strings.TrimSpace(node.URI)
+		if node.URI == "" {
+			deduped++
+			continue
+		}
+		key := node.NodeKey()
+		if key == "" {
+			key = node.URI
+		}
+		if _, ok := seen[key]; ok {
+			deduped++
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, node)
+	}
+	return out, deduped
+}
+
+// FetchSubscriptionNodes 并发抓取全部订阅 URL，解析并去重，返回节点与统计。
+// 多个 worker 共享 jobs/results 通道；上下文取消会中断抓取并计入失败统计。
+func FetchSubscriptionNodes(ctx context.Context, urls []string, opts SubscriptionFetchOptions) ([]NodeConfig, SubscriptionFetchStats) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	concurrency := normalizeSubscriptionFetchConcurrency(opts.Concurrency)
+	uniqueURLs, dedupedURLs := dedupeSubscriptionURLs(urls)
+	stats := SubscriptionFetchStats{
+		RequestedURLs: len(urls),
+		UniqueURLs:    len(uniqueURLs),
+		DedupedURLs:   dedupedURLs,
+	}
+	if len(uniqueURLs) == 0 {
+		return nil, stats
 	}
 
-	req, err := http.NewRequest("GET", subURL, nil)
+	client := opts.Client
+	if client == nil {
+		client = newSubscriptionHTTPClient(timeout)
+	}
+
+	type result struct {
+		url   string
+		nodes []NodeConfig
+		err   error
+	}
+	jobs := make(chan string)
+	results := make(chan result, len(uniqueURLs))
+
+	workerCount := concurrency
+	if workerCount > len(uniqueURLs) {
+		workerCount = len(uniqueURLs)
+	}
+	var wg sync.WaitGroup
+	wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer wg.Done()
+			for subURL := range jobs {
+				nodes, err := fetchSubscriptionWithClient(ctx, client, subURL, timeout)
+				results <- result{url: subURL, nodes: nodes, err: err}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, subURL := range uniqueURLs {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- subURL:
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	allNodes := make([]NodeConfig, 0)
+	processed := 0
+	for res := range results {
+		processed++
+		if res.err != nil {
+			stats.Failed++
+			stats.LastError = res.err
+			if opts.Loggerf != nil {
+				opts.Loggerf("⚠️ Failed to load subscription %s: %v (skipping)", RedactURL(res.url), res.err)
+			}
+			continue
+		}
+		if len(res.nodes) == 0 {
+			stats.Empty++
+		} else {
+			stats.Successful++
+		}
+		if opts.Loggerf != nil {
+			opts.Loggerf("✅ Loaded %d nodes from subscription %s", len(res.nodes), RedactURL(res.url))
+		}
+		allNodes = append(allNodes, res.nodes...)
+	}
+	if missing := len(uniqueURLs) - processed; missing > 0 {
+		if err := ctx.Err(); err != nil {
+			stats.Failed += missing
+			stats.LastError = err
+			if opts.Loggerf != nil {
+				opts.Loggerf("⚠️ Subscription fetch context ended before %d subscription URLs were processed: %v", missing, err)
+			}
+		}
+	}
+
+	stats.Nodes = len(allNodes)
+	allNodes, stats.DedupedNodes = dedupeNodesByKey(allNodes)
+	return allNodes, stats
+}
+
+// loadNodesFromSubscription 抓取并解析单个订阅 URL（含 scheme/主机校验、body 上限、错误脱敏）。
+func loadNodesFromSubscription(subURL string, timeout time.Duration) ([]NodeConfig, error) {
+	return fetchSubscriptionWithClient(context.Background(), newSubscriptionHTTPClient(timeout), subURL, timeout)
+}
+
+// fetchSubscriptionWithClient 用给定客户端抓取单个订阅并解析；错误信息中不泄露 URL 凭据。
+func fetchSubscriptionWithClient(ctx context.Context, client *http.Client, subURL string, timeout time.Duration) ([]NodeConfig, error) {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	parsed, err := url.Parse(subURL)
+	if err != nil {
+		// 解析错误信息会内嵌原始 URL（含 userinfo/query），必须同样脱敏。
+		return nil, redactSubscriptionError("parse subscription url", subURL, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported subscription scheme %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return nil, errors.New("subscription URL is missing host")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, "GET", subURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -1345,7 +1624,7 @@ func loadNodesFromSubscription(subURL string, timeout time.Duration) ([]NodeConf
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch subscription: %w", err)
+		return nil, redactSubscriptionError("fetch subscription", subURL, err)
 	}
 	defer resp.Body.Close()
 
@@ -1353,15 +1632,32 @@ func loadNodesFromSubscription(subURL string, timeout time.Duration) ([]NodeConf
 		return nil, fmt.Errorf("subscription returned status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	limitedReader := io.LimitReader(resp.Body, maxSubscriptionBodySize+1)
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if len(body) > maxSubscriptionBodySize {
+		return nil, fmt.Errorf("subscription response exceeds %d bytes", maxSubscriptionBodySize)
 	}
 
 	content := string(body)
 
 	// Try to detect and parse different formats
 	return parseSubscriptionContent(content)
+}
+
+// redactSubscriptionError 把底层错误信息中出现的原始 URL 替换成脱敏形式。
+func redactSubscriptionError(op, rawURL string, err error) error {
+	if err == nil {
+		return nil
+	}
+	redacted := RedactURL(rawURL)
+	message := strings.ReplaceAll(err.Error(), rawURL, redacted)
+	if parsed, parseErr := url.Parse(rawURL); parseErr == nil {
+		message = strings.ReplaceAll(message, parsed.String(), redacted)
+	}
+	return fmt.Errorf("%s: %s", op, message)
 }
 
 // parseSubscriptionContent tries to parse subscription content in various formats (optimized)
@@ -1569,6 +1865,7 @@ type clashProxy struct {
 	Port              flexInt                `yaml:"port"`
 	Ports             string                 `yaml:"ports"`
 	UUID              string                 `yaml:"uuid"`
+	Username          string                 `yaml:"username"`
 	Password          string                 `yaml:"password"`
 	Cipher            string                 `yaml:"cipher"`
 	AlterId           int                    `yaml:"alterId"`
@@ -1675,9 +1972,39 @@ func convertClashProxyToURI(p clashProxy) string {
 		return buildHysteria2URI(p)
 	case "tuic":
 		return buildTUICURI(p)
+	case "http", "https":
+		return buildHTTPProxyURI(p)
 	default:
 		return ""
 	}
+}
+
+func buildHTTPProxyURI(p clashProxy) string {
+	scheme := strings.ToLower(p.Type)
+	if scheme == "http" && p.TLS {
+		scheme = "https"
+	}
+	port := int(p.Port)
+	if port == 0 {
+		if scheme == "https" {
+			port = 443
+		} else {
+			port = 8080
+		}
+	}
+	u := &url.URL{
+		Scheme: scheme,
+		Host:   net.JoinHostPort(p.Server, strconv.Itoa(port)),
+	}
+	if p.Password != "" {
+		u.User = url.UserPassword(p.Username, p.Password)
+	} else if p.Username != "" {
+		u.User = url.User(p.Username)
+	}
+	if p.Name != "" {
+		u.Fragment = p.Name
+	}
+	return u.String()
 }
 
 func buildVMessURI(p clashProxy) string {
