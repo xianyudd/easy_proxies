@@ -107,6 +107,14 @@
 - 结论：节点集存在两套状态（健康检查每 5 分钟 vs CF 一次性任务），multi-port 每次 reload 重建入口的窗口内跑 CF 检查会产生假失败，不代表信誉或可用性问题。**定期 CF 检查暂不启用**（用户决定，后续需要再说）。
 - 备注：geoip 对 free_proxy 的背景扫描为异步（本次重启后约 30 分钟完成），完成前 free 节点显示 other/Unknown，属正常瞬时状态。
 
+## START-8.3 运维调整（移除持续 403 的死订阅源，2026-11-09 04:12 重启，PID 2505088）
+
+- 起因：订阅源核查发现 4 源中 `cceb…-aaf.admin-console-dv.com` 连续一天以上每次刷新返回 403（服务器端拒绝），每轮刷新固定失败 1 次、靠缓存回退兜底。用户核实并授权移除。
+- 处置：容器内备份 `/app/config.yaml` → `config.yaml.bak-rm-sub-20261109`（改前指纹 a15a90fb…，改后 e024eeec…）；`subscriptions:`（264 行）下第 4 条（268 行）`sed -i '268d'` 删除，订阅 4 → 3。
+- 验收：新进程（2505088）启动抓取 3 源全成功（dash 62 + public-ip:5000 41 + charity 67 = 170 节点）；**0 条 403**（唯一 1 条为旧进程重启前 04:09:39 最后一轮遗留）；9091/9092 200、2323 open、真实代理 gstatic 204（0.17s）；NRestarts=0；当前可用 183 节点。
+- 备注：① 启动路径仍见 `keeping 175 cached nodes` —— 旧缓存逻辑（抓到 170 < 缓存 175 用缓存），运行期每 30m 刷新收敛为 170，非本次引入；② 误报澄清：grep "403" 命中的 44 次为多端口映射 `2403x` 子串，非订阅失败。
+- 回滚：`podman exec easy_proxies_main cp /app/config.yaml.bak-rm-sub-20261109 /app/config.yaml && systemctl --user restart easy_proxies_main.service`。
+
 ## 约束
 
 - 不改用户节点、订阅、端口、日志阈值和其他业务配置；不打印凭据。
