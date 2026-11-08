@@ -115,6 +115,14 @@
 - 备注：① 启动路径仍见 `keeping 175 cached nodes` —— 旧缓存逻辑（抓到 170 < 缓存 175 用缓存），运行期每 30m 刷新收敛为 170，非本次引入；② 误报澄清：grep "403" 命中的 44 次为多端口映射 `2403x` 子串，非订阅失败。
 - 回滚：`podman exec easy_proxies_main cp /app/config.yaml.bak-rm-sub-20261109 /app/config.yaml && systemctl --user restart easy_proxies_main.service`。
 
+## START-8.4 运维调整（添加 mcii 订阅源，2026-11-09 05:11 重启，PID 2646074）
+
+- 起因：用户提供新订阅源 `proxy.mcii.cc`（Clash 机场订阅，42 个真节点，trojan/vmess 为主，无信息行），要求加入。
+- 处置：备份 `/app/config.yaml` → `config.yaml.bak-add-mcii-20261109`（指纹 e024eeec… → 195381ed…），`subscriptions:` 段 267 行后追加第 4 条。
+- 验收：服务重启 NRestarts=0；端点 9091/9092/1221/2323 全通（gstatic 204 @ 0.48s）；26 个节点入池并分配独立端口（24170+），`source_stats` subscription 194、总可用 161；每 30 分钟刷新轮询含新源。
+- **发现：mcii 节点全部被服务端拒绝**。26 节点 `available=0`、健康检查 `[dial] EOF`；手动拨号 `Connection reset by peer`（HKT 0.96s / 美国直连 0.38s）；SNI 伪装正确（`sni=mpvideo.qpic.cn` 腾讯视频 CDN、allowInsecure 生效并写入 URI）；对照组老源 trojan 19 中 9 可用 → 排除解析与本机出站问题，判定机场服务端对本来源 IP 拒绝接入（非应用缺陷，无法本地修复）。
+- 决定：**保留该源观察**（自动重试，若机场解除限流即恢复）。回滚：`podman exec easy_proxies_main cp /app/config.yaml.bak-add-mcii-20261109 /app/config.yaml && systemctl --user restart easy_proxies_main.service`。
+
 ## 约束
 
 - 不改用户节点、订阅、端口、日志阈值和其他业务配置；不打印凭据。
