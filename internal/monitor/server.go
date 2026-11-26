@@ -59,14 +59,15 @@ type NodeManager interface {
 }
 
 type reloadStatus struct {
-	State       string    `json:"state"`
-	StartedAt   time.Time `json:"started_at,omitempty"`
-	FinishedAt  time.Time `json:"finished_at,omitempty"`
-	DurationMS  int64     `json:"duration_ms,omitempty"`
-	ElapsedMS   int64     `json:"elapsed_ms,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	RequestedBy string    `json:"requested_by,omitempty"`
-	Pending     bool      `json:"reload_pending,omitempty"`
+	State         string    `json:"state"`
+	StartedAt     time.Time `json:"started_at,omitempty"`
+	FinishedAt    time.Time `json:"finished_at,omitempty"`
+	DurationMS    int64     `json:"duration_ms,omitempty"`
+	ElapsedMS     int64     `json:"elapsed_ms,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	RequestedBy   string    `json:"requested_by,omitempty"`
+	Pending       bool      `json:"reload_pending,omitempty"`
+	LocalRevision int       `json:"local_revision,omitempty"`
 }
 
 type freeProxyRefreshStatus struct {
@@ -568,6 +569,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/settings", s.withRole("read", s.handleSettings))
 	mux.HandleFunc("/api/management/api-keys", s.withRole("admin", s.handleManagementAPIKeys))
 	mux.HandleFunc("/api/nodes", s.withRole("read", s.handleNodes))
+	s.registerLocalSources(mux)
 	mux.HandleFunc("/api/nodes/config", s.withRole("admin", s.handleConfigNodes))
 	mux.HandleFunc("/api/nodes/config/", s.withRole("admin", s.handleConfigNodeItem))
 	mux.HandleFunc("/api/nodes/probe-all", s.withRole("admin", s.handleProbeAll))
@@ -1536,7 +1538,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"error": strings.Replace(errCode, "_", " ", 1), "code": errCode})
 		return
 	}
-	filtered := filterNodeSnapshots(allNodes, q)
+	filtered := filterNodeSnapshots(redactNodeSnapshots(allNodes, revealURI), q)
 	sortNodeSnapshots(filtered, q.Get("sort"))
 	totalFiltered := len(filtered)
 	totalPages := 0
@@ -1595,6 +1597,7 @@ func redactNodeSnapshots(nodes []Snapshot, revealURI bool) []Snapshot {
 	copy(out, nodes)
 	for i := range out {
 		out[i].URI = ""
+		out[i].SubscriptionName = ""
 	}
 	return out
 }
@@ -1658,6 +1661,11 @@ func nodeStats(nodes []Snapshot) (map[string]int, map[string]int, map[string]int
 		}
 		regionStats[region]++
 		sourceStats[source]++
+		// Keep primary-source counts unchanged. local_source is also a filter
+		// membership count, once per exit even when several local owners refer to it.
+		if source != string(config.NodeSourceLocal) && len(snap.LocalSources) > 0 {
+			sourceStats[string(config.NodeSourceLocal)]++
+		}
 		if snap.InitialCheckDone && snap.Available && !snap.Blacklisted {
 			regionHealthy[region]++
 		}
@@ -1716,7 +1724,7 @@ func validateNodeListQuery(q url.Values) (string, bool) {
 	if region != "" && !isAllowedMonitorRegion(region) {
 		return "invalid_region", false
 	}
-	if !isAllowedQueryValue(q.Get("source"), "", "all", "subscription", "free_proxy", "inline", "nodes_file", "unknown") {
+	if !isAllowedQueryValue(q.Get("source"), "", "all", "subscription", "free_proxy", "inline", "nodes_file", "local_source", "unknown") {
 		return "invalid_source", false
 	}
 	if !isAllowedQueryValue(q.Get("availability"), "", "all", "available", "healthy", "unavailable", "failed", "blacklisted", "unchecked") {
@@ -1766,7 +1774,7 @@ func filterNodeSnapshots(nodes []Snapshot, q url.Values) []Snapshot {
 		if region != "" && region != "all" && snapRegion != region {
 			continue
 		}
-		if source != "" && source != "all" && snapSource != source {
+		if source != "" && source != "all" && snapSource != source && !(source == "local_source" && len(snap.LocalSources) > 0) {
 			continue
 		}
 		switch availability {
@@ -1808,7 +1816,11 @@ func filterNodeSnapshots(nodes []Snapshot, q url.Values) []Snapshot {
 			}
 		}
 		if search != "" {
-			haystack := strings.ToLower(snap.Name + " " + snap.Tag + " " + snap.URI + " " + snap.Country + " " + snap.Region + " " + snap.Source)
+			localNames := ""
+			for _, source := range snap.LocalSources {
+				localNames += " " + source.Name
+			}
+			haystack := strings.ToLower(snap.Name + " " + snap.Tag + " " + snap.URI + " " + snap.Country + " " + snap.Region + " " + snap.Source + " " + snap.SubscriptionName + localNames)
 			if !strings.Contains(haystack, search) {
 				continue
 			}
@@ -3985,12 +3997,12 @@ func formatExtractorEntry(entry extractorProxyEntry, format string, reveal bool)
 	return fullURL
 }
 
-
 // handleManagementAPIKeys manages management API keys.
-//   GET    — list keys (admin; includes secret for mask+copy UI)
-//   POST   — create auto-generated key (default role=read)
-//   PATCH  — update one key: role / enabled / rename / rotate
-//   DELETE — revoke by name
+//
+//	GET    — list keys (admin; includes secret for mask+copy UI)
+//	POST   — create auto-generated key (default role=read)
+//	PATCH  — update one key: role / enabled / rename / rotate
+//	DELETE — revoke by name
 func (s *Server) handleManagementAPIKeys(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -4304,6 +4316,11 @@ func generateAPIKeySecret() (string, error) {
 
 // handleSettings handles GET/PUT for dynamic settings (external_ip, probe_target, skip_cert_verify, log).
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		if gate, ok := s.nodeMgr.(interface{ LockConfigEdits() func() }); ok {
+			defer gate.LockConfigEdits()()
+		}
+	}
 	switch r.Method {
 	case http.MethodGet:
 		extIP, probeTarget, skipCertVerify, logCfg := s.getSettings()
@@ -4406,18 +4423,18 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				"region_ports": cfg.AndroidProxy.RegionPorts,
 			}
 			resp["pool"] = map[string]any{
-				"mode":                          settingsPoolMode(cfg.Pool.Mode),
-				"failure_threshold":             settingsPositiveInt(cfg.Pool.FailureThreshold, 3),
-				"blacklist_duration":            positiveDurationString(cfg.Pool.BlacklistDuration),
-				"multiport_failure_threshold":   cfg.Pool.EffectiveMultiportFailureThreshold(),
-				"multiport_blacklist_duration":  positiveDurationString(cfg.Pool.EffectiveMultiportBlacklistDuration()),
+				"mode":                         settingsPoolMode(cfg.Pool.Mode),
+				"failure_threshold":            settingsPositiveInt(cfg.Pool.FailureThreshold, 3),
+				"blacklist_duration":           positiveDurationString(cfg.Pool.BlacklistDuration),
+				"multiport_failure_threshold":  cfg.Pool.EffectiveMultiportFailureThreshold(),
+				"multiport_blacklist_duration": positiveDurationString(cfg.Pool.EffectiveMultiportBlacklistDuration()),
 			}
 			resp["management"] = map[string]any{
-				"listen":        cfg.Management.Listen,
-				"password":      "",
-				"password_set":  strings.TrimSpace(cfg.Management.Password) != "",
-				"api_keys":      redactAPIKeys(apiKeys),
-				"cors_origins":  corsOrigins,
+				"listen":       cfg.Management.Listen,
+				"password":     "",
+				"password_set": strings.TrimSpace(cfg.Management.Password) != "",
+				"api_keys":     redactAPIKeys(apiKeys),
+				"cors_origins": corsOrigins,
 			}
 			resp["geoip"] = map[string]any{
 				"enabled":              cfg.GeoIP.Enabled,
@@ -4430,6 +4447,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			// Subscription URLs are secrets — only admin sees them.
 			if isAdmin {
 				resp["subscriptions"] = cfg.Subscriptions
+				var nodes []config.NodeConfig
+				if s.nodeMgr != nil {
+					nodes, _ = s.nodeMgr.ListConfigNodes(r.Context())
+				}
+				resp["subscription_names"] = config.SubscriptionNamesForNodes(cfg.Subscriptions, nodes)
 			} else {
 				resp["subscriptions"] = []string{}
 				resp["subscriptions_count"] = len(cfg.Subscriptions)
@@ -4543,11 +4565,11 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				MultiportBlacklistDuration string `json:"multiport_blacklist_duration"`
 			} `json:"pool,omitempty"`
 			Management *struct {
-				Listen        string               `json:"listen"`
-				Password      string               `json:"password"`
-				ClearPassword bool                 `json:"clear_password"`
+				Listen        string                `json:"listen"`
+				Password      string                `json:"password"`
+				ClearPassword bool                  `json:"clear_password"`
 				APIKeys       []config.APIKeyConfig `json:"api_keys"`
-				CORSOrigins   []string             `json:"cors_origins"`
+				CORSOrigins   []string              `json:"cors_origins"`
 			} `json:"management,omitempty"`
 			Log *struct {
 				Output     string `json:"output"`
@@ -5456,6 +5478,11 @@ func (s *Server) handleSubscriptionRefresh(w http.ResponseWriter, r *http.Reques
 
 // handleSubscriptionConfig handles GET/PUT for subscription configuration.
 func (s *Server) handleSubscriptionConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		if gate, ok := s.nodeMgr.(interface{ LockConfigEdits() func() }); ok {
+			defer gate.LockConfigEdits()()
+		}
+	}
 	switch r.Method {
 	case http.MethodGet:
 		s.cfgMu.RLock()
@@ -6154,7 +6181,6 @@ func (s *Server) handleAuthPassword(w http.ResponseWriter, r *http.Request) {
 		"password":     pass,
 	})
 }
-
 
 func redactAPIKeys(keys []config.APIKeyConfig) []map[string]any {
 	out := make([]map[string]any, 0, len(keys))

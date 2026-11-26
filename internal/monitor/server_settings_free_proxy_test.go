@@ -25,18 +25,18 @@ import (
 )
 
 type fakeNodeManager struct {
-	mu          sync.Mutex
-	delay       time.Duration
-	err         error
-	listErr     error
-	createErr   error
-	updateErr   error
-	deleteErr   error
-	reloadCalls int
-	done        chan struct{}
-	doneOnce    sync.Once
-	reloadCh    chan int
-	reloadBlock chan struct{}
+	mu              sync.Mutex
+	delay           time.Duration
+	err             error
+	listErr         error
+	createErr       error
+	updateErr       error
+	deleteErr       error
+	reloadCalls     int
+	done            chan struct{}
+	doneOnce        sync.Once
+	reloadCh        chan int
+	reloadBlock     chan struct{}
 	nodes           []config.NodeConfig
 	created         []config.NodeConfig
 	updated         []config.NodeConfig
@@ -354,6 +354,9 @@ free_proxy_filter:
 		t.Fatal(err)
 	}
 	server := &Server{cfgSrc: cfg}
+	// Saving enabled free sources starts an asynchronous cache write. Join it
+	// before TempDir cleanup rather than letting the worker outlive this test.
+	t.Cleanup(func() { waitFreeProxyRefreshDone(t, server, 10*time.Second) })
 
 	body := []byte(`{
 		"free_proxy_sources": [

@@ -7,6 +7,8 @@ import { Button } from '../components/ui/Button'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { useToast } from '../components/ui/Toast'
 import { copyToClipboard } from '../lib/clipboard'
+import { localSourceFilterOptions } from '../lib/localSourceDraft'
+import { nodeSourceLabel } from '../lib/subscriptionAttribution'
 import { regionMeta } from '../components/charts/region'
 import type { NodeSnapshot } from '../types/node'
 import { Page } from '../components/layout/Page'
@@ -20,6 +22,7 @@ const SOURCE_LABELS: Record<string, string> = {
   subscription: '订阅',
   free_proxy: '免费',
   unknown: '未知',
+  local_source: '本地源',
 }
 
 function statusOf(node: NodeSnapshot): { key: 'good' | 'bad' | 'warn' | 'info'; label: string } {
@@ -136,10 +139,7 @@ export function NodeOverviewPage() {
     return Object.entries(stats).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
   }, [data?.region_stats])
 
-  const sources = useMemo(() => {
-    const stats = safeRecord(data?.source_stats)
-    return Object.entries(stats).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  }, [data?.source_stats])
+  const sources = useMemo(() => localSourceFilterOptions(safeRecord(data?.source_stats)), [data?.source_stats])
 
   const regionHealthy = safeRecord(data?.region_healthy)
   const availableCount = Object.values(regionHealthy).reduce((s, n) => s + n, 0)
@@ -329,7 +329,7 @@ export function NodeOverviewPage() {
             <Input
               allowClear
               variant="borderless"
-              placeholder="搜索名称或 tag"
+              placeholder="搜索名称 / tag / 订阅名"
               value={q}
               onChange={e => {
                 setQ(e.target.value)
@@ -344,10 +344,7 @@ export function NodeOverviewPage() {
             onChange={resetPage(setSource)}
             options={[
               { value: 'all', label: '来源' },
-              ...sources.map(([code, count]) => ({
-                value: code,
-                label: `${SOURCE_LABELS[code] || code} ${count}`,
-              })),
+              ...sources,
             ]}
             popupMatchSelectWidth={false}
           />
@@ -449,6 +446,7 @@ export function NodeOverviewPage() {
                 const on = !!tag && tag === selectedTag
                 const st = statusOf(node)
                 const ms = latencyMs(node.last_latency_ms)
+                const sourceText = nodeSourceLabel(node, SOURCE_LABELS[String(node.source || 'unknown')] || '—')
                 return (
                   <div
                     key={`${tag || 'n'}-${idx}`}
@@ -467,10 +465,11 @@ export function NodeOverviewPage() {
                     <span className="px-c-radio px-radio" aria-hidden><i /></span>
                     <span className="px-c-name px-node">
                       <strong title={String(node.name || node.tag || '')}>{node.name || node.tag || '—'}</strong>
-                      <span title={tag}>{tag || '—'}</span>
+                      <span className={node.subscription_name ? 'px-node-tag' : undefined} title={tag}>{tag || '—'}</span>
+                      {node.subscription_name && <span className="px-node-mobile-source" title={sourceText}>{sourceText}</span>}
                     </span>
                     <span className="px-c-region px-cell" title={regionLabel(node.region)}>{regionLabel(node.region)}</span>
-                    <span className="px-c-source px-cell">{SOURCE_LABELS[String(node.source || 'unknown')] || '—'}</span>
+                    <span className="px-c-source px-cell" title={sourceText}>{sourceText}</span>
                     <span className={`px-c-status px-status is-${st.key}`}>{st.label}</span>
                     <span className={`px-c-lat px-lat is-${latencyTone(ms)}`}>
                       {ms == null ? '—' : `${ms}ms`}

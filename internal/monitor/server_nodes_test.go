@@ -78,6 +78,7 @@ func TestHandleNodesPagedSearchAliasesFilterRows(t *testing.T) {
 		wantTag string
 	}{
 		{name: "q", path: "/api/nodes?page=1&page_size=10&availability=all&q=Sub%20A", wantTag: "sub-a"},
+		{name: "subscription name", path: "/api/nodes?page=1&page_size=10&availability=all&q=%E9%AD%94%E6%88%92", wantTag: "sub-a"},
 		{name: "search", path: "/api/nodes?page=1&page_size=10&availability=all&search=2.2.2.2", wantTag: "free-b"},
 		{name: "keyword", path: "/api/nodes?page=1&page_size=10&availability=all&keyword=Free%20C", wantTag: "free-c"},
 	} {
@@ -669,7 +670,7 @@ func newTestNodesServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sub := mgr.Register(NodeInfo{Tag: "sub-a", Name: "Sub A", URI: "socks5://1.1.1.1:80", Region: "us", Source: "subscription", Port: 13001})
+	sub := mgr.Register(NodeInfo{Tag: "sub-a", Name: "Sub A", URI: "socks5://1.1.1.1:80", Region: "us", Source: "subscription", SubscriptionName: "魔戒.net", Port: 13001})
 	sub.RecordSuccessWithLatency(100 * time.Millisecond)
 	sub.MarkInitialCheckDone(true)
 

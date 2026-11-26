@@ -40,6 +40,7 @@ export interface SettingsResponse {
   log?: Record<string, unknown>
   subscription_refresh?: Record<string, unknown>
   subscriptions?: string[]
+  subscription_names?: string[]
   free_proxy_sources?: FreeProxySource[]
   free_proxy_max_nodes?: number
   free_proxy_download_proxy?: string

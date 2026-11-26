@@ -153,7 +153,7 @@ func (m *Manager) UpdateConfig(urls []string, enabled bool, interval time.Durati
 	m.mu.Unlock()
 
 	// Persist to config.yaml
-	if err := m.baseCfg.SaveSettings(); err != nil {
+	if err := m.baseCfg.SaveSubscriptionSettings(); err != nil {
 		m.logger.Errorf("failed to save subscription config: %v", err)
 	}
 
@@ -310,8 +310,15 @@ func (m *Manager) doRefresh() {
 
 	m.logger.Infof("starting subscription refresh")
 
-	// Fetch nodes from all subscriptions
-	nodes, err := m.fetchAllSubscriptions()
+	// Capture the exact source set used by this fetch. The manager rejects it
+	// if settings changed while the network operation was in flight.
+	m.mu.RLock()
+	fetchCfg := *m.baseCfg
+	fetchCfg.Subscriptions = append([]string(nil), m.baseCfg.Subscriptions...)
+	m.mu.RUnlock()
+	expectedSubscriptions := fetchCfg.Subscriptions
+	// Fetch nodes from exactly the captured source set.
+	nodes, err := m.fetchSubscriptions(&fetchCfg)
 	if err != nil {
 		m.logger.Errorf("fetch subscriptions failed: %v", err)
 		m.mu.Lock()
@@ -332,17 +339,14 @@ func (m *Manager) doRefresh() {
 
 	m.logger.Infof("fetched %d nodes from subscriptions", len(nodes))
 
-	// Write subscription nodes to nodes.txt
-	nodesFilePath := m.getNodesFilePath()
-	if err := m.writeNodesToFile(nodesFilePath, nodes); err != nil {
-		m.logger.Errorf("failed to write nodes.txt: %v", err)
+	if err := m.boxMgr.CommitSubscriptionNodes(expectedSubscriptions, nodes); err != nil {
 		m.mu.Lock()
-		m.status.LastError = fmt.Sprintf("write nodes.txt: %v", err)
+		m.status.LastError = err.Error()
 		m.status.LastRefresh = time.Now()
 		m.mu.Unlock()
 		return
 	}
-	m.logger.Infof("written %d nodes to %s", len(nodes), nodesFilePath)
+	nodesFilePath := m.getNodesFilePath()
 
 	// Update hash and mod time after writing
 	newHash := m.computeNodesHash(nodes)
@@ -355,22 +359,6 @@ func (m *Manager) doRefresh() {
 	}
 	m.status.NodesModified = false
 	m.mu.Unlock()
-
-	// Get current port mapping to preserve existing node ports
-	portMap := m.boxMgr.CurrentPortMap()
-
-	// Create new config with updated nodes
-	newCfg := m.createNewConfig(nodes)
-
-	// Trigger BoxManager reload with port preservation
-	if err := m.boxMgr.ReloadWithPortMap(newCfg, portMap); err != nil {
-		m.logger.Errorf("reload failed: %v", err)
-		m.mu.Lock()
-		m.status.LastError = err.Error()
-		m.status.LastRefresh = time.Now()
-		m.mu.Unlock()
-		return
-	}
 
 	m.mu.Lock()
 	m.status.LastRefresh = time.Now()
@@ -387,19 +375,6 @@ func (m *Manager) getNodesFilePath() string {
 		return m.baseCfg.NodesFile
 	}
 	return filepath.Join(filepath.Dir(m.baseCfg.FilePath()), "nodes.txt")
-}
-
-// writeNodesToFile writes nodes to a file (one URI per line).
-func (m *Manager) writeNodesToFile(path string, nodes []config.NodeConfig) error {
-	var lines []string
-	for _, node := range nodes {
-		lines = append(lines, node.URI)
-	}
-	content := strings.Join(lines, "\n")
-	if len(lines) > 0 {
-		content += "\n"
-	}
-	return os.WriteFile(path, []byte(content), 0o644)
 }
 
 // computeNodesHash computes a hash of node URIs for change detection.
@@ -476,13 +451,20 @@ func (m *Manager) MarkNodesModified() {
 
 // fetchAllSubscriptions fetches nodes from all configured subscription URLs.
 func (m *Manager) fetchAllSubscriptions() ([]config.NodeConfig, error) {
-	timeout := m.baseCfg.SubscriptionRefresh.Timeout
+	m.mu.RLock()
+	cfg := *m.baseCfg
+	cfg.Subscriptions = append([]string(nil), m.baseCfg.Subscriptions...)
+	m.mu.RUnlock()
+	return m.fetchSubscriptions(&cfg)
+}
+func (m *Manager) fetchSubscriptions(cfg *config.Config) ([]config.NodeConfig, error) {
+	timeout := cfg.SubscriptionRefresh.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	nodes, stats := config.FetchSubscriptionNodes(m.ctx, m.baseCfg.Subscriptions, config.SubscriptionFetchOptions{
+	nodes, stats := config.FetchSubscriptionNodes(m.ctx, cfg.Subscriptions, config.SubscriptionFetchOptions{
 		Timeout:     timeout,
-		Concurrency: m.baseCfg.SubscriptionRefresh.FetchConcurrency,
+		Concurrency: cfg.SubscriptionRefresh.FetchConcurrency,
 		Client:      m.httpClient,
 		Loggerf: func(format string, args ...any) {
 			m.logger.Infof(format, args...)
@@ -495,6 +477,7 @@ func (m *Manager) fetchAllSubscriptions() ([]config.NodeConfig, error) {
 	cachedNodes, cacheErr := config.LoadNodesFromFile(m.getNodesFilePath())
 	if useCached, reason := config.ShouldUseCachedSubscriptionNodes(nodes, cachedNodes, cacheErr, stats); useCached {
 		m.logger.Warnf("keeping %d cached subscription nodes: %s", len(cachedNodes), reason)
+		config.MergeSubscriptionNames(cachedNodes, nodes)
 		return cachedNodes, nil
 	}
 	if len(nodes) == 0 && stats.LastError != nil {

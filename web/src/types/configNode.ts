@@ -7,6 +7,8 @@ export interface ConfigNode {
   username?: string
   password?: string
   source?: string
+  subscription_name?: string
+  local_sources?: { id: string; name: string }[]
   [key: string]: unknown
 }
 

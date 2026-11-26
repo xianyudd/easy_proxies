@@ -98,6 +98,9 @@ func Build(cfg *config.Config) (option.Options, error) {
 
 		outbound, err := buildNodeOutbound(tag, node.URI, cfg.SkipCertVerify)
 		if err != nil {
+			if node.Source == config.NodeSourceLocal || len(node.LocalSources) > 0 {
+				return option.Options{}, fmt.Errorf("local source member %d cannot be built; configuration rejected", i+1)
+			}
 			log.Printf("❌ Failed to build node '%s': %v (skipping)", node.Name, err)
 			failedNodes = append(failedNodes, node.Name)
 			continue
@@ -110,12 +113,14 @@ func Build(cfg *config.Config) (option.Options, error) {
 		memberTags = append(memberTags, tag)
 		baseOutbounds = append(baseOutbounds, outbound)
 		meta := poolout.MemberMeta{
-			Name:        node.Name,
-			URI:         node.URI,
-			Mode:        cfg.Mode,
-			Source:      string(node.Source),
-			Protocol:    nodeScheme(node.URI),
-			ViaUpstream: viaUpstream,
+			Name:             node.Name,
+			URI:              node.URI,
+			Mode:             cfg.Mode,
+			Source:           string(node.Source),
+			SubscriptionName: node.SubscriptionName,
+			LocalSources:     append([]config.LocalSourceRef(nil), node.LocalSources...),
+			Protocol:         nodeScheme(node.URI),
+			ViaUpstream:      viaUpstream,
 		}
 		// For multi-port and hybrid modes, use per-node port
 		if cfg.Mode == "multi-port" || cfg.Mode == "hybrid" {

@@ -5,6 +5,8 @@ export interface NodeSnapshot {
   region?: string
   country?: string
   source?: string
+  subscription_name?: string
+  local_sources?: { id: string; name: string }[]
   port?: number
   available?: boolean
   initial_check_done?: boolean

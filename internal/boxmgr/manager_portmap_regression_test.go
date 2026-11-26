@@ -257,8 +257,10 @@ func TestReloadCycleWithDuplicateURIStopsColliding(t *testing.T) {
 		if dupCheckBox.starts != 1 {
 			t.Fatalf("%s reload started the box %d times; duplicate ports must be resolved before build", tag, dupCheckBox.starts)
 		}
-		if cfg.Nodes[0].Port == cfg.Nodes[1].Port {
-			t.Fatalf("%s reload left duplicate URIs on the same port %d", tag, cfg.Nodes[0].Port)
+		// EP-02 composes identical connections into one runtime exit rather than
+		// allocating a second inbound. The original no-collision guarantee stays.
+		if len(cfg.Nodes) != 1 || cfg.Nodes[0].Port != base {
+			t.Fatalf("%s reload did not preserve a single deduplicated exit", tag)
 		}
 	}
 
@@ -410,10 +412,7 @@ func TestNormalizeWithPortMapKeepsDuplicateURIsOnDistinctPorts(t *testing.T) {
 	if err := cfg.NormalizeWithPortMap(map[string]uint16{"vless://a@example.com:443": 30270}); err != nil {
 		t.Fatalf("NormalizeWithPortMap: %v", err)
 	}
-	if cfg.Nodes[0].Port == cfg.Nodes[1].Port {
-		t.Fatalf("duplicate URIs collapsed onto the same port %d; sing-box would bind it twice and fail", cfg.Nodes[0].Port)
-	}
-	if cfg.Nodes[0].Port != 30270 && cfg.Nodes[1].Port != 30270 {
-		t.Fatalf("preserved port 30270 was lost entirely; ports = %d, %d", cfg.Nodes[0].Port, cfg.Nodes[1].Port)
+	if len(cfg.Nodes) != 1 || cfg.Nodes[0].Port != 30270 {
+		t.Fatal("identical connections must produce one exit retaining port 30270")
 	}
 }

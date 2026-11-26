@@ -125,16 +125,11 @@ func startFreeProxyCacheRefresh(ctx context.Context, cfg *config.Config, boxMgr 
 			// ReloadWithPortMap 会等到启动真正完成后再执行，绝不会在实例尚未就绪时
 			// 报 "manager not started"，也不会与订阅刷新等并发重载互相覆盖。
 			fmt.Println("Starting background free proxy cache filter reload...")
-			reloadedCfg, err := config.Load(cfg.FilePath())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "free proxy cache filter reload: load config failed: %v\n", err)
-				return
-			}
 			// 端口表以 manager 的运行时端口表为准（CurrentPortMap 含重载时端口
 			// 搬移的结果）；应用启动时持有的 cfg 副本是静态端口表，搬移后不会
 			// 更新，必须改从 manager 读取，否则下一次重载会退回搬移前的原端口、
 			// 再次撞冲突。
-			if err := boxMgr.ReloadWithPortMap(reloadedCfg, boxMgr.CurrentPortMap()); err != nil {
+			if err := boxMgr.ReloadFreeProxySources(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "free proxy cache filter reload failed: %v\n", err)
 			}
 		}()
@@ -154,13 +149,8 @@ func startFreeProxyCacheRefresh(ctx context.Context, cfg *config.Config, boxMgr 
 			return
 		}
 		if cache.AutoReloadValue() {
-			reloadedCfg, err := config.Load(cfg.FilePath())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "free proxy cache reload config failed: %v\n", err)
-				return
-			}
 			// 端口表以 manager 运行时端口表为准，理由同上方 free proxy filter reload。
-			if err := boxMgr.ReloadWithPortMap(reloadedCfg, boxMgr.CurrentPortMap()); err != nil {
+			if err := boxMgr.ReloadFreeProxySources(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "free proxy cache auto-reload failed: %v\n", err)
 			}
 		}

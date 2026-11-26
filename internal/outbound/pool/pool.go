@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"easy_proxies/internal/config"
 	"easy_proxies/internal/monitor"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -60,16 +61,18 @@ type Options struct {
 
 // MemberMeta carries optional descriptive information for monitoring UI.
 type MemberMeta struct {
-	Name          string
-	URI           string
-	Mode          string
-	ListenAddress string
-	Port          uint16
-	Region        string // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
-	Country       string // Full country name from GeoIP
-	Source        string // Runtime config source: inline, nodes_file, subscription, free_proxy
-	Protocol      string // URI scheme
-	ViaUpstream   bool   // dials through upstream_proxy detour
+	Name             string
+	URI              string
+	Mode             string
+	ListenAddress    string
+	Port             uint16
+	Region           string // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
+	Country          string // Full country name from GeoIP
+	Source           string // Runtime config source: inline, nodes_file, subscription, free_proxy
+	SubscriptionName string
+	LocalSources     []config.LocalSourceRef
+	Protocol         string // URI scheme
+	ViaUpstream      bool   // dials through upstream_proxy detour
 }
 
 // Register wires the pool outbound into the registry.
@@ -142,17 +145,19 @@ func newPool(ctx context.Context, _ adapter.Router, logger singlog.ContextLogger
 
 			meta := normalized.Metadata[memberTag]
 			info := monitor.NodeInfo{
-				Tag:           memberTag,
-				Name:          meta.Name,
-				URI:           meta.URI,
-				Mode:          meta.Mode,
-				ListenAddress: meta.ListenAddress,
-				Port:          meta.Port,
-				Region:        meta.Region,
-				Country:       meta.Country,
-				Source:        meta.Source,
-				Protocol:      meta.Protocol,
-				ViaUpstream:   meta.ViaUpstream,
+				Tag:              memberTag,
+				Name:             meta.Name,
+				URI:              meta.URI,
+				Mode:             meta.Mode,
+				ListenAddress:    meta.ListenAddress,
+				Port:             meta.Port,
+				Region:           meta.Region,
+				Country:          meta.Country,
+				Source:           meta.Source,
+				SubscriptionName: meta.SubscriptionName,
+				LocalSources:     append([]config.LocalSourceRef(nil), meta.LocalSources...),
+				Protocol:         meta.Protocol,
+				ViaUpstream:      meta.ViaUpstream,
 			}
 			entry := monitorMgr.Register(info)
 			if entry != nil {
@@ -249,17 +254,19 @@ func (p *poolOutbound) initializeMembersLocked() error {
 		if p.monitor != nil {
 			meta := p.options.Metadata[tag]
 			info := monitor.NodeInfo{
-				Tag:           tag,
-				Name:          meta.Name,
-				URI:           meta.URI,
-				Mode:          meta.Mode,
-				ListenAddress: meta.ListenAddress,
-				Port:          meta.Port,
-				Region:        meta.Region,
-				Country:       meta.Country,
-				Source:        meta.Source,
-				Protocol:      meta.Protocol,
-				ViaUpstream:   meta.ViaUpstream,
+				Tag:              tag,
+				Name:             meta.Name,
+				URI:              meta.URI,
+				Mode:             meta.Mode,
+				ListenAddress:    meta.ListenAddress,
+				Port:             meta.Port,
+				Region:           meta.Region,
+				Country:          meta.Country,
+				Source:           meta.Source,
+				SubscriptionName: meta.SubscriptionName,
+				LocalSources:     append([]config.LocalSourceRef(nil), meta.LocalSources...),
+				Protocol:         meta.Protocol,
+				ViaUpstream:      meta.ViaUpstream,
 			}
 			entry := p.monitor.Register(info)
 			if entry != nil {

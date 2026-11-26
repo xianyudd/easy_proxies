@@ -38,6 +38,10 @@ type Config struct {
 	GeoIP                  GeoIPConfig               `yaml:"geoip"`
 	Log                    LogConfig                 `yaml:"log"`
 	Nodes                  []NodeConfig              `yaml:"nodes"`
+	InlineNodes            []NodeConfig              `yaml:"-"`
+	LocalSources           []LocalSource             `yaml:"local_sources,omitempty"`
+	LocalSourcesRevision   int                       `yaml:"local_sources_revision,omitempty"`
+	LocalSourcesDraft      *LocalSourcesDraft        `yaml:"local_sources_draft,omitempty"`
 	FreeProxySources       []nodesource.SourceConfig `yaml:"free_proxy_sources"`
 	FreeProxyMaxNodes      int                       `yaml:"free_proxy_max_nodes"`
 	FreeProxyFilter        nodesource.FilterConfig   `yaml:"free_proxy_filter"`
@@ -54,7 +58,8 @@ type Config struct {
 	UpstreamProxyBypass    UpstreamProxyBypassConfig `yaml:"upstream_proxy_bypass"`     // Protocols that should bypass upstream_proxy detour
 	FreeProxyDownloadProxy string                    `yaml:"free_proxy_download_proxy"` // HTTP/SOCKS5 proxy for downloading free proxy sources; falls back to HTTPS_PROXY env
 
-	filePath string `yaml:"-"` // 配置文件路径，用于保存
+	runtimeSourcesOnly bool   `yaml:"-"`
+	filePath           string `yaml:"-"` // 配置文件路径，用于保存
 }
 
 // UpstreamProxyBypassConfig controls which node types should dial directly even when upstream_proxy is set.
@@ -451,12 +456,18 @@ type SubscriptionFetchOptions struct {
 
 // NodeConfig describes a single upstream proxy endpoint expressed as URI.
 type NodeConfig struct {
-	Name     string     `yaml:"name" json:"name"`
-	URI      string     `yaml:"uri" json:"uri"`
-	Port     uint16     `yaml:"port,omitempty" json:"port,omitempty"`
-	Username string     `yaml:"username,omitempty" json:"username,omitempty"`
-	Password string     `yaml:"password,omitempty" json:"password,omitempty"`
-	Source   NodeSource `yaml:"-" json:"source,omitempty"` // Runtime only, not persisted
+	Name             string           `yaml:"name" json:"name"`
+	URI              string           `yaml:"uri" json:"uri"`
+	Port             uint16           `yaml:"port,omitempty" json:"port,omitempty"`
+	Username         string           `yaml:"username,omitempty" json:"username,omitempty"`
+	Password         string           `yaml:"password,omitempty" json:"password,omitempty"`
+	Source           NodeSource       `yaml:"-" json:"source,omitempty"` // Runtime only, not persisted
+	SubscriptionName string           `yaml:"-" json:"subscription_name,omitempty"`
+	SubscriptionID   string           `yaml:"-" json:"-"`
+	LocalSources     []LocalSourceRef `yaml:"-" json:"local_sources,omitempty"`
+	// Origins retain raw non-local memberships when one runtime exit is shared.
+	// Entries are flat (their own Origins/LocalSources are nil), never serialized.
+	Origins []NodeConfig `yaml:"-" json:"-"`
 }
 
 // NodeKey returns a unique identifier for the node based on its URI.
@@ -476,6 +487,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
 	cfg.filePath = path
+	cfg.InlineNodes = append([]NodeConfig(nil), cfg.Nodes...)
 
 	// Resolve local source paths relative to config file directory
 	configDir := filepath.Dir(path)
@@ -878,7 +890,7 @@ func (c *Config) normalize() error {
 	// recomposing sources. This makes repeated normalize/reload calls idempotent.
 	baseNodes := c.Nodes[:0]
 	for idx := range c.Nodes {
-		if c.Nodes[idx].Source == NodeSourceFreeProxy {
+		if c.Nodes[idx].Source == NodeSourceFreeProxy || c.Nodes[idx].Source == NodeSourceLocal {
 			continue
 		}
 		if c.Nodes[idx].Source == "" {
@@ -896,6 +908,8 @@ func (c *Config) normalize() error {
 		}
 		for idx := range fileNodes {
 			fileNodes[idx].Source = NodeSourceFile
+			fileNodes[idx].SubscriptionName = ""
+			fileNodes[idx].SubscriptionID = ""
 		}
 		c.Nodes = append(c.Nodes, fileNodes...)
 	}
@@ -907,7 +921,7 @@ func (c *Config) normalize() error {
 		for _, subURL := range c.Subscriptions {
 			nodes, err := loadNodesFromSubscription(subURL, subTimeout)
 			if err != nil {
-				log.Printf("⚠️ Failed to load subscription %q: %v (skipping)", subURL, err)
+				log.Printf("⚠️ Failed to load subscription %s: %v (skipping)", RedactURL(subURL), err)
 				continue
 			}
 			log.Printf("✅ Loaded %d nodes from subscription", len(nodes))
@@ -921,11 +935,14 @@ func (c *Config) normalize() error {
 		}
 
 		cachedNodes, _ := loadNodesFromFile(nodesFilePath)
+		writeCache := len(subNodes) > 0
 		if len(cachedNodes) > len(subNodes) {
 			// ponytail: aggregate cache is enough; use per-subscription cache only if stale nodes become a real problem.
 			log.Printf("⚠️  Subscription fetch returned %d nodes, keeping %d cached nodes from %s", len(subNodes), len(cachedNodes), nodesFilePath)
+			writeCache = MergeSubscriptionNames(cachedNodes, subNodes)
 			subNodes = cachedNodes
-		} else if len(subNodes) > 0 {
+		}
+		if writeCache {
 			if err := writeNodesToFile(nodesFilePath, subNodes); err != nil {
 				log.Printf("⚠️ Failed to write nodes to %q: %v", nodesFilePath, err)
 			} else {
@@ -946,11 +963,29 @@ func (c *Config) normalize() error {
 		return err
 	}
 
+	if err := c.ComposeLocalNodes(); err != nil {
+		return err
+	}
 	if len(c.Nodes) == 0 {
 		return errors.New("config.nodes cannot be empty (configure nodes in config or use nodes_file)")
 	}
+	reservedPorts := make(map[uint16]bool)
+	for _, node := range c.Nodes {
+		if node.Port > 0 {
+			reservedPorts[node.Port] = true
+		}
+	}
+	if c.Mode == "hybrid" {
+		reservedPorts[c.Listener.Port] = true
+	}
 	portCursor := c.MultiPort.BasePort
 	for idx := range c.Nodes {
+		for c.Nodes[idx].Port == 0 && reservedPorts[portCursor] {
+			if portCursor == 65535 {
+				return errors.New("no available node ports")
+			}
+			portCursor++
+		}
 		c.Nodes[idx].Name = strings.TrimSpace(c.Nodes[idx].Name)
 		c.Nodes[idx].URI = strings.TrimSpace(c.Nodes[idx].URI)
 
@@ -972,13 +1007,14 @@ func (c *Config) normalize() error {
 		// the shared pool listener and do not need per-node port binding.
 		isFreeProxy := c.Nodes[idx].Source == NodeSourceFreeProxy
 		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") && !isFreeProxy {
-			for !IsPortAvailable(c.MultiPort.Address, portCursor) {
-				log.Printf("⚠️  Port %d is in use, trying next port", portCursor)
-				portCursor++
-				if portCursor > 65535 {
+			for reservedPorts[portCursor] || !IsPortAvailable(c.MultiPort.Address, portCursor) {
+				log.Printf("⚠️  Port %d is reserved or in use, trying next port", portCursor)
+				if portCursor == 65535 {
 					return fmt.Errorf("no available ports found starting from %d", c.MultiPort.BasePort)
 				}
+				portCursor++
 			}
+			reservedPorts[portCursor] = true
 			c.Nodes[idx].Port = portCursor
 			portCursor++
 		} else if c.Nodes[idx].Port == 0 && !isFreeProxy {
@@ -1115,23 +1151,30 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	c.FreeProxyCache = c.FreeProxyCache.Normalized(c.filePath, hasEnabledFreeProxySource(c.FreeProxySources))
 	c.FreeProxyPromote = c.FreeProxyPromote.Normalized()
 
-	// Drop previously materialized runtime-only free proxy nodes before
-	// recomposing sources. This makes repeated reload calls idempotent.
-	baseNodes := c.Nodes[:0]
-	for idx := range c.Nodes {
-		if c.Nodes[idx].Source == NodeSourceFreeProxy {
-			continue
+	// Source fetch/probe work is optional: commit callers already hold a
+	// prepared snapshot and must not perform network work under their gate.
+	if !c.runtimeSourcesOnly {
+		// Drop previously materialized runtime-only free proxy nodes before
+		// recomposing sources. This makes repeated reload calls idempotent.
+		baseNodes := c.Nodes[:0]
+		for idx := range c.Nodes {
+			if c.Nodes[idx].Source == NodeSourceFreeProxy || c.Nodes[idx].Source == NodeSourceLocal {
+				continue
+			}
+			if c.Nodes[idx].Source == "" {
+				c.Nodes[idx].Source = NodeSourceInline
+			}
+			baseNodes = append(baseNodes, c.Nodes[idx])
 		}
-		if c.Nodes[idx].Source == "" {
-			c.Nodes[idx].Source = NodeSourceInline
+		c.Nodes = baseNodes
+		if err := c.appendFreeProxyNodesFiltered(); err != nil {
+			return err
 		}
-		baseNodes = append(baseNodes, c.Nodes[idx])
-	}
-	c.Nodes = baseNodes
-	if err := c.appendFreeProxyNodesFiltered(); err != nil {
-		return err
 	}
 
+	if err := c.ComposeLocalNodes(); err != nil {
+		return err
+	}
 	if len(c.Nodes) == 0 {
 		return errors.New("config.nodes cannot be empty")
 	}
@@ -1179,17 +1222,33 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 	}
 
 	// Second pass: assign new ports for nodes without preserved ports
+	reservedPorts := make(map[uint16]bool)
+	for _, node := range c.Nodes {
+		if node.Port > 0 {
+			reservedPorts[node.Port] = true
+		}
+	}
+	if c.Mode == "hybrid" {
+		reservedPorts[c.Listener.Port] = true
+	}
 	portCursor := c.MultiPort.BasePort
 	for idx := range c.Nodes {
+		for c.Nodes[idx].Port == 0 && reservedPorts[portCursor] {
+			if portCursor == 65535 {
+				return errors.New("no available node ports")
+			}
+			portCursor++
+		}
 		isFreeProxy := c.Nodes[idx].Source == NodeSourceFreeProxy
 		if c.Nodes[idx].Port == 0 && (c.Mode == "multi-port" || c.Mode == "hybrid") && !isFreeProxy {
 			// Find next available port that's not used
-			for usedPorts[portCursor] || !IsPortAvailable(c.MultiPort.Address, portCursor) {
-				portCursor++
-				if portCursor > 65535 {
+			for reservedPorts[portCursor] || usedPorts[portCursor] || !IsPortAvailable(c.MultiPort.Address, portCursor) {
+				if portCursor == 65535 {
 					return fmt.Errorf("no available ports found starting from %d", c.MultiPort.BasePort)
 				}
+				portCursor++
 			}
+			reservedPorts[portCursor] = true
 			c.Nodes[idx].Port = portCursor
 			usedPorts[portCursor] = true
 			log.Printf("📌 Assigned new port %d for node %q", portCursor, c.Nodes[idx].Name)
@@ -1349,7 +1408,11 @@ func loadNodesFromFile(path string) ([]NodeConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseNodesFromContent(string(data))
+	nodes, err := parseNodesFromContent(string(data))
+	if err == nil {
+		applySubscriptionCache(string(data), nodes)
+	}
+	return nodes, err
 }
 
 // LoadNodesFromFile reads a nodes file where each non-comment line is a proxy URI.
@@ -1547,7 +1610,7 @@ func FetchSubscriptionNodes(ctx context.Context, urls []string, opts Subscriptio
 		close(results)
 	}()
 
-	allNodes := make([]NodeConfig, 0)
+	byURL := make(map[string][]NodeConfig, len(uniqueURLs))
 	processed := 0
 	for res := range results {
 		processed++
@@ -1567,7 +1630,7 @@ func FetchSubscriptionNodes(ctx context.Context, urls []string, opts Subscriptio
 		if opts.Loggerf != nil {
 			opts.Loggerf("✅ Loaded %d nodes from subscription %s", len(res.nodes), RedactURL(res.url))
 		}
-		allNodes = append(allNodes, res.nodes...)
+		byURL[res.url] = res.nodes
 	}
 	if missing := len(uniqueURLs) - processed; missing > 0 {
 		if err := ctx.Err(); err != nil {
@@ -1579,6 +1642,10 @@ func FetchSubscriptionNodes(ctx context.Context, urls []string, opts Subscriptio
 		}
 	}
 
+	var allNodes []NodeConfig
+	for _, subURL := range uniqueURLs {
+		allNodes = append(allNodes, byURL[subURL]...)
+	}
 	stats.Nodes = len(allNodes)
 	allNodes, stats.DedupedNodes = dedupeNodesByKey(allNodes)
 	return allNodes, stats
@@ -1641,10 +1708,20 @@ func fetchSubscriptionWithClient(ctx context.Context, client *http.Client, subUR
 		return nil, fmt.Errorf("subscription response exceeds %d bytes", maxSubscriptionBodySize)
 	}
 
-	content := string(body)
-
-	// Try to detect and parse different formats
-	return parseSubscriptionContent(content)
+	nodes, err := parseSubscriptionContent(string(body))
+	if err != nil {
+		return nil, err
+	}
+	name := subscriptionResponseName(resp.Header, parsed)
+	if resp.Request != nil && safeSubscriptionHeaderName(name, resp.Request.URL) == "" {
+		name = parsed.Hostname()
+	}
+	id := subscriptionID(subURL)
+	for i := range nodes {
+		nodes[i].SubscriptionName = name
+		nodes[i].SubscriptionID = id
+	}
+	return nodes, nil
 }
 
 // redactSubscriptionError 把底层错误信息中出现的原始 URL 替换成脱敏形式。
@@ -2299,9 +2376,22 @@ func formatNodesFileLine(node NodeConfig) string {
 
 // writeNodesToFile writes nodes to a file (one URI per line) with file locking.
 func writeNodesToFile(path string, nodes []NodeConfig) error {
+	return writeNodesFile(path, nodes, formatNodesFileLine)
+}
+
+// WriteSubscriptionNodes preserves the raw URIs used by the refresh change detector.
+func WriteSubscriptionNodes(path string, nodes []NodeConfig) error {
+	return writeNodesFile(path, nodes, func(node NodeConfig) string { return node.URI })
+}
+
+func writeNodesFile(path string, nodes []NodeConfig, format func(NodeConfig) string) error {
 	var lines []string
 	for _, node := range nodes {
-		lines = append(lines, formatNodesFileLine(node))
+		uri := format(node)
+		if comment := subscriptionCacheComment(node, uri); comment != "" {
+			lines = append(lines, comment)
+		}
+		lines = append(lines, uri)
 	}
 	content := strings.Join(lines, "\n")
 	if len(lines) > 0 {
@@ -2327,7 +2417,7 @@ func (c *Config) SaveNodes() error {
 	var inlineNodes []NodeConfig
 	var fileNodes []NodeConfig
 
-	for _, node := range c.Nodes {
+	for _, node := range ExpandNodeOrigins(c.Nodes) {
 		// Create a clean copy without runtime fields for saving
 		cleanNode := NodeConfig{
 			Name:     node.Name,
@@ -2340,10 +2430,17 @@ func (c *Config) SaveNodes() error {
 		case NodeSourceInline:
 			inlineNodes = append(inlineNodes, cleanNode)
 		case NodeSourceFile, NodeSourceSubscription:
+			cleanNode.SubscriptionName = node.SubscriptionName
+			cleanNode.SubscriptionID = node.SubscriptionID
 			fileNodes = append(fileNodes, cleanNode)
 		case NodeSourceFreeProxy:
 			// Free proxy source nodes are loaded from external sources at runtime.
 			// Do not persist them into config.yaml or nodes.txt.
+			continue
+		case NodeSourceLocal:
+			// Materialized local-source nodes are runtime-only. The authoritative
+			// copy lives in config local_sources entries; never write them to
+			// config.yaml's nodes array or nodes.txt.
 			continue
 		default:
 			// Default to file nodes for unknown source
@@ -2362,32 +2459,11 @@ func (c *Config) SaveNodes() error {
 		}
 	}
 
-	// Update config.yaml nodes array (including clearing it when all inline nodes are deleted)
-	{
-		// Read original config to preserve structure
-		data, err := os.ReadFile(c.filePath)
-		if err != nil {
-			return fmt.Errorf("read config: %w", err)
-		}
-		var saveCfg Config
-		if err := yaml.Unmarshal(data, &saveCfg); err != nil {
-			return fmt.Errorf("decode config: %w", err)
-		}
-		// Update only the inline nodes
+	return c.updateConfigFile(func(saveCfg *Config) error {
 		saveCfg.Nodes = inlineNodes
 		saveCfg.ManualRegionOverrides = c.ManualRegionOverrides
-
-		newData, err := yaml.Marshal(&saveCfg)
-		if err != nil {
-			return fmt.Errorf("encode config: %w", err)
-		}
-		// Use file locking for safe concurrent writes
-		if err := writeFileWithLock(c.filePath, newData, 0o644); err != nil {
-			return fmt.Errorf("write config: %w", err)
-		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // Save is deprecated, use SaveNodes instead.
@@ -2406,49 +2482,33 @@ func (c *Config) SaveSettings() error {
 		return errors.New("config file path is unknown")
 	}
 
-	data, err := os.ReadFile(c.filePath)
-	if err != nil {
-		return fmt.Errorf("read config: %w", err)
-	}
-	var saveCfg Config
-	if err := yaml.Unmarshal(data, &saveCfg); err != nil {
-		return fmt.Errorf("decode config: %w", err)
-	}
+	return c.updateConfigFile(func(saveCfg *Config) error {
+		saveCfg.ExternalIP = c.ExternalIP
+		saveCfg.Management.ProbeTarget = c.Management.ProbeTarget
+		saveCfg.SkipCertVerify = c.SkipCertVerify
+		saveCfg.UpstreamProxy = c.UpstreamProxy
+		saveCfg.UpstreamProxyFallback = c.UpstreamProxyFallback
+		saveCfg.UpstreamProxyBypass = c.UpstreamProxyBypass
+		saveCfg.Log = c.Log
+		saveCfg.Subscriptions = c.Subscriptions
+		saveCfg.SubscriptionRefresh = c.SubscriptionRefresh
+		saveCfg.QualityCheck = c.QualityCheck
+		saveCfg.FreeProxySources = c.FreeProxySources
+		saveCfg.FreeProxyMaxNodes = c.FreeProxyMaxNodes
+		saveCfg.FreeProxyFilter = c.FreeProxyFilter
+		saveCfg.FreeProxyCache = c.FreeProxyCache
+		saveCfg.FreeProxyPromote = c.FreeProxyPromote
+		saveCfg.ManualRegionOverrides = c.ManualRegionOverrides
+		saveCfg.GeoIP = c.GeoIP
+		saveCfg.Mode = c.Mode
+		saveCfg.Listener = c.Listener
+		saveCfg.MultiPort = c.MultiPort
+		saveCfg.AndroidProxy = c.AndroidProxy
+		saveCfg.Pool = c.Pool
+		saveCfg.Management = c.Management
 
-	saveCfg.ExternalIP = c.ExternalIP
-	saveCfg.Management.ProbeTarget = c.Management.ProbeTarget
-	saveCfg.SkipCertVerify = c.SkipCertVerify
-	saveCfg.UpstreamProxy = c.UpstreamProxy
-	saveCfg.UpstreamProxyFallback = c.UpstreamProxyFallback
-	saveCfg.UpstreamProxyBypass = c.UpstreamProxyBypass
-	saveCfg.Log = c.Log
-	saveCfg.Subscriptions = c.Subscriptions
-	saveCfg.SubscriptionRefresh = c.SubscriptionRefresh
-	saveCfg.QualityCheck = c.QualityCheck
-	saveCfg.FreeProxySources = c.FreeProxySources
-	saveCfg.FreeProxyMaxNodes = c.FreeProxyMaxNodes
-	saveCfg.FreeProxyFilter = c.FreeProxyFilter
-	saveCfg.FreeProxyCache = c.FreeProxyCache
-	saveCfg.FreeProxyPromote = c.FreeProxyPromote
-	saveCfg.ManualRegionOverrides = c.ManualRegionOverrides
-	saveCfg.GeoIP = c.GeoIP
-	saveCfg.Mode = c.Mode
-	saveCfg.Listener = c.Listener
-	saveCfg.MultiPort = c.MultiPort
-	saveCfg.AndroidProxy = c.AndroidProxy
-	saveCfg.Pool = c.Pool
-	saveCfg.Management = c.Management
-
-	newData, err := yaml.Marshal(&saveCfg)
-	if err != nil {
-		return fmt.Errorf("encode config: %w", err)
-	}
-
-	// Use file locking for safe concurrent writes
-	if err := writeFileWithLock(c.filePath, newData, 0o644); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
-	return nil
+		return nil
+	})
 }
 
 // IsPortAvailable checks if a port is available for binding.
@@ -2464,29 +2524,7 @@ func IsPortAvailable(address string, port uint16) bool {
 
 // writeFileWithLock writes data to a file with exclusive locking.
 func writeFileWithLock(path string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
-		return fmt.Errorf("open file: %w", err)
-	}
-	defer f.Close()
-
-	// Acquire exclusive lock
-	if err := lockFile(f); err != nil {
-		return fmt.Errorf("lock file: %w", err)
-	}
-	defer unlockFile(f)
-
-	// Write data
-	if _, err := f.Write(data); err != nil {
-		return fmt.Errorf("write file: %w", err)
-	}
-
-	// Ensure data is written to disk
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("sync file: %w", err)
-	}
-
-	return nil
+	return withConfigLock(path, func() error { return atomicConfigWrite(path, data) })
 }
 
 // RefreshFreeProxyCache downloads configured free-proxy sources, applies the

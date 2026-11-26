@@ -40,17 +40,19 @@ type Config struct {
 
 // NodeInfo is static metadata about a proxy entry.
 type NodeInfo struct {
-	Tag           string `json:"tag"`
-	Name          string `json:"name"`
-	URI           string `json:"uri"`
-	Mode          string `json:"mode"`
-	ListenAddress string `json:"listen_address,omitempty"`
-	Port          uint16 `json:"port,omitempty"`
-	Region        string `json:"region,omitempty"`       // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
-	Country       string `json:"country,omitempty"`      // Full country name from GeoIP
-	Source        string `json:"source,omitempty"`       // Runtime source: inline, nodes_file, subscription, free_proxy
-	Protocol      string `json:"protocol,omitempty"`     // URI scheme: vless, vmess, hysteria2, anytls, ...
-	ViaUpstream   bool   `json:"via_upstream,omitempty"` // true when dialed through upstream_proxy detour
+	Tag              string                  `json:"tag"`
+	Name             string                  `json:"name"`
+	URI              string                  `json:"uri"`
+	Mode             string                  `json:"mode"`
+	ListenAddress    string                  `json:"listen_address,omitempty"`
+	Port             uint16                  `json:"port,omitempty"`
+	Region           string                  `json:"region,omitempty"`  // GeoIP region code: "jp", "kr", "us", "hk", "tw", "other"
+	Country          string                  `json:"country,omitempty"` // Full country name from GeoIP
+	Source           string                  `json:"source,omitempty"`  // Runtime source: inline, nodes_file, subscription, free_proxy
+	SubscriptionName string                  `json:"subscription_name,omitempty"`
+	LocalSources     []config.LocalSourceRef `json:"local_sources,omitempty"`
+	Protocol         string                  `json:"protocol,omitempty"`     // URI scheme: vless, vmess, hysteria2, anytls, ...
+	ViaUpstream      bool                    `json:"via_upstream,omitempty"` // true when dialed through upstream_proxy detour
 }
 
 // TimelineEvent represents a single usage event for debug tracking.
@@ -562,9 +564,11 @@ func (m *Manager) Register(info NodeInfo) *EntryHandle {
 			timeline: make([]TimelineEvent, 0, maxTimelineSize),
 		}
 		m.nodes[info.Tag] = e
-	} else {
-		e.info = info
 	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	info.LocalSources = append([]config.LocalSourceRef(nil), info.LocalSources...)
+	e.info = info
 	// Keep governance pointer fresh for zombie / structural rules.
 	g := m.cfg.Governance
 	g.Normalize()

@@ -9,6 +9,7 @@ import { Button } from '../components/ui/Button'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { Badge } from '../components/ui/Badge'
 import { useToast } from '../components/ui/Toast'
+import { subscriptionDraftLabels } from '../lib/subscriptionAttribution'
 import { buildSettingsSavePayload, freeSourceDefaultScheme, isSettingsDraftDirty, isSubscriptionDraftDirty } from './settingsSavePayload'
 import type { FreeProxyCache, FreeProxyFilter, FreeProxyRefreshStatus, FreeProxySource, SettingsResponse } from '../types/settings'
 import type { CloudflareResult } from '../types/cloudflare'
@@ -408,6 +409,7 @@ export function SettingsPage() {
   const freeFilterProbes = freeFilter.probes || {}
   const status = subStatus.data || {}
   const subItems = editableLines(subs)
+  const subLabels = subscriptionDraftLabels(subItems, settings.data)
   const cleanSubItems = splitLines(subs)
   const cfRows = safeRows<CloudflareResult>(cfCache.data?.data)
   const repRows = safeRows<ReputationResult>(repCache.data?.data)
@@ -584,7 +586,16 @@ export function SettingsPage() {
             {input('刷新间隔', String(subRefresh.interval || '1h0m0s'), v=>updateDraft({...draft, subscription_refresh:{...subRefresh,interval:v}}))}
           </div>
           <div className="subscription-list">
-            {subItems.length ? subItems.map((url, idx) => <div className="subscription-item modern-subscription-item" key={`${idx}-${url.slice(0, 16)}`}><div className="subscription-index">#{idx + 1}</div><Input aria-label={`订阅 URL #${idx + 1}`} className="settings-input mono subscription-url-input" value={url} title={url} onChange={e=>updateSub(idx, e.target.value)} /><Button variant="danger" onClick={()=>removeSub(idx)}><Trash2 size={15} />删除</Button></div>) : <div className="empty-state compact-empty"><strong>暂无订阅 URL</strong><span>点击“新增订阅”添加一条订阅地址。</span></div>}
+            {subItems.length ? subItems.map((url, idx) => (
+              <div className="subscription-item modern-subscription-item" key={`${idx}-${url.slice(0, 16)}`}>
+                <div className="subscription-item-heading">
+                  <span className="subscription-index">#{idx + 1}</span>
+                  {subLabels[idx] && <span className="subscription-name" title={subLabels[idx]}>{subLabels[idx]}</span>}
+                </div>
+                <Input aria-label={`订阅 URL #${idx + 1}`} className="settings-input mono subscription-url-input" value={url} title={url} onChange={e=>updateSub(idx, e.target.value)} />
+                <Button variant="danger" onClick={()=>removeSub(idx)}><Trash2 size={15} />删除</Button>
+              </div>
+            )) : <div className="empty-state compact-empty"><strong>暂无订阅 URL</strong><span>点击“新增订阅”添加一条订阅地址。</span></div>}
           </div>
           <details className="raw-editor"><summary>批量编辑原始文本</summary><label htmlFor="subscriptions-raw-editor">批量编辑订阅原始文本</label><Input.TextArea id="subscriptions-raw-editor" className="settings-input mono subscription-textarea" rows={4} value={subs} onChange={e=>updateSubsDraft(e.target.value)} /></details>
           <div className="settings-inline-note"><Badge tone={status.enabled ? 'good' : 'neutral'}>{status.enabled ? '已启用' : '未启用'}</Badge><span>上次刷新：{shortDate(status.last_refresh)}</span><span>刷新次数：{Number(status.refresh_count || 0)}</span>{status.last_error ? <span className="danger-text">错误：{status.last_error}</span> : null}{status.nodes_modified ? <span>节点文件已变更</span> : null}</div>

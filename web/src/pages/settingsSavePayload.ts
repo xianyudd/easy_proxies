@@ -53,9 +53,13 @@ function sameSettingsValue(a: unknown, b: unknown) {
   return stable(a) === stable(b)
 }
 
+function writableSettings({ subscription_names: _subscriptionNames, ...settings }: SettingsResponse) {
+  return settings
+}
+
 export function isSettingsDraftDirty(draft: SettingsResponse, serverSettings?: SettingsResponse) {
   if (!serverSettings) return false
-  return !sameSettingsValue(draft, serverSettings)
+  return !sameSettingsValue(writableSettings(draft), writableSettings(serverSettings))
 }
 
 function normalizeSubscriptionDraftText(value: string) {
@@ -87,7 +91,7 @@ export function buildSettingsSavePayload({
 }): SettingsResponse {
   const serverManagement = serverSettings?.management as Record<string, unknown> | undefined
   const payload: SettingsResponse = {
-    ...draft,
+    ...writableSettings(draft),
     management: normalizeManagementForSave(management, managementPasswordDraft, managementPasswordClear, serverManagement),
     subscriptions,
   }

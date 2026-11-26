@@ -113,6 +113,7 @@ type Manager struct {
 	// currentBox 清空），后到者直接报 "manager not started"；Close 与
 	// Reload 重叠还会让关闭完成后又被装回一个新实例（泄漏）。
 	lifecycleMu sync.Mutex
+	commitMu    sync.Mutex // serializes configuration mutations and runtime commits
 
 	mu sync.RWMutex
 
@@ -307,6 +308,24 @@ func (m *Manager) Start(ctx context.Context) error {
 // Reload gracefully switches to a new configuration.
 // For multi-port mode, we must stop the old instance first to release ports.
 func (m *Manager) Reload(newCfg *config.Config) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
+	if newCfg != nil {
+		m.mu.RLock()
+		if m.cfg != nil {
+			newCfg.LocalSources = config.CloneLocalSources(m.cfg.LocalSources)
+			newCfg.LocalSourcesRevision = m.cfg.LocalSourcesRevision
+			newCfg.LocalSourcesDraft = config.CloneLocalSourcesDraft(m.cfg.LocalSourcesDraft)
+		}
+		m.mu.RUnlock()
+		if err := newCfg.ComposeLocalNodes(); err != nil {
+			return err
+		}
+	}
+	return m.reloadCommitted(newCfg)
+}
+
+func (m *Manager) reloadCommitted(newCfg *config.Config) error {
 	if newCfg == nil {
 		return errors.New("new config is nil")
 	}
@@ -1140,6 +1159,8 @@ func (m *Manager) ListConfigNodes(ctx context.Context) ([]config.NodeConfig, err
 
 // CreateNode adds a new node to the config and saves it.
 func (m *Manager) CreateNode(ctx context.Context, node config.NodeConfig) (config.NodeConfig, error) {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return config.NodeConfig{}, err
@@ -1178,6 +1199,8 @@ func (m *Manager) CreateNode(ctx context.Context, node config.NodeConfig) (confi
 
 // UpdateNode updates an existing node by name and saves the config.
 func (m *Manager) UpdateNode(ctx context.Context, name string, node config.NodeConfig) (config.NodeConfig, error) {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return config.NodeConfig{}, err
@@ -1197,6 +1220,9 @@ func (m *Manager) UpdateNode(ctx context.Context, name string, node config.NodeC
 		return config.NodeConfig{}, monitor.ErrNodeNotFound
 	}
 
+	if m.cfg.Nodes[idx].Source == config.NodeSourceLocal || len(m.cfg.Nodes[idx].LocalSources) > 0 {
+		return config.NodeConfig{}, errors.New("manage this node through its local source")
+	}
 	normalized, err := m.prepareNodeLocked(node, name)
 	if err != nil {
 		return config.NodeConfig{}, err
@@ -1204,6 +1230,8 @@ func (m *Manager) UpdateNode(ctx context.Context, name string, node config.NodeC
 
 	// Preserve the original source
 	normalized.Source = m.cfg.Nodes[idx].Source
+	normalized.SubscriptionName = m.cfg.Nodes[idx].SubscriptionName
+	normalized.SubscriptionID = m.cfg.Nodes[idx].SubscriptionID
 
 	prev := m.cfg.Nodes[idx]
 	prevOverrides := cloneRegionOverrides(m.cfg.ManualRegionOverrides)
@@ -1221,6 +1249,8 @@ func (m *Manager) UpdateNode(ctx context.Context, name string, node config.NodeC
 
 // DeleteNode removes a node by name and saves the config.
 func (m *Manager) DeleteNode(ctx context.Context, name string) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1240,6 +1270,9 @@ func (m *Manager) DeleteNode(ctx context.Context, name string) error {
 		return monitor.ErrNodeNotFound
 	}
 
+	if m.cfg.Nodes[idx].Source == config.NodeSourceLocal || len(m.cfg.Nodes[idx].LocalSources) > 0 {
+		return errors.New("manage this node through its local source")
+	}
 	backup := cloneNodes(m.cfg.Nodes)
 	overrideBackup := cloneRegionOverrides(m.cfg.ManualRegionOverrides)
 	removed := m.cfg.Nodes[idx]
@@ -1255,21 +1288,10 @@ func (m *Manager) DeleteNode(ctx context.Context, name string) error {
 
 // TriggerReload reloads the sing-box instance with current config.
 func (m *Manager) TriggerReload(ctx context.Context) error {
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	if ctx == nil {
+		ctx = context.Background()
 	}
-
-	m.mu.RLock()
-	cfgCopy := m.copyConfigLocked()
-	if cfgCopy == nil {
-		m.mu.RUnlock()
-		return errConfigUnavailable
-	}
-	portMap := m.cfg.BuildPortMap() // Preserve existing port assignments
-	m.mu.RUnlock()
-	return m.ReloadWithPortMap(cfgCopy, portMap)
+	return m.ReloadFreeProxySources(ctx)
 }
 
 // ApplyUpstreamProxy applies a runtime-only upstream_proxy override and reloads
@@ -1277,6 +1299,8 @@ func (m *Manager) TriggerReload(ctx context.Context) error {
 // box build uses the temporary value. Passing the preferred (or empty after
 // preferred was set) clears the override and recovers to primary.
 func (m *Manager) ApplyUpstreamProxy(ctx context.Context, upstream string) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1312,7 +1336,7 @@ func (m *Manager) ApplyUpstreamProxy(ctx context.Context, upstream string) error
 	cfgCopy := m.copyConfigLocked()
 	portMap := m.cfg.BuildPortMap()
 	m.mu.Unlock()
-	return m.ReloadWithPortMap(cfgCopy, portMap)
+	return m.reloadWithPortMapCommitted(cfgCopy, portMap)
 }
 
 // EffectiveUpstreamProxy returns the upstream actually used by the running box
@@ -1363,6 +1387,21 @@ func (m *Manager) SetPreferredUpstreamProxy(upstream string) {
 
 // ReloadWithPortMap gracefully switches to a new configuration, preserving port assignments.
 func (m *Manager) ReloadWithPortMap(newCfg *config.Config, portMap map[string]uint16) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
+	if newCfg != nil {
+		m.mu.RLock()
+		if m.cfg != nil {
+			newCfg.LocalSources = config.CloneLocalSources(m.cfg.LocalSources)
+			newCfg.LocalSourcesRevision = m.cfg.LocalSourcesRevision
+			newCfg.LocalSourcesDraft = config.CloneLocalSourcesDraft(m.cfg.LocalSourcesDraft)
+		}
+		m.mu.RUnlock()
+	}
+	return m.reloadWithPortMapCommitted(newCfg, portMap)
+}
+
+func (m *Manager) reloadWithPortMapCommitted(newCfg *config.Config, portMap map[string]uint16) error {
 	if newCfg == nil {
 		return errors.New("new config is nil")
 	}
@@ -1378,13 +1417,13 @@ func (m *Manager) ReloadWithPortMap(newCfg *config.Config, portMap map[string]ui
 	for k, v := range m.CurrentPortMap() {
 		merged[k] = v // current wins
 	}
-	if len(merged) > 0 {
-		if err := newCfg.NormalizeWithPortMap(merged); err != nil {
+	{
+		if err := newCfg.NormalizeRuntimeWithPortMap(merged); err != nil {
 			return fmt.Errorf("normalize config with port map: %w", err)
 		}
 	}
 
-	return m.Reload(newCfg)
+	return m.reloadCommitted(newCfg)
 }
 
 // CurrentPortMap returns the current port mapping from the active configuration.
@@ -1560,6 +1599,10 @@ func cloneNodes(nodes []config.NodeConfig) []config.NodeConfig {
 	}
 	out := make([]config.NodeConfig, len(nodes))
 	copy(out, nodes)
+	for i := range out {
+		out[i].LocalSources = append([]config.LocalSourceRef(nil), nodes[i].LocalSources...)
+		out[i].Origins = append([]config.NodeConfig(nil), nodes[i].Origins...)
+	}
 	return out
 }
 
@@ -1648,6 +1691,12 @@ func (m *Manager) copyConfigLocked() *config.Config {
 	}
 	cloned := *m.cfg
 	cloned.Nodes = cloneNodes(m.cfg.Nodes)
+	for i := range cloned.Nodes {
+		cloned.Nodes[i].LocalSources = append([]config.LocalSourceRef(nil), m.cfg.Nodes[i].LocalSources...)
+	}
+	cloned.InlineNodes = cloneNodes(m.cfg.InlineNodes)
+	cloned.LocalSources = config.CloneLocalSources(m.cfg.LocalSources)
+	cloned.LocalSourcesDraft = config.CloneLocalSourcesDraft(m.cfg.LocalSourcesDraft)
 	// Clone Subscriptions slice to avoid shared backing array issues
 	if len(m.cfg.Subscriptions) > 0 {
 		cloned.Subscriptions = make([]string, len(m.cfg.Subscriptions))

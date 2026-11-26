@@ -9,8 +9,10 @@ import { Button } from '../components/ui/Button'
 import { QueryErrorBanner } from '../components/ui/QueryErrorBanner'
 import { useToast } from '../components/ui/Toast'
 import { useReload } from '../hooks/useReload'
+import { filterConfigNodes, nodeSourceLabel } from '../lib/subscriptionAttribution'
 import type { ConfigNode } from '../types/configNode'
 import { Page } from '../components/layout/Page'
+import { LocalSourcesSection } from '../components/nodes/LocalSourcesSection'
 
 const emptyDraft: ConfigNode = { name: '', uri: '', port: 0, username: '', password: '' }
 
@@ -71,17 +73,8 @@ export function NodeConfigPage() {
     const sources = Array.from(new Set(rows.map(node => String(node.source || 'unknown')).filter(Boolean))).sort()
     return [{ value: 'all', label: '全部来源' }, ...sources.map(source => ({ value: source, label: sourceLabel(source) }))]
   }, [rows])
-  const filteredRows = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase()
-    return rows.filter(node => {
-      const source = String(node.source || 'unknown')
-      if (sourceFilter !== 'all' && source !== sourceFilter) return false
-      if (!term) return true
-      const haystack = `${node.name || ''} ${node.uri || ''} ${node.source || ''} ${node.port || ''}`.toLowerCase()
-      return haystack.includes(term)
-    })
-  }, [rows, searchTerm, sourceFilter])
-  const editableRows = rows.filter(node => node.source !== 'free_proxy')
+  const filteredRows = useMemo(() => filterConfigNodes(rows, searchTerm, sourceFilter), [rows, searchTerm, sourceFilter])
+  const editableRows = rows.filter(node => node.source !== 'free_proxy' && node.source !== 'local_source' && !node.local_sources?.length)
   const pagedRows = useMemo(() => {
     const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
     const safePage = Math.min(page, totalPages)
@@ -102,7 +95,8 @@ export function NodeConfigPage() {
   const editNode = (node: ConfigNode) => {
     setEditingName(String(node.name || ''))
     setEditorOpen(true)
-    setDraft({ ...emptyDraft, ...node })
+    const { subscription_name: _subscriptionName, ...editableNode } = node
+    setDraft({ ...emptyDraft, ...editableNode })
     window.setTimeout(() => editorRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0)
   }
   const updateDraft = (patch: Partial<ConfigNode>) => setDraft(prev => ({ ...prev, ...patch }))
@@ -161,7 +155,12 @@ export function NodeConfigPage() {
     {
       title: '来源',
       width: 130,
-      render: (_, node) => <Badge tone={node.source === 'free_proxy' ? 'neutral' : 'info'}>{sourceLabel(node.source)}</Badge>,
+      render: (_, node) => {
+        const label = nodeSourceLabel(node, sourceLabel(node.source))
+        return <Badge tone={node.source === 'free_proxy' ? 'neutral' : 'info'}>
+          <span className="node-config-source-label" title={label}>{label}</span>
+        </Badge>
+      },
     },
     {
       title: 'URI',
@@ -184,7 +183,7 @@ export function NodeConfigPage() {
       fixed: 'right',
       render: (_, node) => {
         const name = String(node.name || '')
-        const canEdit = node.source !== 'free_proxy' && !!name
+        const canEdit = node.source !== 'free_proxy' && node.source !== 'local_source' && !node.local_sources?.length && !!name
         return <div className="toolbar">
           <Button aria-label={`编辑节点 ${name}`} disabled={!canEdit} onClick={() => editNode(node)}>编辑</Button>
           <Button
@@ -234,6 +233,8 @@ export function NodeConfigPage() {
       </div>
     </div>}
 
+    <LocalSourcesSection />
+
     {editorOpen ? <section ref={editorRef} className="sec sec-flush node-config-editor">
       <div className="sec-head">
         <h2>{editingName ? `编辑节点：${editingName}` : '新增节点'}</h2>
@@ -253,7 +254,7 @@ export function NodeConfigPage() {
     </section> : null}
 
     <div className="ftoolbar">
-      <Input allowClear aria-label="搜索节点配置" className="console-input f-grow" value={searchTerm} onChange={event => { setSearchTerm(event.target.value); setPage(1) }} placeholder="搜索名称 / URI / 来源 / 端口" />
+      <Input allowClear aria-label="搜索节点配置" className="console-input f-grow" value={searchTerm} onChange={event => { setSearchTerm(event.target.value); setPage(1) }} placeholder="搜索名称 / URI / 来源 / 端口 / 订阅名" />
       <Select aria-label="筛选节点来源" className="console-select f-select" value={sourceFilter} options={sourceOptions} onChange={value => { setSourceFilter(value); setPage(1) }} />
       <span className="f-end">{nodesLoadingWithoutData ? '加载中...' : `${filteredRows.length} / ${rows.length} 条`}</span>
     </div>
@@ -275,17 +276,17 @@ export function NodeConfigPage() {
       <div className="node-config-mobile-list" aria-label="移动端节点配置卡片列表">
         {pagedRows.length ? pagedRows.map((node, idx) => {
           const name = String(node.name || '')
-          const canEdit = node.source !== 'free_proxy' && !!name
+          const canEdit = node.source !== 'free_proxy' && node.source !== 'local_source' && !node.local_sources?.length && !!name
           return <article className="node-card node-config-card" key={`${nodeKey(node, idx)}-config-card`}>
             <div className="node-card-head">
               <div>
                 <strong>{name || '-'}</strong>
-                <span className="mono">{sourceLabel(node.source)}</span>
+                <span className="mono">{nodeSourceLabel(node, sourceLabel(node.source))}</span>
               </div>
               <Badge tone={node.source === 'free_proxy' ? 'neutral' : 'info'}>{Number(node.port || 0) || '自动端口'}</Badge>
             </div>
             <div className="node-card-meta">
-              <div><span>来源</span><strong>{sourceLabel(node.source)}</strong></div>
+              <div><span>来源</span><strong>{nodeSourceLabel(node, sourceLabel(node.source))}</strong></div>
               <div><span>端口</span><strong>{Number(node.port || 0) || '自动'}</strong></div>
               <div><span>认证</span><strong>{node.username || node.password ? '已配置' : '无'}</strong></div>
               <div><span>编辑状态</span><strong>{canEdit ? '可编辑' : '只读'}</strong></div>
